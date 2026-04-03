@@ -1,0 +1,5 @@
+# All files
+* @juancavallin @maxarthy
+
+# Protect CODEOWNERS itself
+/.github/CODEOWNERS @juancavallin @maxarthy
