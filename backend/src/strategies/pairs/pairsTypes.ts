@@ -132,6 +132,8 @@ export interface PairsInternalState {
   cooldownActive: boolean;
   /** When the cooldown expires (Unix ms) */
   cooldownExpiresAt: EpochMs | null;
+  /** Most recent leg1 price used for position sizing */
+  latestLeg1Price: number | null;
 }
 
 // ------------------------------------------------------------------

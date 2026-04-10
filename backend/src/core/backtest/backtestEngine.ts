@@ -28,6 +28,7 @@ import { newId } from "../../utils/ids";
 import type { BacktestConfig, BacktestResult } from "../../types/backtest";
 import type { PortfolioSnapshot } from "../../types/portfolio";
 import type { IStrategy } from "../../strategies/base/strategy";
+import type { Fill } from "../../types/orders";
 
 export class BacktestEngine {
   private readonly loader = new BacktestLoader();
@@ -115,6 +116,8 @@ export class BacktestEngine {
     const finalPortfolio = portfolioState.getSnapshot();
     const completedAt = nowMs();
 
+    const fills = orderState.getAllOrders().flatMap((o) => o.fills);
+
     const result: BacktestResult = {
       id: config.id,
       config,
@@ -122,10 +125,10 @@ export class BacktestEngine {
       startedAt,
       completedAt,
       finalPortfolio,
-      metrics: this._computeMetrics(equityCurve, config.initialCapital, startedAt, completedAt),
+      metrics: this._computeMetrics(equityCurve, fills, config.initialCapital, startedAt, completedAt),
       equityCurve,
       orders: orderState.getAllOrders(),
-      fills: orderState.getAllOrders().flatMap((o) => o.fills),
+      fills,
       eventCount: bars.length,
     };
 
@@ -144,19 +147,46 @@ export class BacktestEngine {
 
   private _computeMetrics(
     equityCurve: PortfolioSnapshot[],
+    fills: Fill[],
     initialCapital: number,
     periodStart: number,
     periodEnd: number,
   ) {
+    // Compute trade-level metrics by pairing buy+sell fills per symbol
+    const pnlPerTrade: number[] = [];
+    const buyMap = new Map<string, Fill[]>();
+
+    for (const fill of fills) {
+      if (fill.side === "buy") {
+        const existing = buyMap.get(fill.symbol) ?? [];
+        existing.push(fill);
+        buyMap.set(fill.symbol, existing);
+      } else {
+        const buys = buyMap.get(fill.symbol);
+        if (buys && buys.length > 0) {
+          const matchedBuy = buys.shift()!;
+          const pnl = (fill.price - matchedBuy.price) * fill.qty - fill.commission - matchedBuy.commission;
+          pnlPerTrade.push(pnl);
+        }
+      }
+    }
+
+    const totalTrades = pnlPerTrade.length;
+    const wins = pnlPerTrade.filter((p) => p > 0);
+    const losses = pnlPerTrade.filter((p) => p <= 0);
+    const winRate = totalTrades > 0 ? wins.length / totalTrades : 0;
+    const avgWin = wins.length > 0 ? wins.reduce((a, b) => a + b, 0) / wins.length : 0;
+    const avgLoss = losses.length > 0 ? losses.reduce((a, b) => a + b, 0) / losses.length : 0;
+
     if (equityCurve.length === 0) {
       return {
         totalReturn: 0,
         totalReturnPct: 0,
         maxDrawdown: 0,
-        winRate: 0,
-        totalTrades: 0,
-        avgWin: 0,
-        avgLoss: 0,
+        winRate,
+        totalTrades,
+        avgWin,
+        avgLoss,
         periodStart,
         periodEnd,
       };
@@ -179,10 +209,10 @@ export class BacktestEngine {
       totalReturn,
       totalReturnPct,
       maxDrawdown,
-      winRate: 0, // Placeholder — computed from fills in a real impl
-      totalTrades: 0,
-      avgWin: 0,
-      avgLoss: 0,
+      winRate,
+      totalTrades,
+      avgWin,
+      avgLoss,
       periodStart,
       periodEnd,
     };

@@ -74,6 +74,7 @@ export class PairsStrategy extends BaseStrategy {
       : s2.latestTrade?.price ?? null;
 
     if (price1 === null || price2 === null) return null;
+    this.state.latestLeg1Price = price1;
 
     // Update hedge ratio if using rolling OLS (placeholder — uses fixed for now)
     const hedgeRatio = this._getHedgeRatio(price1, price2);
@@ -271,9 +272,9 @@ export class PairsStrategy extends BaseStrategy {
   }
 
   private _computeQty(): number {
-    // Placeholder: compute share quantity from tradeNotionalUsd and latest price
-    // In a real implementation, divide tradeNotionalUsd by current leg1 price
-    return 1;
+    const price = this.state.latestLeg1Price;
+    if (!price || price <= 0) return 0;
+    return Math.floor(this.pairsConfig.tradeNotionalUsd / price);
   }
 
   private _initState(): PairsInternalState {
@@ -287,6 +288,7 @@ export class PairsStrategy extends BaseStrategy {
       completedTrades: 0,
       cooldownActive: false,
       cooldownExpiresAt: null,
+      latestLeg1Price: null,
     };
   }
 }
