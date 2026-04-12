@@ -41,9 +41,9 @@ async function checkSupabase(): Promise<ServiceHealth> {
 
     const msg = error.message.toLowerCase();
     if (msg.includes("invalid api key") || msg.includes("apikey") || msg.includes("jwt")) {
-      return { health: false, error: "Invalid Supabase credentials" };
+      return { health: false, error: `[${error.code}] Invalid Supabase credentials` };
     }
-    return { health: false, error: error.message };
+    return { health: false, error: error.code ? `[${error.code}] ${error.message}` : error.message };
   } catch {
     return { health: false, error: "Cannot reach Supabase (network error)" };
   }
@@ -69,10 +69,11 @@ async function checkAlpaca(): Promise<ServiceHealth> {
     }
 
     switch (res.status) {
-      case 401: return { health: false, error: "Invalid Alpaca API key or secret" };
-      case 403: return { health: false, error: "Alpaca account forbidden or not authorized" };
-      case 404: return { health: false, error: "Alpaca account not found" };
-      default:  return { health: false, error: `Alpaca API error (HTTP ${res.status})` };
+      case 401: return { health: false, error: "[401] Invalid Alpaca API key or secret" };
+      case 403: return { health: false, error: "[403] Account forbidden or not authorized" };
+      case 404: return { health: false, error: "[404] Account not found" };
+      case 500: return { health: false, error: "[500] Alpaca internal server error" };
+      default:  return { health: false, error: `[${res.status}] Alpaca API error` };
     }
   } catch {
     return { health: false, error: "Cannot reach Alpaca API (network error)" };
