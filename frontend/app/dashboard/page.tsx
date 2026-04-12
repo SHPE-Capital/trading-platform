@@ -17,10 +17,12 @@ import StrategyStatusCard from "../../components/cards/StrategyStatusCard";
 import PnLChart from "../../components/charts/PnLChart";
 import { usePortfolio } from "../../hooks/usePortfolio";
 import { useStrategies } from "../../hooks/useStrategies";
+import { useSystemHealth } from "../../hooks/useSystemHealth";
 
 export default function DashboardPage() {
   const { snapshot, equityCurve, isLoading: portfolioLoading } = usePortfolio();
   const { runs, stopStrategy } = useStrategies();
+  const { status: systemStatus, isLoading: systemLoading } = useSystemHealth();
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
@@ -29,7 +31,7 @@ export default function DashboardPage() {
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Left column: health + strategy cards */}
         <div className="flex flex-col gap-6 lg:col-span-1">
-          <SystemHealthCard status={null} isLoading={false} />
+          <SystemHealthCard status={systemStatus} isLoading={systemLoading} />
 
           <div className="flex flex-col gap-3">
             <h2 className="text-sm font-semibold text-zinc-500">Active Strategies</h2>

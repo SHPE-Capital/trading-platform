@@ -16,10 +16,24 @@ export interface Paginated<T> {
   pageSize: number;
 }
 
+export type SystemHealthStatus = "healthy" | "degraded" | "unhealthy";
+export type ExecutionMode = "paper" | "live" | "backtest" | "replay" | "unknown";
+
+// Health status for each specific service: backend server, supabase, alpaca
+export interface ServiceHealth {
+  health: boolean;
+  error?: string;
+  accountStatus?: string;
+}
+
 export interface SystemStatus {
-  engineRunning: boolean;
-  mode: string;
-  connectedToAlpaca: boolean;
+  status: SystemHealthStatus;
+  services: {
+    backend: ServiceHealth;
+    supabase: ServiceHealth;
+    alpaca: ServiceHealth;
+  };
+  mode: ExecutionMode;
   ts: string;
 }
 
