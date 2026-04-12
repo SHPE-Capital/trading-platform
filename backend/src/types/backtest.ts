@@ -66,24 +66,24 @@ export interface BacktestResult {
   /** Run status */
   status: BacktestStatus;
   /** When the backtest run started (wall-clock Unix ms) */
-  startedAt: EpochMs;
+  started_at: EpochMs;
   /** When the backtest run completed (wall-clock Unix ms) */
-  completedAt?: EpochMs;
+  completed_at?: EpochMs;
   /** Error message if status is "failed" */
-  errorMessage?: string;
+  error_message?: string;
   /** Final portfolio state at end of backtest */
-  finalPortfolio: PortfolioSnapshot;
+  final_portfolio: PortfolioSnapshot;
   /** Computed performance metrics */
   metrics: PerformanceMetrics;
   /**
    * Equity curve: one PortfolioSnapshot per bar/event period.
    * Used to draw the equity curve chart in the frontend.
    */
-  equityCurve: PortfolioSnapshot[];
+  equity_curve: PortfolioSnapshot[];
   /** All orders placed during the backtest */
   orders: Order[];
   /** All fills during the backtest */
   fills: Fill[];
   /** Number of events processed */
-  eventCount: number;
+  event_count: number;
 }

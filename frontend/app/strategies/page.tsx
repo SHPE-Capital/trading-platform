@@ -10,8 +10,8 @@
 
 "use client";
 
-import StrategyForm from "../../features/StrategyForm";
-import StrategyList from "../../features/StrategyList";
+import StrategyForm from "../../features/strategy/StrategyForm";
+import StrategyList from "../../features/strategy/StrategyList";
 import { useStrategies } from "../../hooks/useStrategies";
 
 export default function StrategiesPage() {

@@ -122,14 +122,14 @@ export class BacktestEngine {
       id: config.id,
       config,
       status: "completed",
-      startedAt,
-      completedAt,
-      finalPortfolio,
+      started_at: startedAt,
+      completed_at: completedAt,
+      final_portfolio: finalPortfolio,
       metrics: this._computeMetrics(equityCurve, fills, config.initialCapital, startedAt, completedAt),
-      equityCurve,
+      equity_curve: equityCurve,
       orders: orderState.getAllOrders(),
       fills,
-      eventCount: bars.length,
+      event_count: bars.length,
     };
 
     logger.info("BacktestEngine: completed", {

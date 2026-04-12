@@ -46,7 +46,7 @@ export async function listBacktests(req: Request, res: Response): Promise<void> 
  * @param res - Express Response: BacktestResult JSON or 404
  */
 export async function getBacktest(req: Request, res: Response): Promise<void> {
-  const { id } = req.params;
+  const id = req.params.id as string;
   try {
     const result = await getBacktestResultById(id);
     if (!result) {

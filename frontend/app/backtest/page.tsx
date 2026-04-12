@@ -11,8 +11,8 @@
 
 "use client";
 
-import BacktestForm from "../../features/BacktestForm";
-import BacktestResults from "../../features/BacktestResults";
+import BacktestForm from "../../features/backtest/BacktestForm";
+import BacktestResults from "../../features/backtest/BacktestResults";
 import { useBacktest } from "../../hooks/useBacktest";
 
 export default function BacktestPage() {
