@@ -275,7 +275,7 @@ cd frontend
 cp .env.example .env.local
 ```
 
-The defaults in `.env.example` point to `localhost:3001` and are correct for local development. No changes needed to start.
+The defaults in `.env.example` point to `localhost:8080` and are correct for local development. No changes needed to start.
 
 ---
 
@@ -294,7 +294,7 @@ cd frontend && npm run dev
 ```
 
 Frontend: [http://localhost:3000](http://localhost:3000)  
-Backend API: [http://localhost:3001/api](http://localhost:3001/api)
+Backend API: [http://localhost:8080/api](http://localhost:8080/api)
 
 ### Other backend modes
 

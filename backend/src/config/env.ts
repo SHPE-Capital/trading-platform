@@ -27,7 +27,7 @@ function optionalNumber(key: string, defaultValue: number): number {
   const raw = process.env[key];
   if (!raw) return defaultValue;
   const parsed = Number(raw);
-  if (isNaN(parsed)) throw new Error(`Environment variable ${key} must be a number, got: "${raw}"`);
+  if (Number.isNaN(parsed)) throw new Error(`Environment variable ${key} must be a number, got: "${raw}"`);
   return parsed;
 }
 
@@ -39,7 +39,7 @@ function optionalBool(key: string, defaultValue: boolean): boolean {
 
 export const env = {
   // Server
-  port: optionalNumber("PORT", 3001),
+  port: optionalNumber("PORT", 8080),
   nodeEnv: optional("NODE_ENV", "development"),
   corsOrigin: optional("CORS_ORIGIN", "http://localhost:3000"),
 

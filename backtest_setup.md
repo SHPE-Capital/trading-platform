@@ -275,7 +275,7 @@ npm run dev
 You should see:
 
 ```
-Backend API server started on port 3001
+Backend API server started on port 8080
 ```
 
 ### Step 2 — Trigger a backtest via HTTP
@@ -283,7 +283,7 @@ Backend API server started on port 3001
 In a second terminal:
 
 ```bash
-curl -X POST http://localhost:3001/api/backtests/run \
+curl -X POST http://localhost:8080/api/backtests/run \
   -H "Content-Type: application/json" \
   -d '{
     "name": "SPY/QQQ HTTP test",
@@ -316,7 +316,7 @@ Backtest completed and saved { id: '<uuid>' }
 ### Step 3 — Retrieve the result via HTTP
 
 ```bash
-curl http://localhost:3001/api/backtests/<uuid>
+curl http://localhost:8080/api/backtests/<uuid>
 ```
 
 Replace `<uuid>` with the `backtestId` from the 202 response. Expected: a full JSON
@@ -325,7 +325,7 @@ Replace `<uuid>` with the `backtestId` from the 202 response. Expected: a full J
 Also confirm `GET /api/backtests` lists the result:
 
 ```bash
-curl http://localhost:3001/api/backtests
+curl http://localhost:8080/api/backtests
 ```
 
 **Common errors:**
