@@ -198,7 +198,7 @@ export async function getAllBacktestResults(): Promise<BacktestResult[]> {
   const supabase = getSupabaseClient();
   const { data, error } = await supabase
     .from("backtest_results")
-    .select("id, config, status, started_at, completed_at, metrics, final_portfolio")
+    .select("*")
     .order("started_at", { ascending: false });
   if (error) {
     logger.error("getAllBacktestResults failed", { error: error.message });

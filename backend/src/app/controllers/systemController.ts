@@ -10,30 +10,103 @@
  */
 
 import type { Request, Response } from "express";
+import { getSupabaseClient } from "../../adapters/supabase/client";
+import { env } from "../../config/env";
 import { nowIso } from "../../utils/time";
 
+type SystemHealthStatus = "healthy" | "degraded" | "unhealthy";
+type ExecutionMode = "paper" | "live" | "backtest" | "replay";
+
+interface ServiceHealth {
+  health: boolean;
+  error?: string;
+  accountStatus?: string;
+}
+
+interface HealthResponse {
+  status: SystemHealthStatus;
+  services: {
+    supabase: ServiceHealth;
+    alpaca: ServiceHealth;
+  };
+  mode: ExecutionMode;
+  ts: string;
+}
+
+async function checkSupabase(): Promise<ServiceHealth> {
+  try {
+    const supabase = getSupabaseClient();
+    const { error } = await supabase.from("backtest_results").select("id").limit(1);
+    if (!error) return { health: true };
+
+    const msg = error.message.toLowerCase();
+    if (msg.includes("invalid api key") || msg.includes("apikey") || msg.includes("jwt")) {
+      return { health: false, error: `[${error.code}] Invalid Supabase credentials` };
+    }
+    return { health: false, error: error.code ? `[${error.code}] ${error.message}` : error.message };
+  } catch {
+    return { health: false, error: "Cannot reach Supabase (network error)" };
+  }
+}
+
+async function checkAlpaca(): Promise<ServiceHealth> {
+  const base = env.alpacaTradingMode === "live" ? env.alpacaLiveBaseUrl : env.alpacaPaperBaseUrl;
+  try {
+    const res = await fetch(`${base}/v2/account`, {
+      headers: {
+        "APCA-API-KEY-ID": env.alpacaApiKey,
+        "APCA-API-SECRET-KEY": env.alpacaApiSecret,
+      },
+    });
+
+    if (res.ok) {
+      const body = await res.json() as { status?: string };
+      const accountStatus = body.status ?? "UNKNOWN";
+      if (accountStatus !== "ACTIVE") {
+        return { health: false, accountStatus, error: `Alpaca account status: ${accountStatus}` };
+      }
+      return { health: true, accountStatus };
+    }
+
+    switch (res.status) {
+      case 401: return { health: false, error: "[401] Invalid Alpaca API key or secret" };
+      case 403: return { health: false, error: "[403] Account forbidden or not authorized" };
+      case 404: return { health: false, error: "[404] Account not found" };
+      case 500: return { health: false, error: "[500] Alpaca internal server error" };
+      default:  return { health: false, error: `[${res.status}] Alpaca API error` };
+    }
+  } catch {
+    return { health: false, error: "Cannot reach Alpaca API (network error)" };
+  }
+}
+
 /**
- * GET /api/health
+ * GET /api/system/health
  * Returns a simple health check response confirming the server is running.
- * @param req - Express Request
- * @param res - Express Response: { status: "ok", ts: string }
  */
-export function healthCheck(req: Request, res: Response): void {
+export function healthCheck(_req: Request, res: Response): void {
   res.json({ status: "ok", ts: nowIso() });
 }
 
 /**
- * GET /api/status
- * Returns the current engine and connection status.
- * @param req - Express Request
- * @param res - Express Response: engine status object
+ * GET /api/system/status
+ * Checks Supabase and Alpaca connectivity and returns per-service health details.
  */
-export function getSystemStatus(req: Request, res: Response): void {
-  // Placeholder — in a real implementation this queries the Orchestrator status
-  res.json({
-    engineRunning: false,
-    mode: "idle",
-    connectedToAlpaca: false,
+export async function getSystemStatus(_req: Request, res: Response): Promise<void> {
+  const [supabase, alpaca] = await Promise.all([checkSupabase(), checkAlpaca()]);
+
+  const healthyCount = [supabase.health, alpaca.health].filter(Boolean).length;
+  let status: SystemHealthStatus;
+  if (healthyCount === 2) status = "healthy";
+  else if (healthyCount === 1) status = "degraded";
+  else status = "unhealthy";
+
+  const body: HealthResponse = {
+    status,
+    services: { supabase, alpaca },
+    mode: env.alpacaTradingMode,
     ts: nowIso(),
-  });
+  };
+
+  res.json(body);
 }

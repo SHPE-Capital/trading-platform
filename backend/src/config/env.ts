@@ -11,7 +11,7 @@
 
 import "dotenv/config";
 
-function require(key: string): string {
+function requireEnv(key: string): string {
   const value = process.env[key];
   if (!value) {
     throw new Error(`Missing required environment variable: ${key}`);
@@ -27,7 +27,7 @@ function optionalNumber(key: string, defaultValue: number): number {
   const raw = process.env[key];
   if (!raw) return defaultValue;
   const parsed = Number(raw);
-  if (isNaN(parsed)) throw new Error(`Environment variable ${key} must be a number, got: "${raw}"`);
+  if (Number.isNaN(parsed)) throw new Error(`Environment variable ${key} must be a number, got: "${raw}"`);
   return parsed;
 }
 
@@ -39,13 +39,13 @@ function optionalBool(key: string, defaultValue: boolean): boolean {
 
 export const env = {
   // Server
-  port: optionalNumber("PORT", 3001),
+  port: optionalNumber("PORT", 8080),
   nodeEnv: optional("NODE_ENV", "development"),
   corsOrigin: optional("CORS_ORIGIN", "http://localhost:3000"),
 
   // Alpaca
-  alpacaApiKey: require("ALPACA_API_KEY"),
-  alpacaApiSecret: require("ALPACA_API_SECRET"),
+  alpacaApiKey: requireEnv("ALPACA_API_KEY"),
+  alpacaApiSecret: requireEnv("ALPACA_API_SECRET"),
   alpacaTradingMode: optional("ALPACA_TRADING_MODE", "paper") as "paper" | "live",
   alpacaPaperBaseUrl: optional("ALPACA_PAPER_BASE_URL", "https://paper-api.alpaca.markets"),
   alpacaLiveBaseUrl: optional("ALPACA_LIVE_BASE_URL", "https://api.alpaca.markets"),
@@ -54,9 +54,9 @@ export const env = {
   alpacaLiveStreamUrl: optional("ALPACA_LIVE_STREAM_URL", "wss://api.alpaca.markets/stream"),
 
   // Supabase
-  supabaseUrl: require("SUPABASE_URL"),
-  supabaseAnonKey: require("SUPABASE_ANON_KEY"),
-  supabaseServiceRoleKey: require("SUPABASE_SERVICE_ROLE_KEY"),
+  supabaseUrl: requireEnv("SUPABASE_URL"),
+  supabaseAnonKey: requireEnv("SUPABASE_ANON_KEY"),
+  supabaseServiceRoleKey: requireEnv("SUPABASE_SERVICE_ROLE_KEY"),
   databaseUrl: optional("DATABASE_URL", ""),
 
   // Logging

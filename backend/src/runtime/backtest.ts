@@ -44,7 +44,7 @@ async function main(): Promise<void> {
     id: result.id,
     totalReturn: (result.metrics.totalReturnPct * 100).toFixed(2) + "%",
     maxDrawdown: (result.metrics.maxDrawdown * 100).toFixed(2) + "%",
-    events: result.eventCount,
+    events: result.event_count,
   });
 
   await insertBacktestResult(result);

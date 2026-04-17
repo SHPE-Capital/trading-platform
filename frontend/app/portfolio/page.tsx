@@ -10,7 +10,7 @@
 
 "use client";
 
-import PortfolioMetrics from "../../features/PortfolioMetrics";
+import PortfolioMetrics from "../../features/portfolio/PortfolioMetrics";
 import { usePortfolio } from "../../hooks/usePortfolio";
 
 export default function PortfolioPage() {

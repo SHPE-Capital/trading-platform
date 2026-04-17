@@ -15,9 +15,18 @@ import { logger } from "./utils/logger";
 
 const app = createApp();
 
-app.listen(env.port, () => {
+const server = app.listen(env.port, () => {
   logger.info(`Backend API server started on port ${env.port}`, {
     mode: env.nodeEnv,
     corsOrigin: env.corsOrigin,
   });
+});
+
+server.on("error", (err: NodeJS.ErrnoException) => {
+  if (err.code === "EADDRINUSE") {
+    logger.error(`Port ${env.port} is already in use. Is another server instance running?`);
+  } else {
+    logger.error("Server failed to start", { error: err.message });
+  }
+  process.exit(1);
 });

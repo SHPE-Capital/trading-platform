@@ -390,7 +390,7 @@ npm run dev:replay
 You should see:
 
 ```
-Replay API server listening on port 3001
+Replay API server listening on port 8080
 ```
 
 ### 7c. Test the API endpoints
@@ -398,7 +398,7 @@ Replay API server listening on port 3001
 List available sessions:
 
 ```bash
-curl http://localhost:3001/api/replay/sessions
+curl http://localhost:8080/api/replay/sessions
 ```
 
 Expected: a JSON array containing the session recorded in step 7a.
@@ -406,7 +406,7 @@ Expected: a JSON array containing the session recorded in step 7a.
 Load a session (replace `<id>` with the `id` from the list):
 
 ```bash
-curl -X POST http://localhost:3001/api/replay/load \
+curl -X POST http://localhost:8080/api/replay/load \
   -H "Content-Type: application/json" \
   -d '{"sessionId": "<id>"}'
 ```
@@ -416,7 +416,7 @@ Expected: `{ "message": "Session loaded", "session": { "status": "paused", ... }
 Start playback:
 
 ```bash
-curl -X POST http://localhost:3001/api/replay/control \
+curl -X POST http://localhost:8080/api/replay/control \
   -H "Content-Type: application/json" \
   -d '{"action": "play"}'
 ```
@@ -424,7 +424,7 @@ curl -X POST http://localhost:3001/api/replay/control \
 Check status while playing:
 
 ```bash
-curl http://localhost:3001/api/replay/status
+curl http://localhost:8080/api/replay/status
 ```
 
 Expected: `cursor` should be advancing; `status` should be `"playing"` and eventually `"completed"`.
