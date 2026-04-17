@@ -25,6 +25,7 @@
 import { BaseStrategy } from "../base/strategy";
 import { RollingTimeWindow } from "../../core/state/rollingWindow";
 import { computeZScore } from "../../services/indicators/zscore";
+import { computeOLSHedgeRatio } from "../../services/indicators/ols";
 import { logger } from "../../utils/logger";
 import { nowMs } from "../../utils/time";
 import type { EvaluationContext } from "../base/strategy";
@@ -38,7 +39,7 @@ import type {
 export class PairsStrategy extends BaseStrategy {
   readonly type: StrategyType = "pairs_trading";
 
-  private state: PairsInternalState;
+  private readonly state: PairsInternalState;
 
   /**
    * @param config - Full PairsStrategyConfig (use createPairsConfig() helper)
@@ -76,12 +77,16 @@ export class PairsStrategy extends BaseStrategy {
     if (price1 === null || price2 === null) return null;
     this.state.latestLeg1Price = price1;
 
-    // Update hedge ratio if using rolling OLS (placeholder — uses fixed for now)
-    const hedgeRatio = this._getHedgeRatio(price1, price2);
+    // Feed price history windows for OLS hedge ratio estimation
+    const ts = nowMs();
+    this.state.olsLeg1Window.push({ ts, value: price1 });
+    this.state.olsLeg2Window.push({ ts, value: price2 });
+    this.state.barsSinceOlsRecalc++;
+
+    const hedgeRatio = this._getHedgeRatio();
 
     // Compute spread and update window
     const spread = price1 - hedgeRatio * price2;
-    const ts = nowMs();
     this.state.spreadWindow.push({ ts, value: spread });
     this.state.lastSpread = spread;
 
@@ -114,12 +119,34 @@ export class PairsStrategy extends BaseStrategy {
   // Private helpers
   // ------------------------------------------------------------------
 
-  private _getHedgeRatio(_price1: number, _price2: number): number {
+  private _getHedgeRatio(): number {
     if (this.pairsConfig.hedgeRatioMethod === "fixed") {
       return this.pairsConfig.fixedHedgeRatio;
     }
-    // rolling_ols: placeholder — will be implemented in services/indicators
-    return this.pairsConfig.fixedHedgeRatio;
+
+    // Only recompute every olsRecalcIntervalBars to avoid unnecessary work
+    if (this.state.barsSinceOlsRecalc < this.pairsConfig.olsRecalcIntervalBars) {
+      return this.state.currentHedgeRatio;
+    }
+    this.state.barsSinceOlsRecalc = 0;
+
+    const leg1Prices = this.state.olsLeg1Window.getValues();
+    const leg2Prices = this.state.olsLeg2Window.getValues();
+    const result = computeOLSHedgeRatio(leg1Prices, leg2Prices);
+
+    if (result === null) {
+      return this.state.currentHedgeRatio;
+    }
+
+    if (result.rSquared < 0.5) {
+      logger.warn("PairsStrategy: low OLS R² — pair may not be cointegrated", {
+        id: this.id,
+        rSquared: result.rSquared.toFixed(3),
+      });
+    }
+
+    this.state.currentHedgeRatio = result.beta;
+    return result.beta;
   }
 
   private _checkExitSignals(
@@ -289,6 +316,9 @@ export class PairsStrategy extends BaseStrategy {
       cooldownActive: false,
       cooldownExpiresAt: null,
       latestLeg1Price: null,
+      olsLeg1Window: new RollingTimeWindow(this.pairsConfig.olsWindowMs),
+      olsLeg2Window: new RollingTimeWindow(this.pairsConfig.olsWindowMs),
+      barsSinceOlsRecalc: 0,
     };
   }
 }

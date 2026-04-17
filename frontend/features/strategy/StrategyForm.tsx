@@ -22,10 +22,13 @@ interface Props {
 export default function StrategyForm({ onSubmit, isLoading }: Props) {
   const [leg1, setLeg1] = useState("SPY");
   const [leg2, setLeg2] = useState("QQQ");
-  const [entryZScore, setEntryZScore] = useState(2.0);
+  const [entryZScore, setEntryZScore] = useState(2);
   const [exitZScore, setExitZScore] = useState(0.5);
-  const [rollingWindowMs, setRollingWindowMs] = useState(3_600_000);
+  const [rollingWindowMins, setRollingWindowMins] = useState(60);
   const [tradeNotionalUsd, setTradeNotionalUsd] = useState(5_000);
+  const [hedgeRatioMethod, setHedgeRatioMethod] = useState<"fixed" | "rolling_ols">("fixed");
+  const [olsWindowMins, setOlsWindowMins] = useState(240);
+  const [olsRecalcIntervalBars, setOlsRecalcIntervalBars] = useState(5);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -35,19 +38,21 @@ export default function StrategyForm({ onSubmit, isLoading }: Props) {
       leg1Symbol: leg1,
       leg2Symbol: leg2,
       symbols: [leg1, leg2],
-      rollingWindowMs,
+      rollingWindowMs: rollingWindowMins * 60_000,
       maxPositionSizeUsd: 10_000,
       cooldownMs: 60_000,
       enabled: true,
-      hedgeRatioMethod: "fixed",
-      fixedHedgeRatio: 1.0,
+      hedgeRatioMethod,
+      fixedHedgeRatio: 1,
       entryZScore,
       exitZScore,
-      stopLossZScore: 4.0,
+      stopLossZScore: 4,
       maxHoldingTimeMs: 86_400_000,
       minObservations: 30,
       tradeNotionalUsd,
       priceSource: "mid",
+      olsWindowMs: olsWindowMins * 60_000,
+      olsRecalcIntervalBars,
     });
   };
 
@@ -96,13 +101,13 @@ export default function StrategyForm({ onSubmit, isLoading }: Props) {
             className={inputClass}
           />
         </Field>
-        <Field label="Rolling Window (ms)">
+        <Field label="Spread Window (minutes)">
           <input
             type="number"
-            step="60000"
-            min="60000"
-            value={rollingWindowMs}
-            onChange={(e) => setRollingWindowMs(Number(e.target.value))}
+            step="5"
+            min="5"
+            value={rollingWindowMins}
+            onChange={(e) => setRollingWindowMins(Number(e.target.value))}
             className={inputClass}
           />
         </Field>
@@ -116,7 +121,47 @@ export default function StrategyForm({ onSubmit, isLoading }: Props) {
             className={inputClass}
           />
         </Field>
+        <Field label="Hedge Ratio Method">
+          <select
+            value={hedgeRatioMethod}
+            onChange={(e) => setHedgeRatioMethod(e.target.value as "fixed" | "rolling_ols")}
+            className={inputClass}
+          >
+            <option value="fixed">Fixed (1:1)</option>
+            <option value="rolling_ols">Rolling OLS</option>
+          </select>
+        </Field>
       </div>
+
+      {hedgeRatioMethod === "rolling_ols" && (
+        <div className="grid grid-cols-2 gap-3 rounded-md border border-zinc-200 p-3 dark:border-zinc-700">
+          <p className="col-span-2 text-xs text-zinc-500">
+            OLS estimates the hedge ratio by regressing leg 1 on leg 2 over the window below.
+            Use a window 2–4× longer than the spread window for a stable ratio.
+          </p>
+          <Field label="OLS Window (minutes)">
+            <input
+              type="number"
+              step="30"
+              min="30"
+              value={olsWindowMins}
+              onChange={(e) => setOlsWindowMins(Number(e.target.value))}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Recalc Every N Bars">
+            <input
+              type="number"
+              step="1"
+              min="1"
+              max="60"
+              value={olsRecalcIntervalBars}
+              onChange={(e) => setOlsRecalcIntervalBars(Number(e.target.value))}
+              className={inputClass}
+            />
+          </Field>
+        </div>
+      )}
 
       <button
         type="submit"

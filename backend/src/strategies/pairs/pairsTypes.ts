@@ -93,6 +93,20 @@ export interface PairsStrategyConfig {
   maxHoldingTimeMs: number;
 
   /**
+   * Duration of the rolling window used for OLS hedge ratio estimation (ms).
+   * Should be longer than rollingWindowMs so the ratio is stable across
+   * multiple spread cycles. Ignored when hedgeRatioMethod = "fixed".
+   */
+  olsWindowMs: number;
+
+  /**
+   * How often to recompute the OLS hedge ratio, in number of bars received.
+   * Recomputing every bar is unnecessary and expensive; every 5–10 bars is typical.
+   * Ignored when hedgeRatioMethod = "fixed".
+   */
+  olsRecalcIntervalBars: number;
+
+  /**
    * Minimum number of spread observations required before trading.
    * Ensures the rolling statistics are meaningful.
    */
@@ -134,6 +148,12 @@ export interface PairsInternalState {
   cooldownExpiresAt: EpochMs | null;
   /** Most recent leg1 price used for position sizing */
   latestLeg1Price: number | null;
+  /** Price history window for leg1 used by rolling OLS */
+  olsLeg1Window: RollingTimeWindow<number>;
+  /** Price history window for leg2 used by rolling OLS */
+  olsLeg2Window: RollingTimeWindow<number>;
+  /** Bar count since last OLS recomputation */
+  barsSinceOlsRecalc: number;
 }
 
 // ------------------------------------------------------------------

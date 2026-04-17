@@ -48,4 +48,6 @@ export interface PairsStrategyConfig {
   minObservations: number;
   tradeNotionalUsd: number;
   priceSource: "mid" | "last_trade";
+  olsWindowMs: number;
+  olsRecalcIntervalBars: number;
 }
