@@ -21,9 +21,7 @@ async function main(): Promise<void> {
   const eventBus = new EventBus();
   const replayEngine = new ReplayEngine(eventBus);
 
-  // TODO: Inject replayEngine into the Express app context so controllers can use it
-  // For now, start the API server — replay sessions are loaded via /api/replay/load
-  const app = createApp();
+  const app = createApp({ replayEngine });
   app.listen(env.port, () => {
     logger.info(`Replay API server listening on port ${env.port}`);
   });

@@ -1,35 +1,20 @@
-/**
- * app/controllers/replayController.ts
- *
- * Controller for replay session endpoints.
- * Handles listing available event logs, loading sessions, and
- * sending playback control commands (play, pause, step, seek, speed).
- *
- * Inputs:  HTTP requests from the frontend replay view.
- * Outputs: JSON session state; forwards commands to the ReplayEngine.
- */
-
 import type { Request, Response } from "express";
 import { logger } from "../../utils/logger";
 import type { ReplayCommand } from "../../types/replay";
+import type { AppContext } from "../context";
 
 /**
  * GET /api/replay/sessions
- * Lists available recorded event log sessions that can be replayed.
- * @param req - Express Request
- * @param res - Express Response: EventLogRecord[] JSON array
+ * TODO: Query event_logs table via Supabase repository once that repo function exists.
  */
-export async function listReplaySessions(req: Request, res: Response): Promise<void> {
-  // TODO: Query event_logs table via Supabase repository
+export async function listReplaySessions(_req: Request, res: Response): Promise<void> {
   res.json([]);
 }
 
 /**
  * POST /api/replay/load
- * Loads a specific event log session into the ReplayEngine.
  * Body: { sessionId: string }
- * @param req - Express Request with sessionId in body
- * @param res - Express Response: { message: string, session: ReplaySession }
+ * TODO: Load event log from DB and construct a ReplaySession once the repository function exists.
  */
 export async function loadReplaySession(req: Request, res: Response): Promise<void> {
   const { sessionId } = req.body as { sessionId: string };
@@ -37,17 +22,18 @@ export async function loadReplaySession(req: Request, res: Response): Promise<vo
     res.status(400).json({ error: "sessionId is required" });
     return;
   }
-  // TODO: Load event log from DB, instantiate ReplayEngine, load session
+  const { replayEngine } = req.app.locals.ctx as AppContext;
+  if (!replayEngine) {
+    res.status(503).json({ error: "Replay engine not available in this runtime mode" });
+    return;
+  }
   logger.info("loadReplaySession: received request", { sessionId });
-  res.status(501).json({ error: "Not yet implemented" });
+  res.status(501).json({ error: "event_logs repository not yet implemented" });
 }
 
 /**
  * POST /api/replay/control
- * Sends a playback control command to the active ReplayEngine.
  * Body: ReplayCommand
- * @param req - Express Request with ReplayCommand in body
- * @param res - Express Response: { message: string }
  */
 export async function controlReplay(req: Request, res: Response): Promise<void> {
   const command = req.body as ReplayCommand;
@@ -55,18 +41,24 @@ export async function controlReplay(req: Request, res: Response): Promise<void> 
     res.status(400).json({ error: "command.action is required" });
     return;
   }
-  // TODO: Forward command to the active ReplayEngine instance
-  logger.info("controlReplay: received command", { action: command.action });
-  res.status(501).json({ error: "Not yet implemented" });
+  const { replayEngine } = req.app.locals.ctx as AppContext;
+  if (!replayEngine) {
+    res.status(503).json({ error: "Replay engine not available in this runtime mode" });
+    return;
+  }
+  replayEngine.control(command);
+  logger.info("controlReplay: command applied", { action: command.action });
+  res.json({ message: `Command '${command.action}' applied` });
 }
 
 /**
  * GET /api/replay/status
- * Returns the current status of the active replay session.
- * @param req - Express Request
- * @param res - Express Response: ReplaySession JSON or null
  */
 export async function getReplayStatus(req: Request, res: Response): Promise<void> {
-  // TODO: Return current ReplayEngine session state
-  res.json(null);
+  const { replayEngine } = req.app.locals.ctx as AppContext;
+  if (!replayEngine) {
+    res.json(null);
+    return;
+  }
+  res.json(replayEngine.getSession());
 }

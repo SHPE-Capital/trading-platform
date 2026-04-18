@@ -81,7 +81,7 @@ async function main(): Promise<void> {
   marketDataAdapter.subscribe(pairsConfig.symbols);
 
   // ---- Start API server ----
-  const app = createApp();
+  const app = createApp({ orchestrator, symbolState });
   app.listen(env.port, () => {
     logger.info(`API server listening on port ${env.port}`);
   });
