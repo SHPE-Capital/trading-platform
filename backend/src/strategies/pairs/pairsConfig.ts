@@ -29,16 +29,19 @@ export const DEFAULT_PAIRS_CONFIG: Omit<
   enabled: true,
 
   hedgeRatioMethod: "fixed",
-  fixedHedgeRatio: 1.0,
+  fixedHedgeRatio: 1,
 
-  entryZScore: 2.0,             // Enter when |z-score| > 2.0
+  entryZScore: 2,               // Enter when |z-score| > 2
   exitZScore: 0.5,              // Exit when |z-score| < 0.5
-  stopLossZScore: 4.0,          // Emergency stop at |z-score| = 4.0
+  stopLossZScore: 4,            // Emergency stop at |z-score| = 4
   maxHoldingTimeMs: 86_400_000, // Force-exit after 24 hours
   minObservations: 30,          // Need 30 data points for reliable stats
 
   tradeNotionalUsd: 5_000,      // $5,000 per leg
   priceSource: "mid",
+
+  olsWindowMs: 14_400_000,     // 4-hour OLS window (2× the spread window)
+  olsRecalcIntervalBars: 5,    // Recompute hedge ratio every 5 bars
 };
 
 /**

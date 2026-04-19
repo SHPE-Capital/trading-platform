@@ -15,13 +15,11 @@ import { env } from "../config/env";
 import { requestLogger } from "./middleware/requestLogger";
 import { errorHandler } from "./middleware/errorHandler";
 import apiRoutes from "./routes/index";
+import type { AppContext } from "./context";
 
-/**
- * Creates and returns a configured Express application.
- * @returns Express Application
- */
-export function createApp(): express.Application {
+export function createApp(ctx: AppContext = {}): express.Application {
   const app = express();
+  app.locals.ctx = ctx;
 
   // ------ Core middleware ------
   app.use(cors({ origin: env.corsOrigin }));

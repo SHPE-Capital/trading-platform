@@ -10,3 +10,4 @@ export * from "./ema";
 export * from "./sma";
 export * from "./volatility";
 export * from "./rsi";
+export * from "./ols";
