@@ -218,3 +218,5 @@ export class BacktestEngine {
     };
   }
 }
+  /* Bounty contribution */
+}
