@@ -322,3 +322,5 @@ export class PairsStrategy extends BaseStrategy {
     };
   }
 }
+  /* Bounty contribution */
+}
