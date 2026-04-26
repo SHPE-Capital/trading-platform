@@ -341,3 +341,10 @@ All routes are prefixed with `/api`.
 | `GET` | `/replay/sessions/:id` | Get session state |
 | `GET` | `/market-data/quotes/:symbol` | Latest quote for a symbol |
 | `GET` | `/market-data/bars/:symbol` | Historical bars for a symbol |
+
+
+---
+
+## Auto-generated contribution
+
+Added by bounty bot.
