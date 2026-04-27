@@ -212,6 +212,47 @@ describe('AlpacaOrderExecutionAdapter: trade update events', () => {
     );
   });
 
+  it('publishes ORDER_PARTIAL_FILL on partial_fill event with remainingQty', () => {
+    const { adapter, eventBus } = makeAdapter();
+    callTradeStream(adapter, {
+      stream: 'trade_updates',
+      data: {
+        event: 'partial_fill',
+        price: '500.00',
+        order: {
+          client_order_id: 'intent-1',
+          id: 'alpaca-order-id-1',
+          symbol: 'SPY',
+          side: 'buy',
+          qty: '20',
+          filled_qty: '10',
+          updated_at: new Date().toISOString(),
+        },
+      },
+    });
+    expect(eventBus.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'ORDER_PARTIAL_FILL',
+        fill: expect.objectContaining({ qty: 10, price: 500, symbol: 'SPY' }),
+        remainingQty: 10,
+      }),
+    );
+  });
+
+  it('publishes ORDER_EXPIRED on expired event', () => {
+    const { adapter, eventBus } = makeAdapter();
+    callTradeStream(adapter, {
+      stream: 'trade_updates',
+      data: {
+        event: 'expired',
+        order: { client_order_id: 'intent-1', id: 'alpaca-order-id-1' },
+      },
+    });
+    expect(eventBus.publish).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'ORDER_EXPIRED', orderId: 'intent-1' }),
+    );
+  });
+
   it('does not throw on malformed JSON', () => {
     const { adapter } = makeAdapter();
     expect(() => callTradeStream(adapter, 'not-valid-json')).not.toThrow();

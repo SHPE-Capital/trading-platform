@@ -120,6 +120,18 @@ describe('startStrategyRun', () => {
   });
 });
 
+describe('startStrategyRun: with orchestrator', () => {
+  it('returns 501 when orchestrator is present (factory not yet implemented)', async () => {
+    const orchestrator = { registerStrategy: jest.fn(), deregisterStrategy: jest.fn() };
+    const res = mockRes();
+    await startStrategyRun(
+      ctxReq({ orchestrator }, { body: { strategyType: 'pairs_trading', config: {} } }),
+      res,
+    );
+    expect(res.status).toHaveBeenCalledWith(501);
+  });
+});
+
 describe('stopStrategyRun', () => {
   it('returns 503 when orchestrator is not in context', async () => {
     const res = mockRes();
