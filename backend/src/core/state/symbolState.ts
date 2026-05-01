@@ -115,6 +115,8 @@ export class SymbolStateManager {
     const state = this.getOrCreate(bar.symbol);
     state.latestBar = bar;
     state.barCount++;
+    // Fallback: update latestMid so quote-based strategies can run on bars
+    state.latestMid = bar.close;
   }
 
   /**

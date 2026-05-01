@@ -179,6 +179,92 @@ export async function getAllStrategyRuns(): Promise<StrategyRun[]> {
 // Backtest Results
 // ------------------------------------------------------------------
 
+export async function insertBacktestOrders(backtestId: string, orders: Order[]): Promise<void> {
+  if (!orders || orders.length === 0) {
+    logger.info("insertBacktestOrders: no orders to insert", { backtestId });
+    return;
+  }
+  const supabase = getSupabaseClient();
+  const CHUNK_SIZE = 1000;
+  
+  for (let i = 0; i < orders.length; i += CHUNK_SIZE) {
+    const chunk = orders.slice(i, i + CHUNK_SIZE);
+    const payload = chunk.map(o => ({
+      id: o.id,
+      broker_order_id: o.brokerOrderId,
+      intent_id: o.intentId,
+      strategy_id: backtestId, // Schema uses strategy_id as the linking column for runs
+      symbol: o.symbol,
+      side: o.side,
+      qty: o.qty,
+      filled_qty: o.filledQty,
+      avg_fill_price: o.avgFillPrice,
+      order_type: o.orderType,
+      limit_price: o.limitPrice,
+      stop_price: o.stopPrice,
+      time_in_force: o.timeInForce,
+      status: o.status,
+      submitted_at: new Date(o.submittedAt).toISOString(),
+      updated_at: new Date(o.updatedAt).toISOString(),
+      closed_at: o.closedAt ? new Date(o.closedAt).toISOString() : null,
+      meta: o.meta
+    }));
+    
+    const { error } = await supabase.from("orders").insert(payload);
+    if (error) {
+      let msg = error.message || "Unknown error";
+      if (msg.startsWith("<!DOCTYPE") || msg.startsWith("<html")) {
+        msg = `HTML response (Cloudflare/5xx) - length: ${msg.length}`;
+      }
+      logger.error("insertBacktestOrders failed on chunk", { 
+        error: { ...error, message: msg }, 
+        backtestId, 
+        chunkIndex: i 
+      });
+      throw new Error(`Failed to insert backtest orders chunk: ${msg}`);
+    }
+  }
+}
+
+export async function insertBacktestFills(backtestId: string, fills: Fill[]): Promise<void> {
+  if (!fills || fills.length === 0) {
+    logger.info("insertBacktestFills: no fills to insert", { backtestId });
+    return;
+  }
+  const supabase = getSupabaseClient();
+  const CHUNK_SIZE = 1000;
+  
+  for (let i = 0; i < fills.length; i += CHUNK_SIZE) {
+    const chunk = fills.slice(i, i + CHUNK_SIZE);
+    const payload = chunk.map(f => ({
+      id: f.id,
+      order_id: f.orderId,
+      symbol: f.symbol,
+      side: f.side,
+      qty: f.qty,
+      price: f.price,
+      notional: f.notional,
+      commission: f.commission,
+      ts: f.isoTs || new Date(f.ts).toISOString(),
+      exchange: f.exchange
+    }));
+    
+    const { error } = await supabase.from("fills").insert(payload);
+    if (error) {
+      let msg = error.message || "Unknown error";
+      if (msg.startsWith("<!DOCTYPE") || msg.startsWith("<html")) {
+        msg = `HTML response (Cloudflare/5xx) - length: ${msg.length}`;
+      }
+      logger.error("insertBacktestFills failed on chunk", { 
+        error: { ...error, message: msg }, 
+        backtestId, 
+        chunkIndex: i 
+      });
+      throw new Error(`Failed to insert backtest fills chunk: ${msg}`);
+    }
+  }
+}
+
 /**
  * Persists a backtest result record.
  * @param result - The BacktestResult to insert
@@ -204,10 +290,12 @@ export async function insertBacktestResult(result: BacktestResult): Promise<void
     started_at: new Date(result.started_at).toISOString(),
     completed_at: result.completed_at ? new Date(result.completed_at).toISOString() : null,
     equity_curve: downsampledEquity,
-    // TODO: Write orders/fills to dedicated tables (issues #8 and #9). Omitting from this row to save space.
-    orders: [],
-    fills: [],
   };
+  
+  // Strip orders and fills from the summary row completely
+  delete payload.orders;
+  delete payload.fills;
+
   const { error } = await supabase.from("backtest_results").insert(payload);
   if (error) {
     let msg = error.message || "Unknown error";

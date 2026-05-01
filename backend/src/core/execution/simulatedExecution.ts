@@ -87,17 +87,16 @@ export class SimulatedExecutionSink implements IExecutionSink {
       isoTs: msToIso(ts),
     };
 
-    order.fills = [fill];
-
-    // Publish submission then fill
+    // Publish submission FIRST (order.fills is currently [])
     this.eventBus.publish({
       id: newId(),
       type: "ORDER_SUBMITTED",
       ts,
       mode: this.mode,
-      payload: order,
+      payload: order, // order still has no fills here
     });
 
+    // Publish fill NEXT
     this.eventBus.publish({
       id: newId(),
       type: "ORDER_FILLED",

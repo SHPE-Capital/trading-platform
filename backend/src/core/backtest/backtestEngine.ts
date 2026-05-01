@@ -96,8 +96,11 @@ export class BacktestEngine {
     const equityCurve: PortfolioSnapshot[] = [];
     orchestrator.start();
 
+    const realDateNow = Date.now;
+
     // Drive bars through the engine
     for (const bar of bars) {
+      Date.now = () => bar.ts;
       eventBus.publish({
         id: newId(),
         type: "BAR_RECEIVED",
@@ -111,6 +114,7 @@ export class BacktestEngine {
       equityCurve.push(portfolioState.getSnapshot());
     }
 
+    Date.now = realDateNow;
     orchestrator.stop();
 
     const finalPortfolio = portfolioState.getSnapshot();
