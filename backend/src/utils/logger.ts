@@ -26,7 +26,13 @@ function formatMessage(level: LogLevel, message: string, context?: Record<string
   const ts = new Date().toISOString();
   const base = `[${ts}] [${level.toUpperCase()}] ${message}`;
   if (context && Object.keys(context).length > 0) {
-    return `${base} ${JSON.stringify(context)}`;
+    const safeContext = { ...context };
+    for (const [k, v] of Object.entries(safeContext)) {
+      if (v instanceof Error) {
+        safeContext[k] = { name: v.name, message: v.message, stack: v.stack, cause: (v as any).cause };
+      }
+    }
+    return `${base} ${JSON.stringify(safeContext)}`;
   }
   return base;
 }
