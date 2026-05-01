@@ -186,8 +186,38 @@ export async function getAllStrategyRuns(): Promise<StrategyRun[]> {
  */
 export async function insertBacktestResult(result: BacktestResult): Promise<void> {
   const supabase = getSupabaseClient();
-  const { error } = await supabase.from("backtest_results").insert(result);
-  if (error) logger.error("insertBacktestResult failed", { error: error.message });
+
+  // Downsample equity curve to max 5000 points to prevent payload limits
+  let downsampledEquity = result.equity_curve;
+  if (downsampledEquity.length > 5000) {
+    const step = (downsampledEquity.length - 1) / 4999;
+    const newCurve = [];
+    for (let i = 0; i < 4999; i++) {
+      newCurve.push(downsampledEquity[Math.floor(i * step)]);
+    }
+    newCurve.push(downsampledEquity[downsampledEquity.length - 1]);
+    downsampledEquity = newCurve;
+  }
+
+  const payload: any = {
+    ...result,
+    started_at: new Date(result.started_at).toISOString(),
+    completed_at: result.completed_at ? new Date(result.completed_at).toISOString() : null,
+    equity_curve: downsampledEquity,
+    // TODO: Write orders/fills to dedicated tables (issues #8 and #9). Omitting from this row to save space.
+    orders: [],
+    fills: [],
+  };
+  const { error } = await supabase.from("backtest_results").insert(payload);
+  if (error) {
+    let msg = error.message || "Unknown error";
+    if (msg.startsWith("<!DOCTYPE") || msg.startsWith("<html")) {
+      msg = `HTML response (Cloudflare/5xx) - length: ${msg.length}`;
+    }
+    const errObj = { ...error, message: msg };
+    logger.error("insertBacktestResult failed", { error: errObj });
+    throw new Error(`Failed to insert backtest result: ${msg}`);
+  }
 }
 
 /**

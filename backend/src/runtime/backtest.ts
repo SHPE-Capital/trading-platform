@@ -30,6 +30,7 @@ async function main(): Promise<void> {
     strategyConfig: pairsConfig as never,
     startDate: "2023-01-01T00:00:00Z",
     endDate: "2023-12-31T23:59:59Z",
+
     initialCapital: 100_000,
     dataGranularity: "bar",
     slippageBps: 5,
