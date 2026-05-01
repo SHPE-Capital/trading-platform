@@ -184,6 +184,12 @@ export class Orchestrator {
     }
   }
 
+  /**
+   * Converts emitted StrategySignals into actionable OrderIntents.
+   * This currently serves both backtest mode and any future live integration.
+   * TODO: Revisit this routing logic when live order flow is fully wired up, 
+   * to ensure live execution doesn't require a separate dedicated signal router.
+   */
   private _onStrategySignal(event: any): void {
     const signal = event.payload;
     if (!signal || signal.qty <= 0) return;

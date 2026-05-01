@@ -98,23 +98,31 @@ export class BacktestEngine {
 
     const realDateNow = Date.now;
 
-    // Drive bars through the engine
-    for (const bar of bars) {
-      Date.now = () => bar.ts;
-      eventBus.publish({
-        id: newId(),
-        type: "BAR_RECEIVED",
-        ts: bar.ts,
-        mode: "backtest",
-        simulatedTs: bar.ts,
-        payload: bar,
-      });
+    try {
+      // OVERRIDE: Simulate wall-clock time for the duration of the backtest loop.
+      // This process-global patch ensures that strategies and state managers using `nowMs()`
+      // correctly advance with simulated bar time rather than collapsing all historical bars
+      // into a single wall-clock millisecond.
+      // TODO: Future refactor should remove this and inject a deterministic clock via `EvaluationContext`.
+      for (const bar of bars) {
+        Date.now = () => bar.ts;
+        eventBus.publish({
+          id: newId(),
+          type: "BAR_RECEIVED",
+          ts: bar.ts,
+          mode: "backtest",
+          simulatedTs: bar.ts,
+          payload: bar,
+        });
 
-      // Take a portfolio snapshot after each bar for the equity curve
-      equityCurve.push(portfolioState.getSnapshot());
+        // Take a portfolio snapshot after each bar for the equity curve
+        equityCurve.push(portfolioState.getSnapshot());
+      }
+    } finally {
+      // Guarantee restoration even if an error is thrown
+      Date.now = realDateNow;
     }
 
-    Date.now = realDateNow;
     orchestrator.stop();
 
     const finalPortfolio = portfolioState.getSnapshot();
