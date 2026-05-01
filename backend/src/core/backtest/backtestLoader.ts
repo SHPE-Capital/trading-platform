@@ -36,7 +36,9 @@ export class BacktestLoader {
 
     for (const symbol of symbols) {
       const bars = await this._fetchBarsForSymbol(symbol, startDate, endDate, timeframe);
-      allBars.push(...bars);
+      for (const bar of bars) {
+        allBars.push(bar);
+      }
       logger.info("BacktestLoader: loaded bars", { symbol, count: bars.length, timeframe });
     }
 
@@ -87,7 +89,7 @@ export class BacktestLoader {
 
       if (!response.ok) {
         const text = await response.text();
-        throw new Error(`BacktestLoader: failed to fetch bars for ${symbol}: ${text}`);
+        throw new Error(`BacktestLoader: failed to fetch bars for ${symbol} from ${url} | Status: ${response.status} ${response.statusText} | Body: ${text}`);
       }
 
       const json = (await response.json()) as {
