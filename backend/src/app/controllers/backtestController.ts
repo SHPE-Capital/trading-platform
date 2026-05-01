@@ -14,6 +14,8 @@ import {
   getAllBacktestResults,
   getBacktestResultById,
   insertBacktestResult,
+  insertBacktestOrders,
+  insertBacktestFills,
 } from "../../adapters/supabase/repositories";
 import { BacktestEngine } from "../../core/backtest/backtestEngine";
 import { PairsStrategy } from "../../strategies/pairs/pairsStrategy";
@@ -104,6 +106,8 @@ export async function runBacktest(req: Request, res: Response): Promise<void> {
         return [];
       });
       await insertBacktestResult(result);
+      await insertBacktestOrders(result.id, result.orders);
+      await insertBacktestFills(result.id, result.fills);
       logger.info("Backtest completed and saved", { id: config.id });
     } catch (err) {
       logger.error("Backtest failed", { id: config.id, err });

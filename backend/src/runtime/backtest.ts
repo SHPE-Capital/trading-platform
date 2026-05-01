@@ -39,7 +39,13 @@ async function main(): Promise<void> {
   };
 
   const engine = new BacktestEngine();
-  const result = await engine.run(config, () => [new PairsStrategy(pairsConfig)]);
+  const strategy = new PairsStrategy(pairsConfig);
+  const result = await engine.run(config, () => [strategy]);
+
+  // Print signal funnel debug counters when BACKTEST_DEBUG=1
+  if (process.env.BACKTEST_DEBUG === "1") {
+    strategy.printDebugCounters();
+  }
 
   logger.info("runtime/backtest: completed", {
     id: result.id,

@@ -41,6 +41,20 @@ export class PairsStrategy extends BaseStrategy {
 
   private readonly state: PairsInternalState;
 
+  /** Signal funnel debug counters (active when BACKTEST_DEBUG=1) */
+  private readonly _debugEnabled = process.env.BACKTEST_DEBUG === "1";
+  private readonly _debug = {
+    evaluateCalls: 0,
+    missingLegData: 0,
+    missingPrices: 0,
+    cooldownSuppressed: 0,
+    insufficientObservations: 0,
+    zScoreNull: 0,
+    entrySignals: 0,
+    exitSignals: 0,
+    noSignal: 0,
+  };
+
   /**
    * @param config - Full PairsStrategyConfig (use createPairsConfig() helper)
    */
@@ -58,6 +72,7 @@ export class PairsStrategy extends BaseStrategy {
    */
   evaluate(context: EvaluationContext): StrategySignal | null {
     if (!this.isActive || !this.pairsConfig.enabled) return null;
+    if (this._debugEnabled) this._debug.evaluateCalls++;
 
     const { symbolState } = context;
     const { leg1Symbol, leg2Symbol } = this.pairsConfig;
@@ -65,7 +80,10 @@ export class PairsStrategy extends BaseStrategy {
     // Both legs must have recent data
     const s1 = symbolState.get(leg1Symbol);
     const s2 = symbolState.get(leg2Symbol);
-    if (!s1 || !s2) return null;
+    if (!s1 || !s2) {
+      if (this._debugEnabled) this._debug.missingLegData++;
+      return null;
+    }
 
     const price1 = this.pairsConfig.priceSource === "mid"
       ? s1.latestMid
@@ -74,7 +92,10 @@ export class PairsStrategy extends BaseStrategy {
       ? s2.latestMid
       : s2.latestTrade?.price ?? null;
 
-    if (price1 === null || price2 === null) return null;
+    if (price1 === null || price2 === null) {
+      if (this._debugEnabled) this._debug.missingPrices++;
+      return null;
+    }
     this.state.latestLeg1Price = price1;
 
     // Feed price history windows for OLS hedge ratio estimation
@@ -92,18 +113,27 @@ export class PairsStrategy extends BaseStrategy {
 
     // Enforce cooldown
     if (this.state.cooldownActive && this.state.cooldownExpiresAt !== null) {
-      if (ts < this.state.cooldownExpiresAt) return null;
+      if (ts < this.state.cooldownExpiresAt) {
+        if (this._debugEnabled) this._debug.cooldownSuppressed++;
+        return null;
+      }
       this.state.cooldownActive = false;
       this.state.cooldownExpiresAt = null;
     }
 
     // Need enough observations
     const values = this.state.spreadWindow.getValues();
-    if (values.length < this.pairsConfig.minObservations) return null;
+    if (values.length < this.pairsConfig.minObservations) {
+      if (this._debugEnabled) this._debug.insufficientObservations++;
+      return null;
+    }
 
     // Compute z-score
     const zResult = computeZScore(values);
-    if (zResult === null) return null;
+    if (zResult === null) {
+      if (this._debugEnabled) this._debug.zScoreNull++;
+      return null;
+    }
     const { zScore, mean, std } = zResult;
     this.state.lastZScore = zScore;
     this.state.currentHedgeRatio = hedgeRatio;
@@ -111,6 +141,15 @@ export class PairsStrategy extends BaseStrategy {
     // ---- Exit logic (checked before entry) ----
     const signal = this._checkExitSignals(zScore, mean, std, spread, ts, leg1Symbol, leg2Symbol)
       ?? this._checkEntrySignals(zScore, mean, std, spread, ts, leg1Symbol, leg2Symbol);
+
+    if (this._debugEnabled) {
+      if (signal) {
+        if (signal.direction === "long" || signal.direction === "short") this._debug.entrySignals++;
+        else this._debug.exitSignals++;
+      } else {
+        this._debug.noSignal++;
+      }
+    }
 
     return signal;
   }
@@ -320,5 +359,28 @@ export class PairsStrategy extends BaseStrategy {
       olsLeg2Window: new RollingTimeWindow(this.pairsConfig.olsWindowMs),
       barsSinceOlsRecalc: 0,
     };
+  }
+
+  /**
+   * Prints accumulated debug counters. Only meaningful when BACKTEST_DEBUG=1.
+   * Call after the backtest run completes.
+   */
+  printDebugCounters(): void {
+    if (!this._debugEnabled) {
+      console.log("PairsStrategy debug counters: BACKTEST_DEBUG not set, no data collected.");
+      return;
+    }
+    console.log("\n=== PairsStrategy Signal Funnel ===");
+    console.log(`  evaluate() calls:         ${this._debug.evaluateCalls}`);
+    console.log(`  ├─ missing leg data:       ${this._debug.missingLegData}`);
+    console.log(`  ├─ missing prices:         ${this._debug.missingPrices}`);
+    console.log(`  ├─ cooldown suppressed:    ${this._debug.cooldownSuppressed}`);
+    console.log(`  ├─ insufficient obs:       ${this._debug.insufficientObservations}`);
+    console.log(`  ├─ zScore null:            ${this._debug.zScoreNull}`);
+    console.log(`  ├─ no signal (z in range): ${this._debug.noSignal}`);
+    console.log(`  ├─ entry signals emitted:  ${this._debug.entrySignals}`);
+    console.log(`  └─ exit signals emitted:   ${this._debug.exitSignals}`);
+    console.log(`  completedTrades (state):   ${this.state.completedTrades}`);
+    console.log();
   }
 }

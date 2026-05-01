@@ -147,7 +147,7 @@ export class BacktestEngine {
     logger.info("BacktestEngine: completed", {
       id: config.id,
       bars: bars.length,
-      totalReturn: result.metrics.totalReturnPct.toFixed(2) + "%",
+      totalReturn: (result.metrics.totalReturnPct * 100).toFixed(2) + "%",
     });
 
     return result;

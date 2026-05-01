@@ -14,7 +14,9 @@
     "start:backtest": "node dist/runtime/backtest.js",
     "start:replay": "node dist/runtime/replay.js",
     "lint": "eslint src --ext .ts",
-    "test": "jest"
+    "test": "jest",
+    "verify:http": "ts-node src/runtime/verify/httpSmoke.ts",
+    "verify:backtest": "ts-node src/runtime/verify/backtestVerify.ts"
   },
   "keywords": ["trading", "algorithmic", "hft", "alpaca"],
   "author": "SHPE Capital",
