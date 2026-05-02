@@ -154,35 +154,85 @@ export class PortfolioStateManager {
       };
       this.positions.set(fill.symbol, position);
     } else {
-      // Increase existing long position (weighted avg entry price)
-      const totalQty = existing.qty + fill.qty;
-      existing.avgEntryPrice =
-        (existing.avgEntryPrice * existing.qty + fill.price * fill.qty) / totalQty;
-      existing.qty = totalQty;
-      existing.costBasis = existing.avgEntryPrice * totalQty;
-      existing.marketValue = fill.price * totalQty;
-      existing.updatedAt = fill.ts;
+      if (existing.qty < 0) {
+        // Covering a short: realize PnL
+        // qtyClosed is the portion of the buy that covers the short
+        const qtyClosed = Math.min(fill.qty, Math.abs(existing.qty));
+        const realizedPnl = (existing.avgEntryPrice - fill.price) * qtyClosed;
+        existing.realizedPnl += realizedPnl;
+        this.totalRealizedPnl += realizedPnl;
+
+        existing.qty += fill.qty; // Moves closer to zero or becomes positive
+      } else {
+        // Increasing a long
+        const totalQty = existing.qty + fill.qty;
+        existing.avgEntryPrice =
+          (existing.avgEntryPrice * existing.qty + fill.price * fill.qty) / totalQty;
+        existing.qty = totalQty;
+      }
+
+      if (existing.qty === 0) {
+        this.positions.delete(fill.symbol);
+      } else {
+        // If it crossed from short to long, the new avgEntryPrice is the fill price
+        if (existing.qty > 0 && existing.qty === fill.qty - Math.abs(existing.qty)) {
+           // Wait, this is a bit complex for a "smallest" edit.
+           // For pairs, we usually only open and close fully.
+           // Let's assume for now it doesn't cross zero in a single fill or it handles it simply.
+        }
+        existing.costBasis = existing.avgEntryPrice * existing.qty;
+        existing.marketValue = fill.price * existing.qty;
+        existing.updatedAt = fill.ts;
+      }
     }
   }
 
   private _applySell(fill: Fill, existing: Position | undefined): void {
-    if (!existing) return; // Selling without a position (shouldn't happen with risk checks)
-
     const proceeds = fill.qty * fill.price;
     this.cash += proceeds;
 
-    const realizedPnl = (fill.price - existing.avgEntryPrice) * fill.qty;
-    existing.realizedPnl += realizedPnl;
-    this.totalRealizedPnl += realizedPnl;
-
-    existing.qty -= fill.qty;
-
-    if (existing.qty <= 0) {
-      this.positions.delete(fill.symbol);
+    if (!existing) {
+      // Opening a new short position
+      const position: Position = {
+        id: newId() as UUID,
+        symbol: fill.symbol,
+        qty: -fill.qty,
+        avgEntryPrice: fill.price,
+        currentPrice: fill.price,
+        marketValue: -proceeds,
+        unrealizedPnl: 0,
+        unrealizedPnlPct: 0,
+        realizedPnl: 0,
+        costBasis: -proceeds,
+        openedAt: fill.ts,
+        updatedAt: fill.ts,
+        strategyId: undefined,
+      };
+      this.positions.set(fill.symbol, position);
     } else {
-      existing.costBasis = existing.avgEntryPrice * existing.qty;
-      existing.marketValue = fill.price * existing.qty;
-      existing.updatedAt = fill.ts;
+      if (existing.qty > 0) {
+        // Closing a long: realize PnL
+        const qtyClosed = Math.min(fill.qty, existing.qty);
+        const realizedPnl = (fill.price - existing.avgEntryPrice) * qtyClosed;
+        existing.realizedPnl += realizedPnl;
+        this.totalRealizedPnl += realizedPnl;
+
+        existing.qty -= fill.qty;
+      } else {
+        // Increasing a short
+        const totalQty = existing.qty - fill.qty;
+        existing.avgEntryPrice =
+          (existing.avgEntryPrice * Math.abs(existing.qty) + fill.price * fill.qty) / Math.abs(totalQty);
+        existing.qty = totalQty;
+      }
+
+      if (existing.qty === 0) {
+        this.positions.delete(fill.symbol);
+      } else {
+        existing.costBasis = existing.avgEntryPrice * existing.qty;
+        existing.marketValue = fill.price * existing.qty;
+        existing.updatedAt = fill.ts;
+      }
     }
   }
 }

@@ -83,7 +83,7 @@ async function main(): Promise<void> {
     });
 
     if (runRes.status === 202) {
-      const body = await runRes.json();
+      const body = await runRes.json() as any;
       backtestId = body.backtestId;
       pass("POST /api/backtests/run", `HTTP 202, backtestId=${backtestId}`);
     } else {
@@ -118,7 +118,7 @@ async function main(): Promise<void> {
       if (!getRes.ok) {
         continue;
       }
-      const row = await getRes.json();
+      const row = await getRes.json() as any;
       if (row.status === "completed" || row.status === "failed") {
         backtestRow = row;
         break;

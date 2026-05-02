@@ -22,6 +22,7 @@ import { RiskEngine } from "../risk/riskEngine";
 import { ExecutionEngine } from "../execution/executionEngine";
 import { SimulatedExecutionSink } from "../execution/simulatedExecution";
 import { BacktestLoader } from "./backtestLoader";
+import { BACKTEST_RISK_CONFIG } from "../../config/defaults";
 import { logger } from "../../utils/logger";
 import { nowMs, msToIso } from "../../utils/time";
 import { newId } from "../../utils/ids";
@@ -59,7 +60,7 @@ export class BacktestEngine {
     const symbolState = new SymbolStateManager();
     const portfolioState = new PortfolioStateManager(config.initialCapital);
     const orderState = new OrderStateManager();
-    const riskEngine = new RiskEngine();
+    const riskEngine = new RiskEngine(BACKTEST_RISK_CONFIG);
     const simulatedSink = new SimulatedExecutionSink(
       eventBus,
       symbolState,
@@ -164,21 +165,37 @@ export class BacktestEngine {
     periodStart: number,
     periodEnd: number,
   ) {
-    // Compute trade-level metrics by pairing buy+sell fills per symbol
+    // Compute trade-level metrics by pairing entry and exit fills per symbol
     const pnlPerTrade: number[] = [];
     const buyMap = new Map<string, Fill[]>();
+    const sellMap = new Map<string, Fill[]>();
 
     for (const fill of fills) {
       if (fill.side === "buy") {
-        const existing = buyMap.get(fill.symbol) ?? [];
-        existing.push(fill);
-        buyMap.set(fill.symbol, existing);
+        const sells = sellMap.get(fill.symbol);
+        if (sells && sells.length > 0) {
+          // Covering a short
+          const matchedSell = sells.shift()!;
+          const pnl = (matchedSell.price - fill.price) * fill.qty - fill.commission - matchedSell.commission;
+          pnlPerTrade.push(pnl);
+        } else {
+          // Opening a long
+          const existing = buyMap.get(fill.symbol) ?? [];
+          existing.push(fill);
+          buyMap.set(fill.symbol, existing);
+        }
       } else {
         const buys = buyMap.get(fill.symbol);
         if (buys && buys.length > 0) {
+          // Closing a long
           const matchedBuy = buys.shift()!;
           const pnl = (fill.price - matchedBuy.price) * fill.qty - fill.commission - matchedBuy.commission;
           pnlPerTrade.push(pnl);
+        } else {
+          // Opening a short
+          const existing = sellMap.get(fill.symbol) ?? [];
+          existing.push(fill);
+          sellMap.set(fill.symbol, existing);
         }
       }
     }

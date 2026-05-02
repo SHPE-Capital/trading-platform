@@ -324,7 +324,7 @@ export class PairsStrategy extends BaseStrategy {
       hedgeRatio: this.state.currentHedgeRatio,
       signalType,
       counterpartSymbol: this.pairsConfig.leg2Symbol,
-      counterpartDirection: isLong ? "short" : "long",
+      counterpartDirection: isLong ? "close_short" : "close_long",
     };
 
     return this.buildSignal({
