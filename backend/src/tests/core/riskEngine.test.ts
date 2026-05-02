@@ -204,18 +204,23 @@ describe('max notional exposure', () => {
 
   it('rejects when total exposure would exceed max notional', () => {
     const engine = new RiskEngine({ maxNotionalExposureUsd: 50_000 });
-    const portfolio = makePortfolio({ positionsValue: 48_000 });
+    // Use a real position to represent the existing exposure
+    const portfolio = makePortfolio({ 
+        positions: [makePosition({ symbol: 'AAPL', qty: 48, currentPrice: 1000 })] // $48,000
+    });
     // New order: 10 shares at $500 limit = $5000, total $53000 > $50000
-    const result = engine.check(makeIntent({ qty: 10, limitPrice: 500 }), portfolio);
+    const result = engine.check(makeIntent({ symbol: 'SPY', qty: 10, limitPrice: 500 }), portfolio);
     expect(result.passed).toBe(false);
     expect(result.failedCheck).toBe('MAX_NOTIONAL_EXPOSURE');
   });
 
   it('passes when total exposure stays within limit', () => {
     const engine = new RiskEngine({ maxNotionalExposureUsd: 50_000 });
-    const portfolio = makePortfolio({ positionsValue: 40_000 });
+    const portfolio = makePortfolio({ 
+        positions: [makePosition({ symbol: 'AAPL', qty: 40, currentPrice: 1000 })] // $40,000
+    });
     // New order: 10 shares at $500 = $5000, total $45000 < $50000
-    expect(engine.check(makeIntent({ qty: 10, limitPrice: 500 }), portfolio).passed).toBe(true);
+    expect(engine.check(makeIntent({ symbol: 'SPY', qty: 10, limitPrice: 500 }), portfolio).passed).toBe(true);
   });
 });
 

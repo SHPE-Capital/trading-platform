@@ -22,6 +22,15 @@ const LEVELS: Record<LogLevel, number> = {
 
 const configuredLevel = LEVELS[env.logLevel] ?? LEVELS.info;
 
+function serializeError(err: Error): any {
+  return {
+    name: err.name,
+    message: err.message,
+    stack: err.stack,
+    cause: (err as any).cause instanceof Error ? serializeError((err as any).cause) : (err as any).cause,
+  };
+}
+
 function formatMessage(level: LogLevel, message: string, context?: Record<string, unknown>): string {
   const ts = new Date().toISOString();
   const base = `[${ts}] [${level.toUpperCase()}] ${message}`;
@@ -29,7 +38,7 @@ function formatMessage(level: LogLevel, message: string, context?: Record<string
     const safeContext = { ...context };
     for (const [k, v] of Object.entries(safeContext)) {
       if (v instanceof Error) {
-        safeContext[k] = { name: v.name, message: v.message, stack: v.stack, cause: (v as any).cause };
+        safeContext[k] = serializeError(v);
       }
     }
     return `${base} ${JSON.stringify(safeContext)}`;

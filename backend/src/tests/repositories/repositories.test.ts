@@ -82,7 +82,14 @@ const mockOrder = { id: 'order-1', symbol: 'SPY' } as Order;
 const mockFill = { id: 'fill-1', symbol: 'SPY' } as Fill;
 const mockSnapshot = { id: 'snap-1', equity: 100_000 } as PortfolioSnapshot;
 const mockStrategyRun = { id: 'run-1', strategyId: 'strat-1' } as StrategyRun;
-const mockBacktestResult = { id: 'bt-1' } as BacktestResult;
+const mockBacktestResult = { 
+  id: 'bt-1', 
+  started_at: Date.now(), 
+  completed_at: Date.now(),
+  metrics: { totalReturnPct: 0 },
+  final_portfolio: { equity: 100000 },
+  equity_curve: []
+} as any;
 
 // ---------------------------------------------------------------------------
 // insertOrder
@@ -291,12 +298,20 @@ describe('getAllStrategyRuns', () => {
 // insertBacktestResult
 // ---------------------------------------------------------------------------
 describe('insertBacktestResult', () => {
-  it('calls from("backtest_results").insert(result)', async () => {
+  it('calls from("backtest_results").insert(result) with formatted dates', async () => {
     const chain = buildChain();
     mockFrom.mockReturnValue(chain);
     await insertBacktestResult(mockBacktestResult);
     expect(mockFrom).toHaveBeenCalledWith('backtest_results');
-    expect(chain.insert).toHaveBeenCalledWith(mockBacktestResult);
+    
+    // The repository formats dates to ISO strings before inserting
+    const expectedPayload = {
+      ...mockBacktestResult,
+      started_at: new Date(mockBacktestResult.started_at).toISOString(),
+      completed_at: new Date(mockBacktestResult.completed_at).toISOString(),
+      equity_curve: [], // downsampled from empty
+    };
+    expect(chain.insert).toHaveBeenCalledWith(expectedPayload);
   });
 });
 

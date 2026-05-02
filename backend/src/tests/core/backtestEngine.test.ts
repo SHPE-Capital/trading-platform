@@ -135,11 +135,12 @@ describe('run(): result structure', () => {
     expect(result.metrics.totalReturn).toBe(0);
   });
 
-  it('equity curve has one snapshot per bar when no strategy is registered', async () => {
+  it('equity curve has one snapshot per bar plus final MTM when no strategy is registered', async () => {
     const bars = [makeBar('SPY', 1_000), makeBar('SPY', 2_000), makeBar('SPY', 3_000)];
     const engine = makeEngineWithBars(bars);
     const result = await engine.run(makeConfig(), () => []);
-    expect(result.equity_curve).toHaveLength(3);
+    // 3 bars + 1 final MTM snapshot
+    expect(result.equity_curve).toHaveLength(4);
     expect(result.event_count).toBe(3);
   });
 

@@ -191,9 +191,8 @@ export async function insertBacktestOrders(backtestId: string, orders: Order[]):
     const chunk = orders.slice(i, i + CHUNK_SIZE);
     const payload = chunk.map(o => ({
       id: o.id,
-      broker_order_id: o.brokerOrderId,
-      intent_id: o.intentId,
-      strategy_id: backtestId, // Schema uses strategy_id as the linking column for runs
+      backtest_id: backtestId, // New linking column
+      strategy_id: o.strategyId || backtestId,
       symbol: o.symbol,
       side: o.side,
       qty: o.qty,
@@ -202,15 +201,12 @@ export async function insertBacktestOrders(backtestId: string, orders: Order[]):
       order_type: o.orderType,
       limit_price: o.limitPrice,
       stop_price: o.stopPrice,
-      time_in_force: o.timeInForce,
       status: o.status,
       submitted_at: new Date(o.submittedAt).toISOString(),
-      updated_at: new Date(o.updatedAt).toISOString(),
       closed_at: o.closedAt ? new Date(o.closedAt).toISOString() : null,
-      meta: o.meta
     }));
     
-    const { error } = await supabase.from("orders").insert(payload);
+    const { error } = await supabase.from("backtest_orders").insert(payload);
     if (error) {
       let msg = error.message || "Unknown error";
       if (msg.startsWith("<!DOCTYPE") || msg.startsWith("<html")) {
@@ -238,6 +234,7 @@ export async function insertBacktestFills(backtestId: string, fills: Fill[]): Pr
     const chunk = fills.slice(i, i + CHUNK_SIZE);
     const payload = chunk.map(f => ({
       id: f.id,
+      backtest_id: backtestId, // New linking column
       order_id: f.orderId,
       symbol: f.symbol,
       side: f.side,
@@ -246,10 +243,9 @@ export async function insertBacktestFills(backtestId: string, fills: Fill[]): Pr
       notional: f.notional,
       commission: f.commission,
       ts: f.isoTs || new Date(f.ts).toISOString(),
-      exchange: f.exchange
     }));
     
-    const { error } = await supabase.from("fills").insert(payload);
+    const { error } = await supabase.from("backtest_fills").insert(payload);
     if (error) {
       let msg = error.message || "Unknown error";
       if (msg.startsWith("<!DOCTYPE") || msg.startsWith("<html")) {
@@ -266,7 +262,23 @@ export async function insertBacktestFills(backtestId: string, fills: Fill[]): Pr
 }
 
 /**
- * Persists a backtest result record.
+ * Downsamples a series of points to a maximum of targetPoints.
+ * Ensures the first and last points are preserved.
+ */
+export function downsampleEquityCurve<T>(curve: T[], targetPoints = 5000): T[] {
+  if (!curve || curve.length <= targetPoints) return curve;
+
+  const step = (curve.length - 1) / (targetPoints - 1);
+  const downsampled = [];
+  for (let i = 0; i < targetPoints - 1; i++) {
+    downsampled.push(curve[Math.floor(i * step)]);
+  }
+  downsampled.push(curve[curve.length - 1]);
+  return downsampled;
+}
+
+/**
+ * Persists a full backtest result summary to the backtest_results table.
  * @param result - The BacktestResult to insert
  * @returns void
  */
@@ -274,16 +286,7 @@ export async function insertBacktestResult(result: BacktestResult): Promise<void
   const supabase = getSupabaseClient();
 
   // Downsample equity curve to max 5000 points to prevent payload limits
-  let downsampledEquity = result.equity_curve;
-  if (downsampledEquity.length > 5000) {
-    const step = (downsampledEquity.length - 1) / 4999;
-    const newCurve = [];
-    for (let i = 0; i < 4999; i++) {
-      newCurve.push(downsampledEquity[Math.floor(i * step)]);
-    }
-    newCurve.push(downsampledEquity[downsampledEquity.length - 1]);
-    downsampledEquity = newCurve;
-  }
+  const downsampledEquity = downsampleEquityCurve(result.equity_curve, 5000);
 
   const payload: any = {
     ...result,

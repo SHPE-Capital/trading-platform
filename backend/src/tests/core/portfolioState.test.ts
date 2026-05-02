@@ -108,23 +108,24 @@ describe('PortfolioStateManager', () => {
     });
   });
 
-  describe('sell fill: no existing position', () => {
+  describe('sell fill: no existing position (opens short)', () => {
     it('does not throw', () => {
       expect(() =>
         pm.applyFill(makeFill({ side: 'sell', qty: 5, price: 100, commission: 0 }))
       ).not.toThrow();
     });
 
-    it('cash is unchanged', () => {
-      // Commission still deducted even with no position (see applyFill impl)
+    it('cash is increased by proceeds', () => {
       const before = pm.getCash();
       pm.applyFill(makeFill({ side: 'sell', qty: 5, price: 100, commission: 0 }));
-      expect(pm.getCash()).toBe(before);
+      expect(pm.getCash()).toBe(before + 5 * 100);
     });
 
-    it('positions remain empty', () => {
+    it('creates a short position', () => {
       pm.applyFill(makeFill({ side: 'sell', qty: 5, price: 100, commission: 0 }));
-      expect(pm.getAllPositions()).toEqual([]);
+      const pos = pm.getPosition('SPY');
+      expect(pos).not.toBeNull();
+      expect(pos!.qty).toBe(-5);
     });
   });
 

@@ -83,19 +83,17 @@ async function main(): Promise<void> {
   console.log();
 
   // Fetch orders and fills for this run
-  // NOTE: Orders/fills are linked by strategy_id = runId (see insertBacktestOrders)
+  // NOTE: Orders/fills are linked by backtest_id = runId (see insertBacktestOrders)
   const { data: ordersData } = await supabase
-    .from("orders")
+    .from("backtest_orders")
     .select("*")
-    .eq("strategy_id", runId);
+    .eq("backtest_id", runId);
   const orders: any[] = ordersData ?? [];
 
   const { data: fillsData } = await supabase
-    .from("fills")
+    .from("backtest_fills")
     .select("*")
-    .in("order_id", orders.map((o: any) => o.id).length > 0
-      ? orders.map((o: any) => o.id)
-      : ["__none__"]);
+    .eq("backtest_id", runId);
   const fills: any[] = fillsData ?? [];
 
   console.log(`Orders in DB: ${orders.length}`);
