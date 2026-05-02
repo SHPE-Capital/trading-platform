@@ -274,7 +274,7 @@ export async function insertBacktestResult(result: BacktestResult): Promise<void
   const supabase = getSupabaseClient();
 
   // Downsample equity curve to max 5000 points to prevent payload limits
-  let downsampledEquity = result.equity_curve;
+  let downsampledEquity = result.equity_curve ?? [];
   if (downsampledEquity.length > 5000) {
     const step = (downsampledEquity.length - 1) / 4999;
     const newCurve = [];

@@ -17,15 +17,12 @@ import { formatPercent, formatCurrency } from "../../utils/formatting";
 import { formatDuration } from "../../utils/dates";
 
 interface Props {
-  result: BacktestResult & {
-    equityCurve?: PortfolioSnapshot[];
-    metrics?: PerformanceMetrics;
-  };
+  result: BacktestResult;
 }
 
 export default function BacktestResults({ result }: Props) {
   const metrics = result.metrics;
-  const equityCurve = result.equityCurve ?? [];
+  const equityCurve = result.equity_curve ?? [];
 
   return (
     <div className="flex flex-col gap-6">

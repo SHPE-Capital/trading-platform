@@ -54,10 +54,12 @@ export interface BacktestResult {
   id: string;
   config: BacktestConfig;
   status: "pending" | "running" | "completed" | "failed";
-  startedAt: number;
-  completedAt?: number;
-  errorMessage?: string;
+  started_at: number;
+  completed_at?: number;
+  error_message?: string;
   metrics?: import("./portfolio").PerformanceMetrics;
+  equity_curve?: import("./portfolio").PortfolioSnapshot[];
+  event_count?: number;
 }
 
 export type ReplaySpeed = 0.25 | 0.5 | 1 | 2 | 5 | 10 | "step";

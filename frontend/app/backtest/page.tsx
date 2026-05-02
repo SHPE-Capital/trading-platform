@@ -14,9 +14,29 @@
 import BacktestForm from "../../features/backtest/BacktestForm";
 import BacktestResults from "../../features/backtest/BacktestResults";
 import { useBacktest } from "../../hooks/useBacktest";
+import { fetchBacktest } from "../../services/backtestService";
 
 export default function BacktestPage() {
-  const { result, isRunning, error, runBacktest } = useBacktest();
+  const { selectedResult, isRunning, error, run, loadResult } = useBacktest();
+
+  const handleRun = async (config: Parameters<typeof run>[0]) => {
+    const id = await run(config);
+    // The backtest runs asynchronously on the backend. Poll until it appears
+    // in the DB (status: completed or failed), then load the full result.
+    const POLL_INTERVAL_MS = 2_000;
+    const POLL_TIMEOUT_MS = 120_000;
+    const deadline = Date.now() + POLL_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+      try {
+        await loadResult(id);
+        const current = await fetchBacktest(id);
+        if (current.status === "completed" || current.status === "failed") break;
+      } catch {
+        // result not in DB yet — keep polling
+      }
+    }
+  };
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
@@ -28,7 +48,7 @@ export default function BacktestPage() {
           <h2 className="mb-3 text-sm font-semibold text-zinc-500 uppercase tracking-wide">
             Configuration
           </h2>
-          <BacktestForm onSubmit={runBacktest} isRunning={isRunning} />
+          <BacktestForm onSubmit={handleRun} isLoading={isRunning} />
         </div>
 
         {/* Results */}
@@ -44,8 +64,8 @@ export default function BacktestPage() {
           {isRunning && (
             <p className="text-sm text-zinc-400">Running backtest…</p>
           )}
-          {!isRunning && result && <BacktestResults result={result} />}
-          {!isRunning && !result && !error && (
+          {!isRunning && selectedResult && <BacktestResults result={selectedResult} />}
+          {!isRunning && !selectedResult && !error && (
             <p className="text-sm text-zinc-400">
               Configure a backtest on the left and click Run.
             </p>
