@@ -82,7 +82,14 @@ const mockOrder = { id: 'order-1', symbol: 'SPY' } as Order;
 const mockFill = { id: 'fill-1', symbol: 'SPY' } as Fill;
 const mockSnapshot = { id: 'snap-1', equity: 100_000 } as PortfolioSnapshot;
 const mockStrategyRun = { id: 'run-1', strategyId: 'strat-1' } as StrategyRun;
-const mockBacktestResult = { id: 'bt-1' } as BacktestResult;
+const mockBacktestResult = {
+  id: 'bt-1',
+  equity_curve: [],
+  orders: [],
+  fills: [],
+  started_at: 1_000_000,
+  completed_at: 2_000_000,
+} as unknown as BacktestResult;
 
 // ---------------------------------------------------------------------------
 // insertOrder
@@ -291,12 +298,37 @@ describe('getAllStrategyRuns', () => {
 // insertBacktestResult
 // ---------------------------------------------------------------------------
 describe('insertBacktestResult', () => {
-  it('calls from("backtest_results").insert(result)', async () => {
+  it('calls from("backtest_results").insert() with orders/fills stripped', async () => {
     const chain = buildChain();
     mockFrom.mockReturnValue(chain);
     await insertBacktestResult(mockBacktestResult);
     expect(mockFrom).toHaveBeenCalledWith('backtest_results');
-    expect(chain.insert).toHaveBeenCalledWith(mockBacktestResult);
+    expect(chain.insert).toHaveBeenCalledTimes(1);
+    const [payload] = chain.insert.mock.calls[0];
+    expect(payload.id).toBe('bt-1');
+    expect(payload.equity_curve).toEqual([]);
+    expect(payload.orders).toBeUndefined();
+    expect(payload.fills).toBeUndefined();
+  });
+
+  it('downsamples equity_curve to 5000 points when it exceeds the limit', async () => {
+    const chain = buildChain();
+    mockFrom.mockReturnValue(chain);
+    const largeCurve = Array.from({ length: 6_000 }, (_, i) => ({ ts: i } as any));
+    await insertBacktestResult({ ...mockBacktestResult, equity_curve: largeCurve });
+    const [payload] = chain.insert.mock.calls[0];
+    expect(payload.equity_curve).toHaveLength(5000);
+    expect(payload.equity_curve[0]).toEqual(largeCurve[0]);
+    expect(payload.equity_curve[4999]).toEqual(largeCurve[5999]);
+  });
+
+  it('passes equity_curve through unchanged when it is under the limit', async () => {
+    const chain = buildChain();
+    mockFrom.mockReturnValue(chain);
+    const smallCurve = [{ ts: 1 } as any, { ts: 2 } as any];
+    await insertBacktestResult({ ...mockBacktestResult, equity_curve: smallCurve });
+    const [payload] = chain.insert.mock.calls[0];
+    expect(payload.equity_curve).toHaveLength(2);
   });
 });
 
