@@ -127,19 +127,16 @@ export class BacktestEngine {
     // TASK 1: End-of-run Mark-to-Market (MTM)
     // 5. Final MTM pass: value all open positions at the final bar's close price.
     // This ensures totalReturn reflects current market value of open positions.
-    if (bars.length > 0) {
-      for (const symbol of symbolState.getSymbols()) {
-        const state = symbolState.get(symbol);
-        if (state?.latestBar) {
-          portfolioState.updatePrice(symbol, state.latestBar.close);
-        }
+    for (const symbol of symbolState.getSymbols()) {
+      const state = symbolState.get(symbol);
+      if (state?.latestBar) {
+        portfolioState.updatePrice(symbol, state.latestBar.close);
       }
-      equityCurve.push(portfolioState.getSnapshot());
     }
+    equityCurve.push(portfolioState.getSnapshot());
 
     orchestrator.stop();
-
-    const finalPortfolio = portfolioState.getSnapshot();
+    const finalPortfolio = equityCurve[equityCurve.length - 1];
     const completedAt = nowMs();
 
     const fills = orderState.getAllOrders().flatMap((o) => o.fills);

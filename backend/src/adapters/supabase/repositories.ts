@@ -262,14 +262,29 @@ export async function insertBacktestFills(backtestId: string, fills: Fill[]): Pr
 }
 
 /**
- * Persists a backtest result record.
+ * Downsamples a series of points to a maximum of targetPoints.
+ * Ensures the first and last points are preserved.
+ */
+export function downsampleEquityCurve<T>(curve: T[], targetPoints = 5000): T[] {
+  if (!curve || curve.length <= targetPoints) return curve;
+
+  const step = (curve.length - 1) / (targetPoints - 1);
+  const downsampled = [];
+  for (let i = 0; i < targetPoints - 1; i++) {
+    downsampled.push(curve[Math.floor(i * step)]);
+  }
+  downsampled.push(curve[curve.length - 1]);
+  return downsampled;
+}
+
+/**
+ * Persists a full backtest result summary to the backtest_results table.
  * @param result - The BacktestResult to insert
  * @returns void
  */
 export async function insertBacktestResult(result: BacktestResult): Promise<void> {
   const supabase = getSupabaseClient();
 
-  // Downsample equity curve to max 5000 points to prevent payload limits
   let downsampledEquity = result.equity_curve ?? [];
   if (downsampledEquity.length > 5000) {
     const step = (downsampledEquity.length - 1) / 4999;
