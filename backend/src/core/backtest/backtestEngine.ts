@@ -124,10 +124,23 @@ export class BacktestEngine {
       Date.now = realDateNow;
     }
 
+    // TASK 1: End-of-run Mark-to-Market (MTM)
+    // Ensure all open positions are valued at the latest observed price before final snapshot
+    const openPositions = portfolioState.getAllPositions();
+    for (const pos of openPositions) {
+      const symState = symbolState.get(pos.symbol);
+      if (symState && symState.latestBar) {
+        portfolioState.updatePrice(pos.symbol, symState.latestBar.close);
+      }
+    }
+
     orchestrator.stop();
 
     const finalPortfolio = portfolioState.getSnapshot();
     const completedAt = nowMs();
+    
+    // Add the final MTM snapshot to the equity curve so metrics use the marked value
+    equityCurve.push(finalPortfolio);
 
     const fills = orderState.getAllOrders().flatMap((o) => o.fills);
 
@@ -221,8 +234,10 @@ export class BacktestEngine {
       };
     }
 
-    const finalEquity = equityCurve[equityCurve.length - 1].equity;
-    const totalReturn = finalEquity - initialCapital;
+    // TASK 3: Reconcile totals with the portfolio ledger
+    // The portfolio is the source of truth for equity and total realized/unrealized PnL.
+    const lastSnapshot = equityCurve[equityCurve.length - 1];
+    const totalReturn = lastSnapshot.equity - initialCapital;
     const totalReturnPct = totalReturn / initialCapital;
 
     // Maximum drawdown

@@ -20,6 +20,7 @@ export class PortfolioStateManager {
   private readonly initialCapital: number;
   private positions: Map<Symbol, Position> = new Map();
   private totalRealizedPnl = 0;
+  private totalCommissions = 0;
 
   /**
    * Creates the portfolio state manager with an initial cash balance.
@@ -44,8 +45,10 @@ export class PortfolioStateManager {
       this._applySell(fill, position);
     }
 
-    // Deduct commission
+    // Deduct commission from cash AND track in realized P&L
     this.cash -= fill.commission;
+    this.totalCommissions += fill.commission;
+    this.totalRealizedPnl -= fill.commission; // Net realized PnL includes costs
   }
 
   /**
@@ -60,9 +63,17 @@ export class PortfolioStateManager {
     if (!position) return;
     position.currentPrice = currentPrice;
     position.marketValue = position.qty * currentPrice;
-    position.unrealizedPnl = (currentPrice - position.avgEntryPrice) * position.qty;
+    
+    if (position.qty > 0) {
+      // Long position
+      position.unrealizedPnl = (currentPrice - position.avgEntryPrice) * position.qty;
+    } else {
+      // Short position
+      position.unrealizedPnl = (position.avgEntryPrice - currentPrice) * Math.abs(position.qty);
+    }
+
     position.unrealizedPnlPct =
-      position.costBasis > 0 ? position.unrealizedPnl / position.costBasis : 0;
+      position.costBasis !== 0 ? position.unrealizedPnl / Math.abs(position.costBasis) : 0;
     position.updatedAt = nowMs();
   }
 
@@ -115,7 +126,7 @@ export class PortfolioStateManager {
       totalUnrealizedPnl,
       totalRealizedPnl: this.totalRealizedPnl,
       totalPnl,
-      returnPct: totalPnl / this.initialCapital,
+      returnPct: (equity - this.initialCapital) / this.initialCapital,
       positions,
       positionCount: positions.length,
     };
@@ -126,6 +137,7 @@ export class PortfolioStateManager {
     this.positions.clear();
     this.cash = this.initialCapital;
     this.totalRealizedPnl = 0;
+    this.totalCommissions = 0;
   }
 
   // ------------------------------------------------------------------
@@ -156,13 +168,19 @@ export class PortfolioStateManager {
     } else {
       if (existing.qty < 0) {
         // Covering a short: realize PnL
-        // qtyClosed is the portion of the buy that covers the short
-        const qtyClosed = Math.min(fill.qty, Math.abs(existing.qty));
-        const realizedPnl = (existing.avgEntryPrice - fill.price) * qtyClosed;
-        existing.realizedPnl += realizedPnl;
-        this.totalRealizedPnl += realizedPnl;
+        const qtyToClose = Math.min(fill.qty, Math.abs(existing.qty));
+        const pnl = (existing.avgEntryPrice - fill.price) * qtyToClose;
+        
+        existing.realizedPnl += pnl;
+        this.totalRealizedPnl += pnl;
 
+        const remainingFillQty = fill.qty - qtyToClose;
         existing.qty += fill.qty; // Moves closer to zero or becomes positive
+
+        if (existing.qty > 0) {
+          // Crossed from short to long: update entry price to the price of the new portion
+          existing.avgEntryPrice = fill.price;
+        }
       } else {
         // Increasing a long
         const totalQty = existing.qty + fill.qty;
@@ -174,15 +192,11 @@ export class PortfolioStateManager {
       if (existing.qty === 0) {
         this.positions.delete(fill.symbol);
       } else {
-        // If it crossed from short to long, the new avgEntryPrice is the fill price
-        if (existing.qty > 0 && existing.qty === fill.qty - Math.abs(existing.qty)) {
-           // Wait, this is a bit complex for a "smallest" edit.
-           // For pairs, we usually only open and close fully.
-           // Let's assume for now it doesn't cross zero in a single fill or it handles it simply.
-        }
         existing.costBasis = existing.avgEntryPrice * existing.qty;
         existing.marketValue = fill.price * existing.qty;
         existing.updatedAt = fill.ts;
+        // Re-calculate unrealized PnL immediately after qty change
+        this.updatePrice(fill.symbol, fill.price);
       }
     }
   }
@@ -212,14 +226,20 @@ export class PortfolioStateManager {
     } else {
       if (existing.qty > 0) {
         // Closing a long: realize PnL
-        const qtyClosed = Math.min(fill.qty, existing.qty);
-        const realizedPnl = (fill.price - existing.avgEntryPrice) * qtyClosed;
-        existing.realizedPnl += realizedPnl;
-        this.totalRealizedPnl += realizedPnl;
+        const qtyToClose = Math.min(fill.qty, existing.qty);
+        const pnl = (fill.price - existing.avgEntryPrice) * qtyToClose;
+        
+        existing.realizedPnl += pnl;
+        this.totalRealizedPnl += pnl;
 
-        existing.qty -= fill.qty;
+        existing.qty -= fill.qty; // Moves closer to zero or becomes negative
+
+        if (existing.qty < 0) {
+          // Crossed from long to short: update entry price to the price of the new portion
+          existing.avgEntryPrice = fill.price;
+        }
       } else {
-        // Increasing a short
+        // Increasing a short (qty is already negative)
         const totalQty = existing.qty - fill.qty;
         existing.avgEntryPrice =
           (existing.avgEntryPrice * Math.abs(existing.qty) + fill.price * fill.qty) / Math.abs(totalQty);
@@ -232,6 +252,8 @@ export class PortfolioStateManager {
         existing.costBasis = existing.avgEntryPrice * existing.qty;
         existing.marketValue = fill.price * existing.qty;
         existing.updatedAt = fill.ts;
+        // Re-calculate unrealized PnL immediately after qty change
+        this.updatePrice(fill.symbol, fill.price);
       }
     }
   }

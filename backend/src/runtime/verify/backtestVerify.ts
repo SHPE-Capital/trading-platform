@@ -281,6 +281,53 @@ async function main(): Promise<void> {
   }
 
   // ==================================================================
+  // CHECK 7 — Reconciliation (Accounting Invariants)
+  // ==================================================================
+  console.log("CHECK 7: Reconciliation (Accounting Invariants)");
+  const fp = row.final_portfolio;
+  if (!fp || typeof fp !== "object") {
+    fail("CHECK 7", "final_portfolio is missing or not an object");
+  } else {
+    const isClose = (a: number, b: number) => Math.abs(a - b) <= Math.max(1e-6, 1e-9 * Math.max(Math.abs(a), Math.abs(b)));
+    const issues: string[] = [];
+    
+    // 1. equity == cash + positionsValue
+    const calculatedEquity = fp.cash + fp.positionsValue;
+    if (!isClose(fp.equity, calculatedEquity)) {
+      issues.push(`Equity mismatch: ledger=${fp.equity.toFixed(4)}, calculated=${calculatedEquity.toFixed(4)} (gap=${(fp.equity - calculatedEquity).toFixed(6)})`);
+    }
+
+    // 2. metrics.totalReturn == totalRealizedPnl + totalUnrealizedPnl
+    const totalPnlFromLedger = fp.totalRealizedPnl + fp.totalUnrealizedPnl;
+    if (!isClose(m.totalReturn, totalPnlFromLedger)) {
+       issues.push(`PnL mismatch: metrics.totalReturn=${m.totalReturn.toFixed(4)}, realized+unrealized=${totalPnlFromLedger.toFixed(4)} (gap=${(m.totalReturn - totalPnlFromLedger).toFixed(6)})`);
+    }
+
+    // 3. metrics.totalReturn == final_equity - initialCapital
+    const returnFromEquity = fp.equity - fp.initialCapital;
+    if (!isClose(m.totalReturn, returnFromEquity)) {
+        issues.push(`Return mismatch: metrics.totalReturn=${m.totalReturn.toFixed(4)}, equityChange=${returnFromEquity.toFixed(4)} (gap=${(m.totalReturn - returnFromEquity).toFixed(6)})`);
+    }
+
+    // 4. Unrealized PnL MTM check
+    if (fp.positions && Array.isArray(fp.positions)) {
+      for (const p of fp.positions) {
+        if (p.qty !== 0 && !isClose(p.currentPrice, p.avgEntryPrice)) {
+          if (isClose(p.unrealizedPnl, 0)) {
+            issues.push(`${p.symbol} has qty=${p.qty} and price move (${p.avgEntryPrice.toFixed(2)}→${p.currentPrice.toFixed(2)}) but unrealizedPnl=0 (MTM fail)`);
+          }
+        }
+      }
+    }
+
+    if (issues.length === 0) {
+      pass("CHECK 7", "All ledger invariants hold (equity, PnL sum, and MTM)");
+    } else {
+      fail("CHECK 7", issues.join("; "));
+    }
+  }
+
+  // ==================================================================
   // Summary
   // ==================================================================
   console.log("\n=== Verification Summary ===");
