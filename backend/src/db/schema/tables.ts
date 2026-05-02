@@ -48,7 +48,8 @@ export interface StrategyRunsRow {
 
 /**
  * Table: orders
- * Full order lifecycle records.
+ * Full order lifecycle records for live and paper trading only.
+ * Backtest orders are stored in backtest_orders.
  */
 export interface OrdersRow {
   id: string;               // Internal order UUID
@@ -69,11 +70,13 @@ export interface OrdersRow {
   updated_at: string;
   closed_at: string | null;
   meta: object | null;
+  is_paper: boolean;        // true = paper trade, false = live trade
 }
 
 /**
  * Table: fills
- * Individual execution fill records.
+ * Individual execution fill records for live and paper trading only.
+ * Backtest fills are stored in backtest_fills.
  */
 export interface FillsRow {
   id: string;
@@ -86,6 +89,7 @@ export interface FillsRow {
   commission: number;
   ts: string;               // ISO timestamp
   exchange: string | null;
+  is_paper: boolean;        // true = paper trade, false = live trade
 }
 
 /**
@@ -111,6 +115,7 @@ export interface PortfolioSnapshotsRow {
 /**
  * Table: backtest_results
  * Persisted results from completed backtest runs.
+ * Orders and fills are stored in backtest_orders / backtest_fills (FK on backtest_id).
  */
 export interface BacktestResultsRow {
   id: string;
@@ -122,10 +127,46 @@ export interface BacktestResultsRow {
   final_portfolio: object;  // JSON PortfolioSnapshot
   metrics: object;          // JSON PerformanceMetrics
   equity_curve: object;     // JSON PortfolioSnapshot[]
-  orders: object;           // JSON Order[]
-  fills: object;            // JSON Fill[]
   event_count: number;
   created_at: string;
+}
+
+/**
+ * Table: backtest_orders
+ * Orders placed during a backtest run. Linked to backtest_results via backtest_id.
+ */
+export interface BacktestOrdersRow {
+  id: string;               // UUID primary key
+  backtest_id: string;      // FK → backtest_results.id ON DELETE CASCADE
+  strategy_id: string;      // Originating strategy ID
+  symbol: string;
+  side: string;             // "buy" | "sell"
+  qty: number;
+  filled_qty: number;
+  avg_fill_price: number | null;
+  order_type: string;
+  limit_price: number | null;
+  stop_price: number | null;
+  status: string;
+  submitted_at: string;     // ISO timestamp
+  closed_at: string | null; // ISO timestamp
+}
+
+/**
+ * Table: backtest_fills
+ * Fills generated during a backtest run. Linked to backtest_orders via order_id.
+ */
+export interface BacktestFillsRow {
+  id: string;               // UUID primary key
+  backtest_id: string;      // FK → backtest_results.id ON DELETE CASCADE
+  order_id: string;         // FK → backtest_orders.id ON DELETE CASCADE
+  symbol: string;
+  side: string;             // "buy" | "sell"
+  qty: number;
+  price: number;
+  notional: number;
+  commission: number;
+  ts: string;               // ISO timestamp
 }
 
 /**
