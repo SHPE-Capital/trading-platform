@@ -26,9 +26,9 @@ import type { UUID } from "../../types/common";
  * @param order - The Order object to insert
  * @returns void
  */
-export async function insertOrder(order: Order): Promise<void> {
+export async function insertOrder(order: Order, isPaper = true): Promise<void> {
   const supabase = getSupabaseClient();
-  const { error } = await supabase.from("orders").insert(order);
+  const { error } = await supabase.from("orders").insert({ ...order, is_paper: isPaper });
   if (error) logger.error("insertOrder failed", { error: error.message });
 }
 
@@ -72,9 +72,9 @@ export async function getOrdersByStrategyRun(strategyRunId: UUID): Promise<Order
  * @param fill - The Fill object to insert
  * @returns void
  */
-export async function insertFill(fill: Fill): Promise<void> {
+export async function insertFill(fill: Fill, isPaper = true): Promise<void> {
   const supabase = getSupabaseClient();
-  const { error } = await supabase.from("fills").insert(fill);
+  const { error } = await supabase.from("fills").insert({ ...fill, is_paper: isPaper });
   if (error) logger.error("insertFill failed", { error: error.message });
 }
 
@@ -186,36 +186,36 @@ export async function insertBacktestOrders(backtestId: string, orders: Order[]):
   }
   const supabase = getSupabaseClient();
   const CHUNK_SIZE = 1000;
-  
+
   for (let i = 0; i < orders.length; i += CHUNK_SIZE) {
     const chunk = orders.slice(i, i + CHUNK_SIZE);
     const payload = chunk.map(o => ({
-      id: o.id,
-      backtest_id: backtestId, // New linking column
-      strategy_id: o.strategyId || backtestId,
-      symbol: o.symbol,
-      side: o.side,
-      qty: o.qty,
-      filled_qty: o.filledQty,
-      avg_fill_price: o.avgFillPrice,
-      order_type: o.orderType,
-      limit_price: o.limitPrice,
-      stop_price: o.stopPrice,
-      status: o.status,
-      submitted_at: new Date(o.submittedAt).toISOString(),
-      closed_at: o.closedAt ? new Date(o.closedAt).toISOString() : null,
+      id:             o.id,
+      backtest_id:    backtestId,
+      strategy_id:    o.strategyId,
+      symbol:         o.symbol,
+      side:           o.side,
+      qty:            o.qty,
+      filled_qty:     o.filledQty,
+      avg_fill_price: o.avgFillPrice ?? null,
+      order_type:     o.orderType,
+      limit_price:    o.limitPrice ?? null,
+      stop_price:     o.stopPrice ?? null,
+      status:         o.status,
+      submitted_at:   new Date(o.submittedAt).toISOString(),
+      closed_at:      o.closedAt ? new Date(o.closedAt).toISOString() : null,
     }));
-    
+
     const { error } = await supabase.from("backtest_orders").insert(payload);
     if (error) {
       let msg = error.message || "Unknown error";
       if (msg.startsWith("<!DOCTYPE") || msg.startsWith("<html")) {
         msg = `HTML response (Cloudflare/5xx) - length: ${msg.length}`;
       }
-      logger.error("insertBacktestOrders failed on chunk", { 
-        error: { ...error, message: msg }, 
-        backtestId, 
-        chunkIndex: i 
+      logger.error("insertBacktestOrders failed on chunk", {
+        error: { ...error, message: msg },
+        backtestId,
+        chunkIndex: i,
       });
       throw new Error(`Failed to insert backtest orders chunk: ${msg}`);
     }
@@ -229,32 +229,32 @@ export async function insertBacktestFills(backtestId: string, fills: Fill[]): Pr
   }
   const supabase = getSupabaseClient();
   const CHUNK_SIZE = 1000;
-  
+
   for (let i = 0; i < fills.length; i += CHUNK_SIZE) {
     const chunk = fills.slice(i, i + CHUNK_SIZE);
     const payload = chunk.map(f => ({
-      id: f.id,
-      backtest_id: backtestId, // New linking column
-      order_id: f.orderId,
-      symbol: f.symbol,
-      side: f.side,
-      qty: f.qty,
-      price: f.price,
-      notional: f.notional,
-      commission: f.commission,
-      ts: f.isoTs || new Date(f.ts).toISOString(),
+      id:          f.id,
+      backtest_id: backtestId,
+      order_id:    f.orderId,
+      symbol:      f.symbol,
+      side:        f.side,
+      qty:         f.qty,
+      price:       f.price,
+      notional:    f.notional,
+      commission:  f.commission,
+      ts:          f.isoTs || new Date(f.ts).toISOString(),
     }));
-    
+
     const { error } = await supabase.from("backtest_fills").insert(payload);
     if (error) {
       let msg = error.message || "Unknown error";
       if (msg.startsWith("<!DOCTYPE") || msg.startsWith("<html")) {
         msg = `HTML response (Cloudflare/5xx) - length: ${msg.length}`;
       }
-      logger.error("insertBacktestFills failed on chunk", { 
-        error: { ...error, message: msg }, 
-        backtestId, 
-        chunkIndex: i 
+      logger.error("insertBacktestFills failed on chunk", {
+        error: { ...error, message: msg },
+        backtestId,
+        chunkIndex: i,
       });
       throw new Error(`Failed to insert backtest fills chunk: ${msg}`);
     }
@@ -262,23 +262,7 @@ export async function insertBacktestFills(backtestId: string, fills: Fill[]): Pr
 }
 
 /**
- * Downsamples a series of points to a maximum of targetPoints.
- * Ensures the first and last points are preserved.
- */
-export function downsampleEquityCurve<T>(curve: T[], targetPoints = 5000): T[] {
-  if (!curve || curve.length <= targetPoints) return curve;
-
-  const step = (curve.length - 1) / (targetPoints - 1);
-  const downsampled = [];
-  for (let i = 0; i < targetPoints - 1; i++) {
-    downsampled.push(curve[Math.floor(i * step)]);
-  }
-  downsampled.push(curve[curve.length - 1]);
-  return downsampled;
-}
-
-/**
- * Persists a full backtest result summary to the backtest_results table.
+ * Persists a backtest result record.
  * @param result - The BacktestResult to insert
  * @returns void
  */
@@ -286,7 +270,16 @@ export async function insertBacktestResult(result: BacktestResult): Promise<void
   const supabase = getSupabaseClient();
 
   // Downsample equity curve to max 5000 points to prevent payload limits
-  const downsampledEquity = downsampleEquityCurve(result.equity_curve, 5000);
+  let downsampledEquity = result.equity_curve ?? [];
+  if (downsampledEquity.length > 5000) {
+    const step = (downsampledEquity.length - 1) / 4999;
+    const newCurve = [];
+    for (let i = 0; i < 4999; i++) {
+      newCurve.push(downsampledEquity[Math.floor(i * step)]);
+    }
+    newCurve.push(downsampledEquity[downsampledEquity.length - 1]);
+    downsampledEquity = newCurve;
+  }
 
   const payload: any = {
     ...result,

@@ -115,17 +115,72 @@ describe('PortfolioStateManager', () => {
       ).not.toThrow();
     });
 
-    it('cash is increased by proceeds', () => {
+    it('cash increases by short sale proceeds', () => {
       const before = pm.getCash();
       pm.applyFill(makeFill({ side: 'sell', qty: 5, price: 100, commission: 0 }));
       expect(pm.getCash()).toBe(before + 5 * 100);
     });
 
-    it('creates a short position', () => {
+    it('opens a short position with correct fields', () => {
       pm.applyFill(makeFill({ side: 'sell', qty: 5, price: 100, commission: 0 }));
       const pos = pm.getPosition('SPY');
       expect(pos).not.toBeNull();
       expect(pos!.qty).toBe(-5);
+      expect(pos!.avgEntryPrice).toBe(100);
+      expect(pos!.marketValue).toBe(-500);
+      expect(pos!.costBasis).toBe(-500);
+      expect(pos!.unrealizedPnl).toBe(0);
+    });
+  });
+
+  describe('sell fill: increase existing short', () => {
+    it('computes weighted average entry price for a deepened short', () => {
+      pm.applyFill(makeFill({ side: 'sell', qty: 5, price: 100, commission: 0 })); // short 5 at 100
+      pm.applyFill(makeFill({ side: 'sell', qty: 3, price: 80, commission: 0 }));  // add 3 at 80
+      const pos = pm.getPosition('SPY')!;
+      expect(pos.qty).toBe(-8);
+      // weighted avg = (100*5 + 80*3) / 8 = (500+240)/8 = 92.5
+      expect(pos.avgEntryPrice).toBeCloseTo(92.5, 5);
+    });
+  });
+
+  describe('buy fill: cover a short position', () => {
+    it('realizes profit when covering at a lower price', () => {
+      pm.applyFill(makeFill({ side: 'sell', qty: 10, price: 100, commission: 0 })); // short at 100
+      pm.applyFill(makeFill({ side: 'buy', qty: 10, price: 80, commission: 0 }));   // cover at 80
+      expect(pm.getPosition('SPY')).toBeNull();
+      // pnl = (100 - 80) * 10 = 200
+      expect(pm.getSnapshot().totalRealizedPnl).toBe(200);
+    });
+
+    it('realizes loss when covering at a higher price', () => {
+      pm.applyFill(makeFill({ side: 'sell', qty: 10, price: 100, commission: 0 })); // short at 100
+      pm.applyFill(makeFill({ side: 'buy', qty: 10, price: 120, commission: 0 }));  // cover at 120
+      expect(pm.getPosition('SPY')).toBeNull();
+      // pnl = (100 - 120) * 10 = -200
+      expect(pm.getSnapshot().totalRealizedPnl).toBe(-200);
+    });
+
+    it('partial cover reduces short qty', () => {
+      pm.applyFill(makeFill({ side: 'sell', qty: 10, price: 100, commission: 0 }));
+      pm.applyFill(makeFill({ side: 'buy', qty: 4, price: 90, commission: 0 }));
+      const pos = pm.getPosition('SPY')!;
+      expect(pos.qty).toBe(-6);
+      expect(pos.avgEntryPrice).toBe(100);
+      // realized = (100 - 90) * 4 = 40
+      expect(pos.realizedPnl).toBe(40);
+    });
+  });
+
+  describe('sell fill: cross from long to short', () => {
+    it('books long PnL and opens a short for the excess qty', () => {
+      pm.applyFill(makeFill({ side: 'buy', qty: 5, price: 100, commission: 0 }));   // long 5 at 100
+      pm.applyFill(makeFill({ side: 'sell', qty: 8, price: 110, commission: 0 }));  // sell 8: closes 5, shorts 3
+      const pos = pm.getPosition('SPY')!;
+      expect(pos.qty).toBe(-3);
+      expect(pos.avgEntryPrice).toBe(110);
+      // realized pnl from closing the long = 5 * (110 - 100) = 50
+      expect(pm.getSnapshot().totalRealizedPnl).toBe(50);
     });
   });
 
