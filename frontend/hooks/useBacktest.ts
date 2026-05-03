@@ -20,7 +20,7 @@ interface UseBacktestResult {
   isRunning: boolean;
   error: string | null;
   run: (config: Omit<BacktestConfig, "id">) => Promise<string>;
-  loadResult: (id: string) => Promise<void>;
+  loadResult: (id: string, prefetched?: BacktestResult) => Promise<void>;
   refetch: () => void;
 }
 
@@ -60,8 +60,8 @@ export function useBacktest(): UseBacktestResult {
     }
   }, [fetchData]);
 
-  const loadResult = useCallback(async (id: string) => {
-    const result = await fetchBacktest(id);
+  const loadResult = useCallback(async (id: string, prefetched?: BacktestResult) => {
+    const result = prefetched ?? await fetchBacktest(id);
     setSelectedResult(result);
   }, []);
 

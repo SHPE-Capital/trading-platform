@@ -16,12 +16,15 @@ import { logger } from "../../utils/logger";
  */
 export function requestLogger(req: Request, res: Response, next: NextFunction): void {
   const start = Date.now();
+  // Snapshot before Express mutates req.url as the request descends into sub-routers.
+  // req.path would show only the sub-router-relative suffix by the time 'finish' fires.
+  const path = req.originalUrl.split("?")[0];
 
   res.on("finish", () => {
     const durationMs = Date.now() - start;
     logger.info("HTTP", {
       method: req.method,
-      path: req.path,
+      path,
       status: res.statusCode,
       durationMs,
     });

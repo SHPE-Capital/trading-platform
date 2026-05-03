@@ -22,8 +22,9 @@ export default function BacktestPage() {
   const handleRun = async (config: Parameters<typeof run>[0]) => {
     const id = await run(config);
     // The backtest runs asynchronously on the backend. Poll until it appears
-    // in the DB (status: completed or failed), then load the full result.
-    const POLL_INTERVAL_MS = 2_000;
+    // in the DB (status: completed or failed), then use the already-fetched
+    // result directly to avoid a redundant round trip.
+    const POLL_INTERVAL_MS = 500;
     const POLL_TIMEOUT_MS = 120_000;
     const deadline = Date.now() + POLL_TIMEOUT_MS;
     while (Date.now() < deadline) {
@@ -31,7 +32,7 @@ export default function BacktestPage() {
       try {
         const current = await fetchBacktest(id);
         if (current.status === "completed" || current.status === "failed") {
-          await loadResult(id);
+          await loadResult(id, current);
           break;
         }
       } catch {

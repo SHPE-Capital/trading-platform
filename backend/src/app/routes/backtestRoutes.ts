@@ -10,12 +10,16 @@ import {
   listBacktests,
   getBacktest,
   runBacktest,
+  streamBacktest,
 } from "../controllers/backtestController";
 
 const router = Router();
 
 /** GET /api/backtests — list all backtest result summaries */
 router.get("/", listBacktests);
+
+/** GET /api/backtests/:id/stream — SSE stream of live progress events for an active run */
+router.get("/:id/stream", streamBacktest);
 
 /** GET /api/backtests/:id — get full backtest result with equity curve */
 router.get("/:id", getBacktest);

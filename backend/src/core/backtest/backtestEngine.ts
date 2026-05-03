@@ -30,6 +30,7 @@ import type { BacktestConfig, BacktestResult } from "../../types/backtest";
 import type { PortfolioSnapshot } from "../../types/portfolio";
 import type { IStrategy } from "../../strategies/base/strategy";
 import type { Fill } from "../../types/orders";
+import type { BacktestProgressPoint } from "./backtestStreamManager";
 
 export class BacktestEngine {
   private readonly loader = new BacktestLoader();
@@ -51,6 +52,7 @@ export class BacktestEngine {
       orderState: OrderStateManager;
       eventBus: EventBus;
     }) => IStrategy[],
+    onProgress?: (point: BacktestProgressPoint) => void,
   ): Promise<BacktestResult> {
     const startedAt = nowMs();
     logger.info("BacktestEngine: starting", { id: config.id, name: config.name });
@@ -98,6 +100,9 @@ export class BacktestEngine {
     orchestrator.start();
 
     const realDateNow = Date.now;
+    const totalBars = bars.length;
+    // Sample at most 5000 equity curve points to prevent OOM on long backtests
+    const sampleEvery = Math.max(1, Math.floor(totalBars / 5000));
 
     try {
       // OVERRIDE: Simulate wall-clock time for the duration of the backtest loop.
@@ -105,6 +110,7 @@ export class BacktestEngine {
       // correctly advance with simulated bar time rather than collapsing all historical bars
       // into a single wall-clock millisecond.
       // TODO: Future refactor should remove this and inject a deterministic clock via `EvaluationContext`.
+      let barIndex = 0;
       for (const bar of bars) {
         Date.now = () => bar.ts;
         eventBus.publish({
@@ -116,8 +122,12 @@ export class BacktestEngine {
           payload: bar,
         });
 
-        // Take a portfolio snapshot after each bar for the equity curve
-        equityCurve.push(portfolioState.getSnapshot());
+        if (barIndex % sampleEvery === 0) {
+          const snap = portfolioState.getSnapshot();
+          equityCurve.push(snap);
+          onProgress?.({ ts: bar.ts, equity: snap.equity, barIndex, totalBars });
+        }
+        barIndex++;
       }
     } finally {
       // Guarantee restoration even if an error is thrown
