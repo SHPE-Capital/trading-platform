@@ -16,13 +16,13 @@ import {
   insertBacktestResult,
   insertBacktestOrders,
   insertBacktestFills,
+  updateBacktestResultStatus,
 } from "../../adapters/supabase/repositories";
 import { BacktestEngine } from "../../core/backtest/backtestEngine";
 import { PairsStrategy } from "../../strategies/pairs/pairsStrategy";
 import { createPairsConfig } from "../../strategies/pairs/pairsConfig";
 import { logger } from "../../utils/logger";
 import { newId } from "../../utils/ids";
-import { nowIso } from "../../utils/time";
 import type { BacktestConfig } from "../../types/backtest";
 
 /**
@@ -31,7 +31,7 @@ import type { BacktestConfig } from "../../types/backtest";
  * @param req - Express Request
  * @param res - Express Response: BacktestResult[] JSON array (without equity_curve)
  */
-export async function listBacktests(req: Request, res: Response): Promise<void> {
+export async function listBacktests(_req: Request, res: Response): Promise<void> {
   try {
     const results = await getAllBacktestResults();
     res.json(results);
@@ -92,8 +92,9 @@ export async function runBacktest(req: Request, res: Response): Promise<void> {
   // Run backtest asynchronously
   setImmediate(async () => {
     const engine = new BacktestEngine();
+    let resultInserted = false;
     try {
-      const result = await engine.run(config, ({ symbolState, portfolioState, orderState }) => {
+      const result = await engine.run(config, () => {
         // Factory creates the strategy specified in the config
         if (config.strategyConfig.type === "pairs_trading") {
           const pairsConfig = createPairsConfig(
@@ -106,11 +107,15 @@ export async function runBacktest(req: Request, res: Response): Promise<void> {
         return [];
       });
       await insertBacktestResult(result);
+      resultInserted = true;
       await insertBacktestOrders(result.id, result.orders);
       await insertBacktestFills(result.id, result.fills);
       logger.info("Backtest completed and saved", { id: config.id });
     } catch (err) {
       logger.error("Backtest failed", { id: config.id, err });
+      if (resultInserted) {
+        try { await updateBacktestResultStatus(config.id, "failed"); } catch {}
+      }
     }
   });
 }

@@ -261,10 +261,7 @@ export async function insertBacktestFills(backtestId: string, fills: Fill[]): Pr
   }
 }
 
-/**
- * Downsamples a series of points to a maximum of targetPoints.
- * Ensures the first and last points are preserved.
- */
+// Not currently used — waiting for frontend wiring to replace the inline logic in insertBacktestResult.
 export function downsampleEquityCurve<T>(curve: T[], targetPoints = 5000): T[] {
   if (!curve || curve.length <= targetPoints) return curve;
 
@@ -307,16 +304,34 @@ export async function insertBacktestResult(result: BacktestResult): Promise<void
   delete payload.orders;
   delete payload.fills;
 
-  const { error } = await supabase.from("backtest_results").insert(payload);
-  if (error) {
-    let msg = error.message || "Unknown error";
-    if (msg.startsWith("<!DOCTYPE") || msg.startsWith("<html")) {
-      msg = `HTML response (Cloudflare/5xx) - length: ${msg.length}`;
+  const MAX_RETRIES = 3;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    if (attempt > 0) {
+      await new Promise(r => setTimeout(r, 2000 * attempt));
+      logger.warn("insertBacktestResult: retrying after transient error", { attempt });
     }
-    const errObj = { ...error, message: msg };
-    logger.error("insertBacktestResult failed", { error: errObj });
-    throw new Error(`Failed to insert backtest result: ${msg}`);
+    const { error } = await supabase.from("backtest_results").insert(payload);
+    if (!error) return;
+
+    let msg = error.message || "Unknown error";
+    const isTransient = msg.startsWith("<!DOCTYPE") || msg.startsWith("<html");
+    if (isTransient) msg = `HTML response (Cloudflare/5xx) - length: ${msg.length}`;
+
+    if (!isTransient || attempt === MAX_RETRIES) {
+      logger.error("insertBacktestResult failed", { error: { ...error, message: msg } });
+      throw new Error(`Failed to insert backtest result: ${msg}`);
+    }
+    logger.warn("insertBacktestResult: transient 5xx, will retry", { attempt, msg });
   }
+}
+
+export async function updateBacktestResultStatus(id: string, status: string): Promise<void> {
+  const supabase = getSupabaseClient();
+  const { error } = await supabase
+    .from("backtest_results")
+    .update({ status })
+    .eq("id", id);
+  if (error) logger.error("updateBacktestResultStatus failed", { error: error.message, id });
 }
 
 /**
@@ -349,6 +364,7 @@ export async function getBacktestResultById(id: UUID): Promise<BacktestResult | 
     .eq("id", id)
     .single();
   if (error) {
+    if (error.code === 'PGRST116') return null;
     logger.error("getBacktestResultById failed", { error: error.message });
     return null;
   }

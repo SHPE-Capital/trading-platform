@@ -72,23 +72,29 @@ describe("repositories adapters", () => {
   });
 
   test("insertBacktestResult: summarizes HTML 5xx error responses", async () => {
+    jest.useFakeTimers();
     const htmlError = "<html><head><title>504 Gateway Time-out</title></head><body>Server Error</body></html>";
     mockSupabase.insert.mockResolvedValue({ error: { message: htmlError } });
-    
-    const result: any = { 
-      started_at: Date.now(), 
+
+    const result: any = {
+      started_at: Date.now(),
       completed_at: Date.now(),
-      equity_curve: [] 
+      equity_curve: []
     };
-    
-    await expect(insertBacktestResult(result)).rejects.toThrow(/HTML response \(Cloudflare\/5xx\)/);
+
+    const promise = insertBacktestResult(result);
+    promise.catch(() => {}); // prevent unhandled-rejection before .rejects is attached
+    // Advance through all retry delays (2s + 4s + 6s)
+    await jest.runAllTimersAsync();
+    await expect(promise).rejects.toThrow(/HTML response \(Cloudflare\/5xx\)/);
     expect(logger.error).toHaveBeenCalledWith(
-      "insertBacktestResult failed", 
-      expect.objectContaining({ 
-        error: expect.objectContaining({ 
-          message: expect.stringContaining("HTML response") 
-        }) 
+      "insertBacktestResult failed",
+      expect.objectContaining({
+        error: expect.objectContaining({
+          message: expect.stringContaining("HTML response")
+        })
       })
     );
+    jest.useRealTimers();
   });
 });

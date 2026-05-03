@@ -72,6 +72,7 @@ export class PairsStrategy extends BaseStrategy {
    */
   evaluate(context: EvaluationContext): StrategySignal | null {
     if (!this.isActive || !this.pairsConfig.enabled) return null;
+    if (context.symbol !== this.pairsConfig.leg1Symbol) return null;
     if (this._debugEnabled) this._debug.evaluateCalls++;
 
     const { symbolState } = context;
@@ -113,7 +114,7 @@ export class PairsStrategy extends BaseStrategy {
 
     // Enforce cooldown
     if (this.state.cooldownActive && this.state.cooldownExpiresAt !== null) {
-      if (ts < this.state.cooldownExpiresAt) {
+      if (ts <= this.state.cooldownExpiresAt) {
         if (this._debugEnabled) this._debug.cooldownSuppressed++;
         return null;
       }

@@ -174,7 +174,6 @@ export class PortfolioStateManager {
         existing.realizedPnl += pnl;
         this.totalRealizedPnl += pnl;
 
-        const remainingFillQty = fill.qty - qtyToClose;
         existing.qty += fill.qty; // Moves closer to zero or becomes positive
 
         if (existing.qty > 0) {

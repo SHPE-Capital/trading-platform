@@ -29,9 +29,11 @@ export default function BacktestPage() {
     while (Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
       try {
-        await loadResult(id);
         const current = await fetchBacktest(id);
-        if (current.status === "completed" || current.status === "failed") break;
+        if (current.status === "completed" || current.status === "failed") {
+          await loadResult(id);
+          break;
+        }
       } catch {
         // result not in DB yet — keep polling
       }

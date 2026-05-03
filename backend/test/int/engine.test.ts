@@ -99,7 +99,11 @@ describe("BacktestEngine Integration", () => {
   });
 
   test("INT 2.2 — Pairs leg consistency", async () => {
-    const pattern = [0, 3, 0]; // One entry, one exit
+    // With the leg1-only guard, evaluate() runs on SPY bars only. When SPY bar i fires it
+    // reads QQQ from bar i-1, giving spread_i = 100 + p_i + p_{i-1}.
+    // Pattern [0,0,3,3,0] → spreads [100, 103, 106, 103]: enough variance for z=1.0 entry
+    // on the 4th SPY bar and z≈0 exit on the 5th.
+    const pattern = [0, 0, 3, 3, 0];
     const barsSPY = createSyntheticBars("SPY", 400, pattern.length, pattern);
     const barsQQQ = createSyntheticBars("QQQ", 300, pattern.length, pattern.map(v => -v));
     const allBars = [...barsSPY, ...barsQQQ].sort((a, b) => a.ts - b.ts);
@@ -107,9 +111,9 @@ describe("BacktestEngine Integration", () => {
 
     const config: any = {
       id: "run-2",
-      strategyConfig: { 
-        id: "strat-1", enabled: true, symbols: ["SPY", "QQQ"], leg1Symbol: "SPY", leg2Symbol: "QQQ", 
-        rollingWindowMs: 3600000, olsWindowMs: 7200000, minObservations: 1, 
+      strategyConfig: {
+        id: "strat-1", enabled: true, symbols: ["SPY", "QQQ"], leg1Symbol: "SPY", leg2Symbol: "QQQ",
+        rollingWindowMs: 3600000, olsWindowMs: 7200000, minObservations: 1,
         entryZScore: 1.0, exitZScore: 0.5, stopLossZScore: 10, maxHoldingTimeMs: 86400000,
         tradeNotionalUsd: 10000, priceSource: "mid", orderCooldownMs: 0,
         hedgeRatioMethod: "fixed", fixedHedgeRatio: 1.0, type: "pairs_trading"
@@ -120,14 +124,15 @@ describe("BacktestEngine Integration", () => {
       startDate: "2023-01-01T00:00:00Z", endDate: "2023-01-01T01:00:00Z"
     };
     const strategyFactory = () => [new PairsStrategy(config.strategyConfig)];
-    
+
     const result = await engine.run(config as any, strategyFactory);
-    
+
     // Each entry signal should produce exactly 2 fills (one per symbol)
     // 1 entry (2 fills) + 1 exit (2 fills) = 4 fills total
     expect(result.fills.length).toBe(4);
-    
-    const entryFills = result.fills.filter(f => f.ts === allBars[2].ts); // index 2 is second bar (ts 60000)
+
+    // Entry fires on the 4th SPY bar (index 3), which is allBars[6] in the interleaved sorted array
+    const entryFills = result.fills.filter(f => f.ts === allBars[6].ts);
     expect(entryFills).toHaveLength(2);
     expect(new Set(entryFills.map(f => f.symbol))).toEqual(new Set(["SPY", "QQQ"]));
   });
@@ -160,7 +165,9 @@ describe("BacktestEngine Integration", () => {
   });
 
   test("INT 2.5 — Signal->intent listener single-fire", async () => {
-    const pattern = [0, 3]; 
+    // Needs 3 SPY-bar evaluations with non-uniform spreads so z-score is calculable.
+    // Pattern [0,0,3,3]: spreads [100, 103, 106] → z=1.0 on bar 3 fires exactly 1 entry = 2 orders.
+    const pattern = [0, 0, 3, 3];
     const barsSPY = createSyntheticBars("SPY", 400, pattern.length, pattern);
     const barsQQQ = createSyntheticBars("QQQ", 300, pattern.length, pattern.map(v => -v));
     (BacktestLoader.prototype.loadBars as jest.Mock).mockResolvedValue([...barsSPY, ...barsQQQ].sort((a, b) => a.ts - b.ts));

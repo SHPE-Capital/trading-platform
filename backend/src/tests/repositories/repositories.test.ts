@@ -44,6 +44,7 @@ import {
   insertBacktestFills,
   getAllBacktestResults,
   getBacktestResultById,
+  updateBacktestResultStatus,
 } from '../../adapters/supabase/repositories';
 import type { Order, Fill } from '../../types/orders';
 import type { PortfolioSnapshot } from '../../types/portfolio';
@@ -514,5 +515,34 @@ describe('getBacktestResultById', () => {
     mockFrom.mockReturnValue(chain);
     const result = await getBacktestResultById('bt-1');
     expect(result).toEqual(mockBacktestResult);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// updateBacktestResultStatus
+// ---------------------------------------------------------------------------
+describe('updateBacktestResultStatus', () => {
+  it('calls from("backtest_results").update({ status }).eq("id", id)', async () => {
+    const chain = buildChain({
+      eq: jest.fn().mockResolvedValue({ error: null }),
+    });
+    chain.update.mockReturnValue(chain);
+    mockFrom.mockReturnValue(chain);
+
+    await updateBacktestResultStatus('bt-1', 'failed');
+
+    expect(mockFrom).toHaveBeenCalledWith('backtest_results');
+    expect(chain.update).toHaveBeenCalledWith({ status: 'failed' });
+    expect(chain.eq).toHaveBeenCalledWith('id', 'bt-1');
+  });
+
+  it('does not throw when the update returns an error', async () => {
+    const chain = buildChain({
+      eq: jest.fn().mockResolvedValue({ error: { message: 'update failed' } }),
+    });
+    chain.update.mockReturnValue(chain);
+    mockFrom.mockReturnValue(chain);
+
+    await expect(updateBacktestResultStatus('bt-1', 'failed')).resolves.toBeUndefined();
   });
 });
