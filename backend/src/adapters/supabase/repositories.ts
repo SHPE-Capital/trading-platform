@@ -26,9 +26,9 @@ import type { UUID } from "../../types/common";
  * @param order - The Order object to insert
  * @returns void
  */
-export async function insertOrder(order: Order): Promise<void> {
+export async function insertOrder(order: Order, isPaper = true): Promise<void> {
   const supabase = getSupabaseClient();
-  const { error } = await supabase.from("orders").insert(order);
+  const { error } = await supabase.from("orders").insert({ ...order, is_paper: isPaper });
   if (error) logger.error("insertOrder failed", { error: error.message });
 }
 
@@ -72,9 +72,9 @@ export async function getOrdersByStrategyRun(strategyRunId: UUID): Promise<Order
  * @param fill - The Fill object to insert
  * @returns void
  */
-export async function insertFill(fill: Fill): Promise<void> {
+export async function insertFill(fill: Fill, isPaper = true): Promise<void> {
   const supabase = getSupabaseClient();
-  const { error } = await supabase.from("fills").insert(fill);
+  const { error } = await supabase.from("fills").insert({ ...fill, is_paper: isPaper });
   if (error) logger.error("insertFill failed", { error: error.message });
 }
 
@@ -179,15 +179,159 @@ export async function getAllStrategyRuns(): Promise<StrategyRun[]> {
 // Backtest Results
 // ------------------------------------------------------------------
 
+export async function insertBacktestOrders(backtestId: string, orders: Order[]): Promise<void> {
+  if (!orders || orders.length === 0) {
+    logger.info("insertBacktestOrders: no orders to insert", { backtestId });
+    return;
+  }
+  const supabase = getSupabaseClient();
+  const CHUNK_SIZE = 1000;
+
+  for (let i = 0; i < orders.length; i += CHUNK_SIZE) {
+    const chunk = orders.slice(i, i + CHUNK_SIZE);
+    const payload = chunk.map(o => ({
+      id:             o.id,
+      backtest_id:    backtestId,
+      strategy_id:    o.strategyId,
+      symbol:         o.symbol,
+      side:           o.side,
+      qty:            o.qty,
+      filled_qty:     o.filledQty,
+      avg_fill_price: o.avgFillPrice ?? null,
+      order_type:     o.orderType,
+      limit_price:    o.limitPrice ?? null,
+      stop_price:     o.stopPrice ?? null,
+      status:         o.status,
+      submitted_at:   new Date(o.submittedAt).toISOString(),
+      closed_at:      o.closedAt ? new Date(o.closedAt).toISOString() : null,
+    }));
+
+    const { error } = await supabase.from("backtest_orders").insert(payload);
+    if (error) {
+      let msg = error.message || "Unknown error";
+      if (msg.startsWith("<!DOCTYPE") || msg.startsWith("<html")) {
+        msg = `HTML response (Cloudflare/5xx) - length: ${msg.length}`;
+      }
+      logger.error("insertBacktestOrders failed on chunk", {
+        error: { ...error, message: msg },
+        backtestId,
+        chunkIndex: i,
+      });
+      throw new Error(`Failed to insert backtest orders chunk: ${msg}`);
+    }
+  }
+}
+
+export async function insertBacktestFills(backtestId: string, fills: Fill[]): Promise<void> {
+  if (!fills || fills.length === 0) {
+    logger.info("insertBacktestFills: no fills to insert", { backtestId });
+    return;
+  }
+  const supabase = getSupabaseClient();
+  const CHUNK_SIZE = 1000;
+
+  for (let i = 0; i < fills.length; i += CHUNK_SIZE) {
+    const chunk = fills.slice(i, i + CHUNK_SIZE);
+    const payload = chunk.map(f => ({
+      id:          f.id,
+      backtest_id: backtestId,
+      order_id:    f.orderId,
+      symbol:      f.symbol,
+      side:        f.side,
+      qty:         f.qty,
+      price:       f.price,
+      notional:    f.notional,
+      commission:  f.commission,
+      ts:          f.isoTs || new Date(f.ts).toISOString(),
+    }));
+
+    const { error } = await supabase.from("backtest_fills").insert(payload);
+    if (error) {
+      let msg = error.message || "Unknown error";
+      if (msg.startsWith("<!DOCTYPE") || msg.startsWith("<html")) {
+        msg = `HTML response (Cloudflare/5xx) - length: ${msg.length}`;
+      }
+      logger.error("insertBacktestFills failed on chunk", {
+        error: { ...error, message: msg },
+        backtestId,
+        chunkIndex: i,
+      });
+      throw new Error(`Failed to insert backtest fills chunk: ${msg}`);
+    }
+  }
+}
+
+// Not currently used — waiting for frontend wiring to replace the inline logic in insertBacktestResult.
+export function downsampleEquityCurve<T>(curve: T[], targetPoints = 5000): T[] {
+  if (!curve || curve.length <= targetPoints) return curve;
+
+  const step = (curve.length - 1) / (targetPoints - 1);
+  const downsampled = [];
+  for (let i = 0; i < targetPoints - 1; i++) {
+    downsampled.push(curve[Math.floor(i * step)]);
+  }
+  downsampled.push(curve[curve.length - 1]);
+  return downsampled;
+}
+
 /**
- * Persists a backtest result record.
+ * Persists a full backtest result summary to the backtest_results table.
  * @param result - The BacktestResult to insert
  * @returns void
  */
 export async function insertBacktestResult(result: BacktestResult): Promise<void> {
   const supabase = getSupabaseClient();
-  const { error } = await supabase.from("backtest_results").insert(result);
-  if (error) logger.error("insertBacktestResult failed", { error: error.message });
+
+  let downsampledEquity = result.equity_curve ?? [];
+  if (downsampledEquity.length > 5000) {
+    const step = (downsampledEquity.length - 1) / 4999;
+    const newCurve = [];
+    for (let i = 0; i < 4999; i++) {
+      newCurve.push(downsampledEquity[Math.floor(i * step)]);
+    }
+    newCurve.push(downsampledEquity[downsampledEquity.length - 1]);
+    downsampledEquity = newCurve;
+  }
+
+  const payload: any = {
+    ...result,
+    started_at: new Date(result.started_at).toISOString(),
+    completed_at: result.completed_at ? new Date(result.completed_at).toISOString() : null,
+    equity_curve: downsampledEquity,
+  };
+  
+  // Strip orders and fills from the summary row completely
+  delete payload.orders;
+  delete payload.fills;
+
+  const MAX_RETRIES = 3;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    if (attempt > 0) {
+      await new Promise(r => setTimeout(r, 2000 * attempt));
+      logger.warn("insertBacktestResult: retrying after transient error", { attempt });
+    }
+    const { error } = await supabase.from("backtest_results").insert(payload);
+    if (!error) return;
+
+    let msg = error.message || "Unknown error";
+    const isTransient = msg.startsWith("<!DOCTYPE") || msg.startsWith("<html");
+    if (isTransient) msg = `HTML response (Cloudflare/5xx) - length: ${msg.length}`;
+
+    if (!isTransient || attempt === MAX_RETRIES) {
+      logger.error("insertBacktestResult failed", { error: { ...error, message: msg } });
+      throw new Error(`Failed to insert backtest result: ${msg}`);
+    }
+    logger.warn("insertBacktestResult: transient 5xx, will retry", { attempt, msg });
+  }
+}
+
+export async function updateBacktestResultStatus(id: string, status: string): Promise<void> {
+  const supabase = getSupabaseClient();
+  const { error } = await supabase
+    .from("backtest_results")
+    .update({ status })
+    .eq("id", id);
+  if (error) logger.error("updateBacktestResultStatus failed", { error: error.message, id });
 }
 
 /**
@@ -220,6 +364,7 @@ export async function getBacktestResultById(id: UUID): Promise<BacktestResult | 
     .eq("id", id)
     .single();
   if (error) {
+    if (error.code === 'PGRST116') return null;
     logger.error("getBacktestResultById failed", { error: error.message });
     return null;
   }

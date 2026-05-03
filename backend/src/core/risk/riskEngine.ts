@@ -119,11 +119,16 @@ export class RiskEngine {
     const estimatedPrice = existingPosition?.currentPrice ?? intent.limitPrice ?? 0;
     if (estimatedPrice === 0) return null; // Can't check without a price estimate
 
-    const newNotional = existingNotional + intent.qty * estimatedPrice;
+    // New qty depends on side: Buy increases qty, Sell decreases qty.
+    // intent.qty is always positive.
+    const qtyDelta = intent.side === "buy" ? intent.qty : -intent.qty;
+    const newQty = (existingPosition?.qty ?? 0) + qtyDelta;
+    const newNotional = Math.abs(newQty * estimatedPrice);
+
     if (newNotional > this.config.maxPositionSizeUsd) {
       return {
         failedCheck: "MAX_POSITION_SIZE",
-        reason: `Order would exceed max position size of $${this.config.maxPositionSizeUsd} for ${intent.symbol}`,
+        reason: `Order would exceed max position size of $${this.config.maxPositionSizeUsd} for ${intent.symbol} (new notional: $${newNotional.toFixed(2)})`,
       };
     }
     return null;
@@ -135,12 +140,26 @@ export class RiskEngine {
   ): { failedCheck: string; reason: string } | null {
     const estimatedPrice = intent.limitPrice ?? 0;
     if (estimatedPrice === 0) return null;
-    const additionalNotional = intent.qty * estimatedPrice;
-    const totalExposure = portfolio.positionsValue + additionalNotional;
+
+    const intentNotional = intent.qty * estimatedPrice;
+    const existingPosition = portfolio.positions.find((p) => p.symbol === intent.symbol);
+    const existingNotional = existingPosition ? existingPosition.qty * existingPosition.currentPrice : 0;
+
+    // What would be the new notional for THIS symbol?
+    const qtyDelta = intent.side === "buy" ? intent.qty : -intent.qty;
+    const symbolNewNotional = ((existingPosition?.qty ?? 0) + qtyDelta) * (existingPosition?.currentPrice ?? estimatedPrice);
+
+    // Total notional = (all other positions) + |symbolNewNotional|
+    const otherPositionsNotional = portfolio.positions
+      .filter((p) => p.symbol !== intent.symbol)
+      .reduce((sum, p) => sum + Math.abs(p.qty * p.currentPrice), 0);
+
+    const totalExposure = otherPositionsNotional + Math.abs(symbolNewNotional);
+
     if (totalExposure > this.config.maxNotionalExposureUsd) {
       return {
         failedCheck: "MAX_NOTIONAL_EXPOSURE",
-        reason: `Order would exceed max notional exposure of $${this.config.maxNotionalExposureUsd}`,
+        reason: `Order would exceed max notional exposure of $${this.config.maxNotionalExposureUsd} (new total: $${totalExposure.toFixed(2)})`,
       };
     }
     return null;

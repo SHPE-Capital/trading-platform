@@ -84,10 +84,14 @@ export class Orchestrator {
     this.eventBus.on("TRADE_RECEIVED", (e) => this._onTrade(e as TradeReceivedEvent));
     this.eventBus.on("BAR_RECEIVED", (e) => this._onBar(e as BarReceivedEvent));
 
+    // Listen to signals to generate intents
+    this.eventBus.on("STRATEGY_SIGNAL_CREATED", (e) => this._onStrategySignal(e as any));
+
     // Wire order intent → risk → execution
     this.eventBus.on("ORDER_INTENT_CREATED", (e) => this._onOrderIntent(e as OrderIntentCreatedEvent));
 
-    // Wire fills back into portfolio and order state
+    // Wire fills and state updates back into portfolio and order state
+    this.eventBus.on("ORDER_SUBMITTED", (e) => this._onOrderSubmitted(e as any));
     this.eventBus.on("ORDER_FILLED", (e) => this._onOrderFilled(e as OrderFilledEvent));
     this.eventBus.on("ORDER_CANCELED", (e) => this._onOrderCanceled(e as OrderCanceledEvent));
 
@@ -180,6 +184,75 @@ export class Orchestrator {
     }
   }
 
+  /**
+   * Converts emitted StrategySignals into actionable OrderIntents.
+   * This currently serves both backtest mode and any future live integration.
+   * TODO: Revisit this routing logic when live order flow is fully wired up, 
+   * to ensure live execution doesn't require a separate dedicated signal router.
+   */
+  private _onStrategySignal(event: any): void {
+    const signal = event.payload;
+    if (!signal || signal.qty <= 0) return;
+
+    let side: "buy" | "sell";
+    if (signal.direction === "long" || signal.direction === "close_short") side = "buy";
+    else if (signal.direction === "short" || signal.direction === "close_long") side = "sell";
+    else return;
+
+    const intent = {
+      id: newId(),
+      strategyId: signal.strategyId,
+      symbol: signal.symbol,
+      side,
+      qty: signal.qty,
+      orderType: "market" as const,
+      timeInForce: "ioc" as const,
+      reason: signal.triggerLabel,
+      ts: nowMs(),
+    };
+
+    this.eventBus.publish({
+      id: newId(),
+      type: "ORDER_INTENT_CREATED",
+      ts: nowMs(),
+      mode: event.mode,
+      strategyId: signal.strategyId,
+      payload: intent,
+    });
+    
+    if (signal.meta && signal.meta.counterpartSymbol && signal.meta.counterpartDirection) {
+      let cSide: "buy" | "sell";
+      const cDir = signal.meta.counterpartDirection as string;
+      if (cDir === "long" || cDir === "close_short") cSide = "buy";
+      else if (cDir === "short" || cDir === "close_long") cSide = "sell";
+      else return;
+      
+      const cIntent = {
+        id: newId(),
+        strategyId: signal.strategyId,
+        symbol: signal.meta.counterpartSymbol as string,
+        side: cSide,
+        qty: Math.floor(signal.qty * ((signal.meta.hedgeRatio as number) || 1)),
+        orderType: "market" as const,
+        timeInForce: "ioc" as const,
+        reason: (signal.triggerLabel || "") + "_counterpart",
+        ts: nowMs(),
+      };
+
+      // Ensure counterpart qty > 0 to avoid rejection
+      if (cIntent.qty > 0) {
+        this.eventBus.publish({
+          id: newId(),
+          type: "ORDER_INTENT_CREATED",
+          ts: nowMs(),
+          mode: event.mode,
+          strategyId: signal.strategyId,
+          payload: cIntent,
+        });
+      }
+    }
+  }
+
   private _onOrderIntent(event: OrderIntentCreatedEvent): void {
     const riskResult = this.riskEngine.check(event.payload, this.portfolioState.getSnapshot());
     if (!riskResult.passed) {
@@ -195,6 +268,10 @@ export class Orchestrator {
       return;
     }
     this.executionEngine.submit(event.payload);
+  }
+
+  private _onOrderSubmitted(event: any): void {
+    this.orderState.addOrder(event.payload);
   }
 
   private _onOrderFilled(event: OrderFilledEvent): void {

@@ -139,6 +139,15 @@ describe('pre-entry: no signal', () => {
     expect(strategy.evaluate(makeContext(100, 100))).toBeNull();
   });
 
+  it('returns null when context.symbol is leg2Symbol (only evaluates on leg1 bar)', () => {
+    const strategy = makeStrategy();
+    const ctx: EvaluationContext = {
+      ...makeContext(100, 100),
+      symbol: 'B', // leg2 — should be ignored
+    };
+    expect(strategy.evaluate(ctx)).toBeNull();
+  });
+
   it('returns null when a symbol has no state', () => {
     const strategy = makeStrategy();
     const ctx: EvaluationContext = {
