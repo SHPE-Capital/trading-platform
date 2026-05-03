@@ -14,7 +14,7 @@
 import { BacktestEngine } from "../core/backtest/backtestEngine";
 import { PairsStrategy } from "../strategies/pairs/pairsStrategy";
 import { createPairsConfig } from "../strategies/pairs/pairsConfig";
-import { insertBacktestResult } from "../adapters/supabase/repositories";
+import { insertBacktestResult, insertBacktestOrders, insertBacktestFills } from "../adapters/supabase/repositories";
 import { logger } from "../utils/logger";
 import { newId } from "../utils/ids";
 import type { BacktestConfig } from "../types/backtest";
@@ -30,6 +30,7 @@ async function main(): Promise<void> {
     strategyConfig: pairsConfig as never,
     startDate: "2023-01-01T00:00:00Z",
     endDate: "2023-12-31T23:59:59Z",
+
     initialCapital: 100_000,
     dataGranularity: "bar",
     slippageBps: 5,
@@ -38,7 +39,13 @@ async function main(): Promise<void> {
   };
 
   const engine = new BacktestEngine();
-  const result = await engine.run(config, () => [new PairsStrategy(pairsConfig)]);
+  const strategy = new PairsStrategy(pairsConfig);
+  const result = await engine.run(config, () => [strategy]);
+
+  // Print signal funnel debug counters when BACKTEST_DEBUG=1
+  if (process.env.BACKTEST_DEBUG === "1") {
+    strategy.printDebugCounters();
+  }
 
   logger.info("runtime/backtest: completed", {
     id: result.id,
@@ -48,6 +55,14 @@ async function main(): Promise<void> {
   });
 
   await insertBacktestResult(result);
+  logger.info("runtime/backtest: summary persisted", { id: result.id, event_count: result.event_count });
+
+  await insertBacktestOrders(result.id, result.orders);
+  logger.info("runtime/backtest: orders persisted", { count: result.orders.length });
+
+  await insertBacktestFills(result.id, result.fills);
+  logger.info("runtime/backtest: fills persisted", { count: result.fills.length });
+
   logger.info("runtime/backtest: result persisted", { id: result.id });
 }
 

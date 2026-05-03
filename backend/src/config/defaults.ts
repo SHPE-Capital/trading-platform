@@ -31,6 +31,13 @@ export const DEFAULT_RISK_CONFIG: RiskConfig = {
   killSwitchActive: false,
 };
 
+/** Backtest risk configuration (enables short selling for pairs strategies) */
+export const BACKTEST_RISK_CONFIG: RiskConfig = {
+  ...DEFAULT_RISK_CONFIG,
+  allowShortSelling: true,
+  orderCooldownMs: 0, // Prevent blocking paired legs in backtest
+};
+
 /** Default heartbeat interval for the engine (ms) */
 export const DEFAULT_HEARTBEAT_INTERVAL_MS = 5_000;
 

@@ -1,4 +1,5 @@
 jest.mock('../../adapters/supabase/repositories');
+jest.mock('../../core/backtest/backtestEngine');
 jest.mock('../../config/env', () => ({
   env: {
     supabaseUrl: 'https://test.supabase.co',

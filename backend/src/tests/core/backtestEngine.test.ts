@@ -124,26 +124,49 @@ beforeEach(() => {
 });
 
 describe('run(): result structure', () => {
-  it('returns status=completed with empty equity curve when there are no bars', async () => {
+  it('returns status=completed with only the final MTM snapshot when there are no bars', async () => {
     const engine = makeEngineWithBars([]);
     const result = await engine.run(makeConfig(), () => []);
     expect(result.status).toBe('completed');
-    expect(result.equity_curve).toHaveLength(0);
+    // The engine always appends a final mark-to-market snapshot after the bar loop,
+    // so even with 0 bars the equity curve contains exactly 1 entry.
+    expect(result.equity_curve).toHaveLength(1);
     expect(result.fills).toHaveLength(0);
     expect(result.orders).toHaveLength(0);
     expect(result.event_count).toBe(0);
     expect(result.metrics.totalReturn).toBe(0);
   });
 
-  it('equity curve has one snapshot per bar when no strategy is registered', async () => {
+  it('equity curve has one snapshot per bar plus a final MTM snapshot', async () => {
     const bars = [makeBar('SPY', 1_000), makeBar('SPY', 2_000), makeBar('SPY', 3_000)];
     const engine = makeEngineWithBars(bars);
     const result = await engine.run(makeConfig(), () => []);
-    expect(result.equity_curve).toHaveLength(3);
+    // N bars → N per-bar snapshots + 1 final MTM = N+1
+    expect(result.equity_curve).toHaveLength(4);
     expect(result.event_count).toBe(3);
   });
 
-  it('all equity snapshots start at initialCapital when no trades are placed', async () => {
+  it('per-bar snapshots have timestamps matching bar timestamps', async () => {
+    const bars = [makeBar('SPY', 1_000), makeBar('SPY', 2_000), makeBar('SPY', 3_000)];
+    const engine = makeEngineWithBars(bars);
+    const result = await engine.run(makeConfig(), () => []);
+    expect(result.equity_curve[0].ts).toBe(1_000);
+    expect(result.equity_curve[1].ts).toBe(2_000);
+    expect(result.equity_curve[2].ts).toBe(3_000);
+    // Final MTM entry has a real-clock timestamp at or after the last bar
+    expect(result.equity_curve[3].ts).toBeGreaterThanOrEqual(3_000);
+  });
+
+  it('final_portfolio matches the last equity curve entry', async () => {
+    const bars = [makeBar('SPY', 1_000)];
+    const engine = makeEngineWithBars(bars);
+    const result = await engine.run(makeConfig(), () => []);
+    const last = result.equity_curve[result.equity_curve.length - 1];
+    expect(result.final_portfolio.id).toBe(last.id);
+    expect(result.final_portfolio.equity).toBe(last.equity);
+  });
+
+  it('all equity snapshots are at initialCapital when no trades are placed', async () => {
     const bars = [makeBar('SPY', 1_000), makeBar('SPY', 2_000)];
     const engine = makeEngineWithBars(bars);
     const result = await engine.run(makeConfig(), () => []);
@@ -158,6 +181,14 @@ describe('run(): result structure', () => {
     const result = await engine.run(cfg, () => []);
     expect(result.id).toBe('bt-unique');
     expect(result.config).toBe(cfg);
+  });
+
+  it('event_count reflects bar count not equity curve length', async () => {
+    const bars = [makeBar('SPY', 1_000), makeBar('SPY', 2_000)];
+    const engine = makeEngineWithBars(bars);
+    const result = await engine.run(makeConfig(), () => []);
+    expect(result.event_count).toBe(2);
+    expect(result.equity_curve.length).toBe(3); // bars + final MTM
   });
 });
 
@@ -223,5 +254,26 @@ describe('_computeMetrics', () => {
     const m = computeMetrics([makeSnap(102_000)], fills, 100_000, 0, 1);
     expect(m.winRate).toBe(1);
     expect(m.totalTrades).toBe(1);
+  });
+
+  it('correctly pairs short trades: sell then buy to cover', () => {
+    const fills = [
+      makeFill('SPY', 'sell', 10, 100), // short at 100
+      makeFill('SPY', 'buy', 10, 80),   // cover at 80 → pnl = (100-80)*10 = 200
+    ];
+    const m = computeMetrics([makeSnap(100_200)], fills, 100_000, 0, 1);
+    expect(m.totalTrades).toBe(1);
+    expect(m.winRate).toBe(1);
+    expect(m.avgWin).toBeCloseTo(200, 1);
+  });
+
+  it('winRate is 0 when all trades are losses', () => {
+    const fills = [
+      makeFill('SPY', 'buy', 10, 100),
+      makeFill('SPY', 'sell', 10, 90),  // pnl = -100
+    ];
+    const m = computeMetrics([makeSnap(99_000)], fills, 100_000, 0, 1);
+    expect(m.winRate).toBe(0);
+    expect(m.avgLoss).toBeCloseTo(-100, 1);
   });
 });

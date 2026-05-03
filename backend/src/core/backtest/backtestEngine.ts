@@ -22,6 +22,7 @@ import { RiskEngine } from "../risk/riskEngine";
 import { ExecutionEngine } from "../execution/executionEngine";
 import { SimulatedExecutionSink } from "../execution/simulatedExecution";
 import { BacktestLoader } from "./backtestLoader";
+import { BACKTEST_RISK_CONFIG } from "../../config/defaults";
 import { logger } from "../../utils/logger";
 import { nowMs, msToIso } from "../../utils/time";
 import { newId } from "../../utils/ids";
@@ -59,7 +60,7 @@ export class BacktestEngine {
     const symbolState = new SymbolStateManager();
     const portfolioState = new PortfolioStateManager(config.initialCapital);
     const orderState = new OrderStateManager();
-    const riskEngine = new RiskEngine();
+    const riskEngine = new RiskEngine(BACKTEST_RISK_CONFIG);
     const simulatedSink = new SimulatedExecutionSink(
       eventBus,
       symbolState,
@@ -96,24 +97,46 @@ export class BacktestEngine {
     const equityCurve: PortfolioSnapshot[] = [];
     orchestrator.start();
 
-    // Drive bars through the engine
-    for (const bar of bars) {
-      eventBus.publish({
-        id: newId(),
-        type: "BAR_RECEIVED",
-        ts: bar.ts,
-        mode: "backtest",
-        simulatedTs: bar.ts,
-        payload: bar,
-      });
+    const realDateNow = Date.now;
 
-      // Take a portfolio snapshot after each bar for the equity curve
-      equityCurve.push(portfolioState.getSnapshot());
+    try {
+      // OVERRIDE: Simulate wall-clock time for the duration of the backtest loop.
+      // This process-global patch ensures that strategies and state managers using `nowMs()`
+      // correctly advance with simulated bar time rather than collapsing all historical bars
+      // into a single wall-clock millisecond.
+      // TODO: Future refactor should remove this and inject a deterministic clock via `EvaluationContext`.
+      for (const bar of bars) {
+        Date.now = () => bar.ts;
+        eventBus.publish({
+          id: newId(),
+          type: "BAR_RECEIVED",
+          ts: bar.ts,
+          mode: "backtest",
+          simulatedTs: bar.ts,
+          payload: bar,
+        });
+
+        // Take a portfolio snapshot after each bar for the equity curve
+        equityCurve.push(portfolioState.getSnapshot());
+      }
+    } finally {
+      // Guarantee restoration even if an error is thrown
+      Date.now = realDateNow;
     }
 
-    orchestrator.stop();
+    // TASK 1: End-of-run Mark-to-Market (MTM)
+    // 5. Final MTM pass: value all open positions at the final bar's close price.
+    // This ensures totalReturn reflects current market value of open positions.
+    for (const symbol of symbolState.getSymbols()) {
+      const state = symbolState.get(symbol);
+      if (state?.latestBar) {
+        portfolioState.updatePrice(symbol, state.latestBar.close);
+      }
+    }
+    equityCurve.push(portfolioState.getSnapshot());
 
-    const finalPortfolio = portfolioState.getSnapshot();
+    orchestrator.stop();
+    const finalPortfolio = equityCurve[equityCurve.length - 1];
     const completedAt = nowMs();
 
     const fills = orderState.getAllOrders().flatMap((o) => o.fills);
@@ -135,7 +158,7 @@ export class BacktestEngine {
     logger.info("BacktestEngine: completed", {
       id: config.id,
       bars: bars.length,
-      totalReturn: result.metrics.totalReturnPct.toFixed(2) + "%",
+      totalReturn: (result.metrics.totalReturnPct * 100).toFixed(2) + "%",
     });
 
     return result;
@@ -152,21 +175,37 @@ export class BacktestEngine {
     periodStart: number,
     periodEnd: number,
   ) {
-    // Compute trade-level metrics by pairing buy+sell fills per symbol
+    // Compute trade-level metrics by pairing entry and exit fills per symbol
     const pnlPerTrade: number[] = [];
     const buyMap = new Map<string, Fill[]>();
+    const sellMap = new Map<string, Fill[]>();
 
     for (const fill of fills) {
       if (fill.side === "buy") {
-        const existing = buyMap.get(fill.symbol) ?? [];
-        existing.push(fill);
-        buyMap.set(fill.symbol, existing);
+        const sells = sellMap.get(fill.symbol);
+        if (sells && sells.length > 0) {
+          // Covering a short
+          const matchedSell = sells.shift()!;
+          const pnl = (matchedSell.price - fill.price) * fill.qty - fill.commission - matchedSell.commission;
+          pnlPerTrade.push(pnl);
+        } else {
+          // Opening a long
+          const existing = buyMap.get(fill.symbol) ?? [];
+          existing.push(fill);
+          buyMap.set(fill.symbol, existing);
+        }
       } else {
         const buys = buyMap.get(fill.symbol);
         if (buys && buys.length > 0) {
+          // Closing a long
           const matchedBuy = buys.shift()!;
           const pnl = (fill.price - matchedBuy.price) * fill.qty - fill.commission - matchedBuy.commission;
           pnlPerTrade.push(pnl);
+        } else {
+          // Opening a short
+          const existing = sellMap.get(fill.symbol) ?? [];
+          existing.push(fill);
+          sellMap.set(fill.symbol, existing);
         }
       }
     }
@@ -192,8 +231,10 @@ export class BacktestEngine {
       };
     }
 
-    const finalEquity = equityCurve[equityCurve.length - 1].equity;
-    const totalReturn = finalEquity - initialCapital;
+    // TASK 3: Reconcile totals with the portfolio ledger
+    // The portfolio is the source of truth for equity and total realized/unrealized PnL.
+    const lastSnapshot = equityCurve[equityCurve.length - 1];
+    const totalReturn = lastSnapshot.equity - initialCapital;
     const totalReturnPct = totalReturn / initialCapital;
 
     // Maximum drawdown

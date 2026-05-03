@@ -177,5 +177,5 @@ export interface PairsSignalMeta {
   /** The counterpart symbol (for paired order generation) */
   counterpartSymbol: Symbol;
   /** Direction for the counterpart symbol */
-  counterpartDirection: "long" | "short";
+  counterpartDirection: "long" | "short" | "close_long" | "close_short";
 }
