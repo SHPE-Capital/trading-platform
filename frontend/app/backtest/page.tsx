@@ -5,7 +5,7 @@
  * Allows users to configure and run a backtest, then view the resulting metrics,
  * equity curve, and trade log.
  *
- * Data:    useBacktest hook for run state, submit action, and result data.
+ * Data:    useBacktest hook for run state, SSE progress, and result data.
  * Layout:  Top = BacktestForm, Bottom = BacktestResults (shown after run completes).
  */
 
@@ -14,30 +14,12 @@
 import BacktestForm from "../../features/backtest/BacktestForm";
 import BacktestResults from "../../features/backtest/BacktestResults";
 import { useBacktest } from "../../hooks/useBacktest";
-import { fetchBacktest } from "../../services/backtestService";
 
 export default function BacktestPage() {
-  const { selectedResult, isRunning, error, run, loadResult } = useBacktest();
+  const { selectedResult, isRunning, progress, error, run } = useBacktest();
 
   const handleRun = async (config: Parameters<typeof run>[0]) => {
-    const id = await run(config);
-    // The backtest runs asynchronously on the backend. Poll until it appears
-    // in the DB (status: completed or failed), then load the full result.
-    const POLL_INTERVAL_MS = 2_000;
-    const POLL_TIMEOUT_MS = 120_000;
-    const deadline = Date.now() + POLL_TIMEOUT_MS;
-    while (Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
-      try {
-        const current = await fetchBacktest(id);
-        if (current.status === "completed" || current.status === "failed") {
-          await loadResult(id);
-          break;
-        }
-      } catch {
-        // result not in DB yet — keep polling
-      }
-    }
+    await run(config);
   };
 
   return (
@@ -63,8 +45,24 @@ export default function BacktestPage() {
               {error}
             </div>
           )}
-          {isRunning && (
-            <p className="text-sm text-zinc-400">Running backtest…</p>
+          {isRunning && !progress && (
+            <p className="text-sm text-zinc-400">Connecting…</p>
+          )}
+          {isRunning && progress && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-sm text-zinc-400">
+                <span>Running backtest…</span>
+                <span>
+                  {progress.pct}% — {progress.barIndex.toLocaleString()} / {progress.totalBars.toLocaleString()} bars
+                </span>
+              </div>
+              <div className="h-1.5 rounded-full bg-zinc-200 dark:bg-zinc-700">
+                <div
+                  className="h-1.5 rounded-full bg-blue-500 transition-all duration-300"
+                  style={{ width: `${progress.pct}%` }}
+                />
+              </div>
+            </div>
           )}
           {!isRunning && selectedResult && <BacktestResults result={selectedResult} />}
           {!isRunning && !selectedResult && !error && (
