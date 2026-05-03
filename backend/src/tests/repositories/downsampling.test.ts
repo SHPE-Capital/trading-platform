@@ -1,5 +1,5 @@
 
-import { downsampleEquityCurve } from "../../src/adapters/supabase/repositories";
+import { downsampleEquityCurve } from "../../adapters/supabase/repositories";
 
 describe("downsampleEquityCurve", () => {
   test("Series of length <= 5000 returned unchanged", () => {

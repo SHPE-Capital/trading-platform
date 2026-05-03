@@ -1,5 +1,5 @@
 
-import { logger } from "../../src/utils/logger";
+import { logger } from "../../utils/logger";
 
 describe("logger error serialization", () => {
   let stderrSpy: jest.SpyInstance;
@@ -15,11 +15,11 @@ describe("logger error serialization", () => {
   test("Error instances are serialized with name, message, and stack", () => {
     const err = new Error("boom");
     logger.error("Failed", { err });
-    
+
     const output = stderrSpy.mock.calls[0][0];
     const contextJson = output.substring(output.indexOf("{"));
     const parsed = JSON.parse(contextJson);
-    
+
     expect(parsed.err.message).toBe("boom");
     expect(parsed.err.name).toBe("Error");
     expect(parsed.err.stack).toBeDefined();
@@ -29,21 +29,21 @@ describe("logger error serialization", () => {
     const cause = new Error("root cause");
     const err = new Error("outer", { cause });
     logger.error("Failed", { err });
-    
+
     const output = stderrSpy.mock.calls[0][0];
     const contextJson = output.substring(output.indexOf("{"));
     const parsed = JSON.parse(contextJson);
-    
+
     expect(parsed.err.cause.message).toBe("root cause");
   });
 
   test("Non-Error context is unchanged", () => {
     logger.error("Failed", { user: "alice", count: 42 });
-    
+
     const output = stderrSpy.mock.calls[0][0];
     const contextJson = output.substring(output.indexOf("{"));
     const parsed = JSON.parse(contextJson);
-    
+
     expect(parsed.user).toBe("alice");
     expect(parsed.count).toBe(42);
   });

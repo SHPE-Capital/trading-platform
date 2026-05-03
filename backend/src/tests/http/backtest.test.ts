@@ -1,11 +1,11 @@
 
 import request from "supertest";
-import { createApp } from "../../src/app/index";
-import { BacktestEngine } from "../../src/core/backtest/backtestEngine";
-import * as repositories from "../../src/adapters/supabase/repositories";
+import { createApp } from "../../app/index";
+import { BacktestEngine } from "../../core/backtest/backtestEngine";
+import * as repositories from "../../adapters/supabase/repositories";
 
-jest.mock("../../src/core/backtest/backtestEngine");
-jest.mock("../../src/adapters/supabase/repositories");
+jest.mock("../../core/backtest/backtestEngine");
+jest.mock("../../adapters/supabase/repositories");
 
 describe("Backtest HTTP API", () => {
   const app = createApp();
@@ -23,7 +23,7 @@ describe("Backtest HTTP API", () => {
         orders: [],
         fills: [],
     };
-    
+
     (BacktestEngine.prototype.run as jest.Mock).mockResolvedValue(mockResult);
     (repositories.insertBacktestResult as jest.Mock).mockResolvedValue(undefined);
     (repositories.insertBacktestOrders as jest.Mock).mockResolvedValue(undefined);
@@ -74,14 +74,12 @@ describe("Backtest HTTP API", () => {
     expect(response.status).toBe(404);
   });
 
-  test("POST /api/backtest/run — handles engine throw (caught by controller)", async () => {
-    // Controller catches error in background, but the initial request might fail if validation throws
-    // Or if the request body is malformed JSON
+  test("POST /api/backtest/run — handles malformed JSON with 400", async () => {
     const response = await request(app)
       .post("/api/backtests/run")
       .send("invalid-json")
       .set("Content-Type", "application/json");
 
-    expect(response.status).toBe(400); // Express/Body-parser catch
+    expect(response.status).toBe(400);
   });
 });
