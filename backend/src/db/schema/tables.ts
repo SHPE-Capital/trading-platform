@@ -26,6 +26,19 @@ export interface InstrumentsRow {
 }
 
 /**
+ * Table: strategies
+ * Named, reusable strategy definitions. Each row is a saved config that
+ * can be launched into one or more strategy_runs.
+ */
+export interface StrategiesRow {
+  id: string;            // UUID primary key
+  strategy_type: string; // "pairs_trading" | "momentum" | "arbitrage" | "market_making" | "neural_network"
+  name: string;          // Human-readable label
+  config: object;        // Full strategy config (BaseStrategyConfig shape)
+  created_at: string;    // ISO timestamp
+}
+
+/**
  * Table: strategy_runs
  * Records every strategy execution instance (live, backtest, or replay).
  */

@@ -47,6 +47,10 @@ export interface BacktestConfig {
   dataGranularity: "bar" | "quote" | "trade";
   slippageBps: number;
   commissionPerShare: number;
+  /** Set when the user picked a saved strategy; written to backtest_results.strategy_id */
+  strategyId?: string;
+  /** Algorithm version of the saved strategy at run time */
+  strategyVersion?: number;
   description?: string;
 }
 
