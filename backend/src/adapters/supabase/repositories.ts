@@ -13,7 +13,7 @@ import { getSupabaseClient } from "./client";
 import { logger } from "../../utils/logger";
 import type { Order, Fill } from "../../types/orders";
 import type { PortfolioSnapshot } from "../../types/portfolio";
-import type { StrategyRun } from "../../types/strategy";
+import type { StrategyRun, Strategy } from "../../types/strategy";
 import type { BacktestResult } from "../../types/backtest";
 import type { UUID } from "../../types/common";
 
@@ -176,6 +176,66 @@ export async function getAllStrategyRuns(): Promise<StrategyRun[]> {
 }
 
 // ------------------------------------------------------------------
+// Strategy Definitions (strategies table)
+// ------------------------------------------------------------------
+
+export async function getAllStrategies(): Promise<Strategy[]> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase
+    .from("strategies")
+    .select("*")
+    .order("created_at", { ascending: false });
+  if (error) { logger.error("getAllStrategies failed", { error: error.message }); return []; }
+  return (data ?? []) as Strategy[];
+}
+
+export async function getStrategyById(id: UUID): Promise<Strategy | null> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase
+    .from("strategies").select("*").eq("id", id).single();
+  if (error) {
+    if (error.code === "PGRST116") return null;
+    logger.error("getStrategyById failed", { error: error.message });
+    return null;
+  }
+  return data as Strategy;
+}
+
+/** version is required — caller passes STRATEGY_DEFINITIONS[type].version */
+export async function insertStrategy(input: {
+  strategy_type: string;
+  version: number;
+  name: string;
+  config: Record<string, unknown>;
+}): Promise<Strategy> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase
+    .from("strategies").insert(input).select().single();
+  if (error) throw new Error(`insertStrategy failed: ${error.message}`);
+  return data as Strategy;
+}
+
+/** version is NOT changed — it reflects the algorithm version, not an edit counter */
+export async function updateStrategy(
+  id: UUID,
+  name: string,
+  config: Record<string, unknown>,
+): Promise<void> {
+  const supabase = getSupabaseClient();
+  const { error } = await supabase
+    .from("strategies")
+    .update({ name, config, updated_at: new Date().toISOString() })
+    .eq("id", id);
+  if (error) logger.error("updateStrategy failed", { error: error.message, id });
+}
+
+export async function deleteStrategy(id: UUID): Promise<void> {
+  const supabase = getSupabaseClient();
+  const { error } = await supabase.from("strategies").delete().eq("id", id);
+  if (error) logger.error("deleteStrategy failed", { error: error.message, id });
+}
+
+// ------------------------------------------------------------------
 // Backtest Results
 // ------------------------------------------------------------------
 
@@ -303,6 +363,10 @@ export async function insertBacktestResult(result: BacktestResult): Promise<void
   // Strip orders and fills from the summary row completely
   delete payload.orders;
   delete payload.fills;
+
+  // Persist the FK link to the strategy definition row if the config referenced one
+  payload.strategy_id = (result.config as { strategyId?: string }).strategyId ?? null;
+  payload.strategy_version = (result.config as { strategyVersion?: number }).strategyVersion ?? null;
 
   const MAX_RETRIES = 3;
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {

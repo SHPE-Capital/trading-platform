@@ -44,6 +44,10 @@ export interface BacktestConfig {
   slippageBps: number;
   /** Simulated commission per share */
   commissionPerShare: number;
+  /** Set when the user picked a saved strategy; written to backtest_results.strategy_id */
+  strategyId?: UUID;
+  /** Algorithm version of the saved strategy at run time */
+  strategyVersion?: number;
   /** Optional description */
   description?: string;
   /** Optional extra config */

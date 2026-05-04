@@ -28,6 +28,26 @@ export interface StrategyRun {
   realizedPnl: number;
 }
 
+/** A stored strategy definition row from the DB (strategies table) */
+export interface StoredStrategy {
+  id: string;
+  strategy_type: StrategyType;
+  version: number;
+  name: string;
+  config: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Hardcoded type definition returned by GET /strategies/configs/defaults/:type */
+export interface StrategyDefinition {
+  type: StrategyType;
+  label: string;
+  description: string;
+  version: number;
+  defaultConfig: Record<string, unknown>;
+}
+
 export interface PairsStrategyConfig {
   id: string;
   name: string;

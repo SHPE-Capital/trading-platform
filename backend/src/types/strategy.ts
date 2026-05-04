@@ -154,3 +154,22 @@ export interface StrategyRun {
   realizedPnl: number;
   meta?: Metadata;
 }
+
+// ------------------------------------------------------------------
+// Strategy Definition (strategies table)
+// ------------------------------------------------------------------
+
+/**
+ * A stored strategy definition row from the `strategies` table.
+ * version reflects the algorithm version at the time the config was created,
+ * not an edit counter — see config/strategyDefaults.ts for the source.
+ */
+export interface Strategy {
+  id: UUID;
+  strategy_type: StrategyType;
+  version: number;
+  name: string;
+  config: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
