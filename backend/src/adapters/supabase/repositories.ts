@@ -14,7 +14,7 @@ import { logger } from "../../utils/logger";
 import type { Order, Fill } from "../../types/orders";
 import type { PortfolioSnapshot } from "../../types/portfolio";
 import type { StrategyRun, Strategy } from "../../types/strategy";
-import type { BacktestResult } from "../../types/backtest";
+import type { BacktestConfig, BacktestResult } from "../../types/backtest";
 import type { UUID } from "../../types/common";
 
 // ------------------------------------------------------------------
@@ -277,17 +277,34 @@ export async function deleteStrategy(id: UUID): Promise<void> {
 // Backtest Results
 // ------------------------------------------------------------------
 
+// Runs `tasks` with at most `concurrency` in-flight at a time.
+// Rejects immediately if any task throws, mirroring Promise.all behaviour.
+async function runConcurrent<T>(tasks: (() => Promise<T>)[], concurrency: number): Promise<T[]> {
+  const results: T[] = [];
+  let index = 0;
+  async function worker(): Promise<void> {
+    while (index < tasks.length) {
+      const i = index++;
+      results[i] = await tasks[i]();
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, tasks.length) }, worker));
+  return results;
+}
+
+const CHUNK_SIZE = 1000;
+const CHUNK_CONCURRENCY = 4;
+
 export async function insertBacktestOrders(backtestId: string, orders: Order[]): Promise<void> {
   if (!orders || orders.length === 0) {
     logger.info("insertBacktestOrders: no orders to insert", { backtestId });
     return;
   }
   const supabase = getSupabaseClient();
-  const CHUNK_SIZE = 1000;
 
+  const chunks: object[][] = [];
   for (let i = 0; i < orders.length; i += CHUNK_SIZE) {
-    const chunk = orders.slice(i, i + CHUNK_SIZE);
-    const payload = chunk.map(o => ({
+    chunks.push(orders.slice(i, i + CHUNK_SIZE).map(o => ({
       id:             o.id,
       backtest_id:    backtestId,
       strategy_id:    o.strategyId,
@@ -302,22 +319,18 @@ export async function insertBacktestOrders(backtestId: string, orders: Order[]):
       status:         o.status,
       submitted_at:   new Date(o.submittedAt).toISOString(),
       closed_at:      o.closedAt ? new Date(o.closedAt).toISOString() : null,
-    }));
+    })));
+  }
 
+  await runConcurrent(chunks.map((payload, idx) => async () => {
     const { error } = await supabase.from("backtest_orders").insert(payload);
     if (error) {
       let msg = error.message || "Unknown error";
-      if (msg.startsWith("<!DOCTYPE") || msg.startsWith("<html")) {
-        msg = `HTML response (Cloudflare/5xx) - length: ${msg.length}`;
-      }
-      logger.error("insertBacktestOrders failed on chunk", {
-        error: { ...error, message: msg },
-        backtestId,
-        chunkIndex: i,
-      });
+      if (msg.startsWith("<!DOCTYPE") || msg.startsWith("<html")) msg = `HTML response (Cloudflare/5xx) - length: ${msg.length}`;
+      logger.error("insertBacktestOrders failed on chunk", { error: { ...error, message: msg }, backtestId, chunkIndex: idx });
       throw new Error(`Failed to insert backtest orders chunk: ${msg}`);
     }
-  }
+  }), CHUNK_CONCURRENCY);
 }
 
 export async function insertBacktestFills(backtestId: string, fills: Fill[]): Promise<void> {
@@ -326,11 +339,10 @@ export async function insertBacktestFills(backtestId: string, fills: Fill[]): Pr
     return;
   }
   const supabase = getSupabaseClient();
-  const CHUNK_SIZE = 1000;
 
+  const chunks: object[][] = [];
   for (let i = 0; i < fills.length; i += CHUNK_SIZE) {
-    const chunk = fills.slice(i, i + CHUNK_SIZE);
-    const payload = chunk.map(f => ({
+    chunks.push(fills.slice(i, i + CHUNK_SIZE).map(f => ({
       id:          f.id,
       backtest_id: backtestId,
       order_id:    f.orderId,
@@ -341,22 +353,18 @@ export async function insertBacktestFills(backtestId: string, fills: Fill[]): Pr
       notional:    f.notional,
       commission:  f.commission,
       ts:          f.isoTs || new Date(f.ts).toISOString(),
-    }));
+    })));
+  }
 
+  await runConcurrent(fills.length > 0 ? chunks.map((payload, idx) => async () => {
     const { error } = await supabase.from("backtest_fills").insert(payload);
     if (error) {
       let msg = error.message || "Unknown error";
-      if (msg.startsWith("<!DOCTYPE") || msg.startsWith("<html")) {
-        msg = `HTML response (Cloudflare/5xx) - length: ${msg.length}`;
-      }
-      logger.error("insertBacktestFills failed on chunk", {
-        error: { ...error, message: msg },
-        backtestId,
-        chunkIndex: i,
-      });
+      if (msg.startsWith("<!DOCTYPE") || msg.startsWith("<html")) msg = `HTML response (Cloudflare/5xx) - length: ${msg.length}`;
+      logger.error("insertBacktestFills failed on chunk", { error: { ...error, message: msg }, backtestId, chunkIndex: idx });
       throw new Error(`Failed to insert backtest fills chunk: ${msg}`);
     }
-  }
+  }) : [], CHUNK_CONCURRENCY);
 }
 
 // Not currently used — waiting for frontend wiring to replace the inline logic in insertBacktestResult.
@@ -427,6 +435,62 @@ export async function insertBacktestResult(result: BacktestResult): Promise<void
   }
 }
 
+// Recursively serializes an object with sorted keys so that two objects with the
+// same values but different insertion order produce the same string.
+function stableStringify(val: unknown): string {
+  if (val === null || typeof val !== "object") return JSON.stringify(val);
+  if (Array.isArray(val)) return `[${val.map(stableStringify).join(",")}]`;
+  const keys = Object.keys(val as Record<string, unknown>).sort();
+  return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify((val as Record<string, unknown>)[k])}`).join(",")}}`;
+}
+
+// Returns a stable fingerprint over the fields that define a unique backtest run.
+// Excludes id, name, description, and meta since they don't affect the simulation.
+// Includes strategyVersion so results from outdated algorithm versions are not reused.
+function backtestConfigKey(config: BacktestConfig): string {
+  return stableStringify({
+    startDate: config.startDate,
+    endDate: config.endDate,
+    initialCapital: config.initialCapital,
+    slippageBps: config.slippageBps,
+    commissionPerShare: config.commissionPerShare,
+    dataGranularity: config.dataGranularity,
+    strategyVersion: config.strategyVersion ?? null,
+    strategyConfig: config.strategyConfig,
+  });
+}
+
+/**
+ * Searches completed backtest results for one whose config fingerprint matches
+ * the supplied config. Filters by strategy_version in the DB query when available
+ * so outdated algorithm versions are never reused. Returns the full result
+ * (including equity_curve) if a match is found, otherwise null.
+ */
+export async function findMatchingBacktestResult(config: BacktestConfig): Promise<BacktestResult | null> {
+  const supabase = getSupabaseClient();
+  let query = supabase
+    .from("backtest_results")
+    .select("id, config, strategy_version, started_at, completed_at")
+    .eq("status", "completed")
+    .order("started_at", { ascending: false })
+    .limit(50);
+
+  // Filter by strategy_version at the DB level when it is known, so rows from
+  // other algorithm versions are excluded before any JS comparison.
+  if (config.strategyVersion != null) {
+    query = query.eq("strategy_version", config.strategyVersion);
+  }
+
+  const { data, error } = await query;
+  if (error || !data || data.length === 0) return null;
+
+  const key = backtestConfigKey(config);
+  const match = data.find((row) => backtestConfigKey(row.config as BacktestConfig) === key);
+  if (!match) return null;
+
+  return getBacktestResultById(match.id as string);
+}
+
 export async function updateBacktestResultStatus(id: string, status: string): Promise<void> {
   const supabase = getSupabaseClient();
   const { error } = await supabase
@@ -444,13 +508,13 @@ export async function getAllBacktestResults(): Promise<BacktestResult[]> {
   const supabase = getSupabaseClient();
   const { data, error } = await supabase
     .from("backtest_results")
-    .select("*")
+    .select("id, strategy_id, strategy_version, config, status, started_at, completed_at, error_message, final_portfolio, metrics, event_count, created_at")
     .order("started_at", { ascending: false });
   if (error) {
     logger.error("getAllBacktestResults failed", { error: error.message });
     return [];
   }
-  return (data ?? []) as BacktestResult[];
+  return (data ?? []) as unknown as BacktestResult[];
 }
 
 /**

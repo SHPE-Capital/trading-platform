@@ -64,6 +64,8 @@ export interface BacktestResult {
   metrics?: import("./portfolio").PerformanceMetrics;
   equity_curve?: import("./portfolio").PortfolioSnapshot[];
   event_count?: number;
+  /** Set when this result was served from a previous identical run. */
+  reused_from_id?: string;
 }
 
 export type ReplaySpeed = 0.25 | 0.5 | 1 | 2 | 5 | 10 | "step";
