@@ -12,13 +12,14 @@
  *   4. Instantiate and register strategies
  *   5. Start the Orchestrator
  *   6. Subscribe to symbols via MarketDataAdapter
- *   7. Start Express API server for frontend communication
+ *   7. Create HTTP server, attach WebSocket server, start listening
  *   8. Handle shutdown gracefully on SIGINT/SIGTERM
  *
  * Inputs:  Environment variables; strategy config from env/defaults.
  * Outputs: Running live paper trading session.
  */
 
+import http from "http";
 import { EventBus } from "../core/engine/eventBus";
 import { Orchestrator } from "../core/engine/orchestrator";
 import { SymbolStateManager } from "../core/state/symbolState";
@@ -32,6 +33,7 @@ import { AlpacaOrderExecutionAdapter } from "../adapters/alpaca/orderExecution";
 import { PairsStrategy } from "../strategies/pairs/pairsStrategy";
 import { createPairsConfig } from "../strategies/pairs/pairsConfig";
 import { createApp } from "../app/index";
+import { attachWebSocketServer } from "../app/websocket";
 import { env } from "../config/env";
 import { logger } from "../utils/logger";
 
@@ -80,10 +82,14 @@ async function main(): Promise<void> {
   orchestrator.start();
   marketDataAdapter.subscribe(pairsConfig.symbols);
 
-  // ---- Start API server ----
+  // ---- Start HTTP + WebSocket server ----
+  // http.createServer(app) shares one port for both REST and WebSocket
+  // upgrades; attachWebSocketServer scopes WS to /ws/events only.
   const app = createApp({ orchestrator, symbolState });
-  app.listen(env.port, () => {
-    logger.info(`API server listening on port ${env.port}`);
+  const server = http.createServer(app);
+  attachWebSocketServer(server, eventBus);
+  server.listen(env.port, () => {
+    logger.info(`Server listening on port ${env.port} (REST + WebSocket)`);
   });
 
   // ---- Graceful shutdown ----
@@ -92,6 +98,7 @@ async function main(): Promise<void> {
     orchestrator.stop();
     marketDataAdapter.disconnect();
     orderAdapter.disconnect();
+    server.close();
     process.exit(0);
   };
 
