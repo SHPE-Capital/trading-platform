@@ -14,7 +14,7 @@ import { logger } from "../../utils/logger";
 import type { Order, Fill } from "../../types/orders";
 import type { PortfolioSnapshot } from "../../types/portfolio";
 import type { StrategyRun, Strategy } from "../../types/strategy";
-import type { BacktestResult } from "../../types/backtest";
+import type { BacktestConfig, BacktestResult } from "../../types/backtest";
 import type { UUID } from "../../types/common";
 
 // ------------------------------------------------------------------
@@ -433,6 +433,62 @@ export async function insertBacktestResult(result: BacktestResult): Promise<void
     }
     logger.warn("insertBacktestResult: transient 5xx, will retry", { attempt, msg });
   }
+}
+
+// Recursively serializes an object with sorted keys so that two objects with the
+// same values but different insertion order produce the same string.
+function stableStringify(val: unknown): string {
+  if (val === null || typeof val !== "object") return JSON.stringify(val);
+  if (Array.isArray(val)) return `[${val.map(stableStringify).join(",")}]`;
+  const keys = Object.keys(val as Record<string, unknown>).sort();
+  return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify((val as Record<string, unknown>)[k])}`).join(",")}}`;
+}
+
+// Returns a stable fingerprint over the fields that define a unique backtest run.
+// Excludes id, name, description, and meta since they don't affect the simulation.
+// Includes strategyVersion so results from outdated algorithm versions are not reused.
+function backtestConfigKey(config: BacktestConfig): string {
+  return stableStringify({
+    startDate: config.startDate,
+    endDate: config.endDate,
+    initialCapital: config.initialCapital,
+    slippageBps: config.slippageBps,
+    commissionPerShare: config.commissionPerShare,
+    dataGranularity: config.dataGranularity,
+    strategyVersion: config.strategyVersion ?? null,
+    strategyConfig: config.strategyConfig,
+  });
+}
+
+/**
+ * Searches completed backtest results for one whose config fingerprint matches
+ * the supplied config. Filters by strategy_version in the DB query when available
+ * so outdated algorithm versions are never reused. Returns the full result
+ * (including equity_curve) if a match is found, otherwise null.
+ */
+export async function findMatchingBacktestResult(config: BacktestConfig): Promise<BacktestResult | null> {
+  const supabase = getSupabaseClient();
+  let query = supabase
+    .from("backtest_results")
+    .select("id, config, strategy_version, started_at, completed_at")
+    .eq("status", "completed")
+    .order("started_at", { ascending: false })
+    .limit(50);
+
+  // Filter by strategy_version at the DB level when it is known, so rows from
+  // other algorithm versions are excluded before any JS comparison.
+  if (config.strategyVersion != null) {
+    query = query.eq("strategy_version", config.strategyVersion);
+  }
+
+  const { data, error } = await query;
+  if (error || !data || data.length === 0) return null;
+
+  const key = backtestConfigKey(config);
+  const match = data.find((row) => backtestConfigKey(row.config as BacktestConfig) === key);
+  if (!match) return null;
+
+  return getBacktestResultById(match.id as string);
 }
 
 export async function updateBacktestResultStatus(id: string, status: string): Promise<void> {

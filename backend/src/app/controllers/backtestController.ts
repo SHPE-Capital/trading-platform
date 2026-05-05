@@ -13,6 +13,7 @@ import type { Request, Response } from "express";
 import {
   getAllBacktestResults,
   getBacktestResultById,
+  findMatchingBacktestResult,
   insertBacktestResult,
   insertBacktestOrders,
   insertBacktestFills,
@@ -138,6 +139,16 @@ export async function runBacktest(req: Request, res: Response): Promise<void> {
 
   // Run backtest asynchronously
   setImmediate(async () => {
+    // Dedup: if an identical config has already been run, serve that result instead.
+    const existing = await findMatchingBacktestResult(config);
+    if (existing) {
+      const reused = { ...existing, id: config.id, reused_from_id: existing.id };
+      cacheResult(reused as typeof existing);
+      backtestStreamManager.complete(config.id);
+      logger.info("Backtest deduplicated", { id: config.id, reusedFromId: existing.id });
+      return;
+    }
+
     const engine = new BacktestEngine();
     let resultInserted = false;
     try {

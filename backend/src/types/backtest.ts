@@ -90,4 +90,9 @@ export interface BacktestResult {
   fills: Fill[];
   /** Number of events processed */
   event_count: number;
+  /**
+   * Set when this result was served from a previous identical run.
+   * Contains the original backtest_results.id that was reused.
+   */
+  reused_from_id?: string;
 }
