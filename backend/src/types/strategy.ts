@@ -141,8 +141,11 @@ export interface StrategyRuntimeState {
 /** A persisted record of a strategy execution run */
 export interface StrategyRun {
   id: UUID;
+  /** References the strategies table config that was used to launch this run */
   strategyId: UUID;
   strategyType: StrategyType;
+  /** Algorithm version from STRATEGY_DEFINITIONS at launch time */
+  strategyVersion?: number;
   name: string;
   config: BaseStrategyConfig;
   status: StrategyRunStatus;

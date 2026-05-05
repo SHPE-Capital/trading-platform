@@ -4,12 +4,18 @@ import {
   getAllStrategies,
   getStrategyById,
   insertStrategy,
+  insertStrategyRun,
+  updateStrategyRun,
   updateStrategy,
   deleteStrategy,
 } from "../../adapters/supabase/repositories";
-import { STRATEGY_DEFINITIONS } from "../../config/strategyDefaults";
+import { STRATEGY_DEFINITIONS, STRATEGY_FACTORY } from "../../config/strategyDefaults";
+import { newId } from "../../utils/ids";
+import { nowMs } from "../../utils/time";
 import { logger } from "../../utils/logger";
 import type { AppContext } from "../context";
+import type { StrategyRun, StrategyType } from "../../types/strategy";
+import type { UUID } from "../../types/common";
 
 /**
  * GET /api/strategies
@@ -46,35 +52,91 @@ export async function getStrategyRun(req: Request, res: Response): Promise<void>
 /**
  * POST /api/strategies/start
  * Body: { strategyType: string, config: BaseStrategyConfig }
- * TODO: Add a strategy factory/registry so strategies can be instantiated from JSON config.
+ *
+ * Instantiates the strategy via STRATEGY_FACTORY, registers it with the
+ * live orchestrator, persists a strategy_runs row, and returns the run record.
+ * If the orchestrator has a marketDataAdapter (live mode), new symbols are
+ * subscribed automatically.
  */
 export async function startStrategyRun(req: Request, res: Response): Promise<void> {
-  const { strategyType, config } = req.body as { strategyType: string; config: unknown };
+  const { strategyType, config } = req.body as {
+    strategyType: string;
+    config: Record<string, unknown>;
+  };
+
   if (!strategyType || !config) {
     res.status(400).json({ error: "strategyType and config are required" });
     return;
   }
-  const { orchestrator } = req.app.locals.ctx as AppContext;
+
+  const factory = STRATEGY_FACTORY[strategyType];
+  if (!factory) {
+    res.status(400).json({ error: `Unknown strategy type: ${strategyType}` });
+    return;
+  }
+
+  const { orchestrator, marketDataAdapter } = req.app.locals.ctx as AppContext;
   if (!orchestrator) {
     res.status(503).json({ error: "Orchestrator not available in this runtime mode" });
     return;
   }
-  logger.info("startStrategyRun: received request", { strategyType });
-  res.status(501).json({ error: "Strategy factory not yet implemented" });
+
+  const def = STRATEGY_DEFINITIONS[strategyType];
+  const strategy = factory(config);
+
+  // Register with the orchestrator — also calls strategy.start() if already running
+  orchestrator.registerStrategy(strategy);
+
+  // Subscribe any new symbols to the market data feed
+  const symbols = Array.isArray(config.symbols) ? (config.symbols as string[]) : [];
+  if (marketDataAdapter && symbols.length > 0) {
+    marketDataAdapter.subscribe(symbols);
+  }
+
+  const runId = newId();
+  const now = nowMs();
+  const run: StrategyRun = {
+    id: runId,
+    strategyId: (config.id as UUID | undefined) ?? runId,
+    strategyType: strategyType as StrategyType,
+    strategyVersion: def?.version,
+    name: (config.name as string | undefined) ?? `${strategyType} run`,
+    config: config as unknown as StrategyRun["config"],
+    status: "running",
+    executionMode: "paper",
+    startedAt: now,
+    totalSignals: 0,
+    totalOrders: 0,
+    realizedPnl: 0,
+  };
+
+  await insertStrategyRun(run);
+  logger.info("startStrategyRun: strategy started", { runId, strategyId: strategy.id, strategyType });
+  res.status(201).json(run);
 }
 
 /**
  * POST /api/strategies/:id/stop
+ *
+ * Deregisters the strategy from the orchestrator (emits STRATEGY_STOPPED),
+ * then marks the run as stopped in the database.
  */
 export async function stopStrategyRun(req: Request, res: Response): Promise<void> {
-  const { id } = req.params;
+  const id = String(req.params.id) as UUID;
   const { orchestrator } = req.app.locals.ctx as AppContext;
   if (!orchestrator) {
     res.status(503).json({ error: "Orchestrator not available in this runtime mode" });
     return;
   }
-  orchestrator.deregisterStrategy(String(id));
-  logger.info("stopStrategyRun: strategy deregistered", { id });
+
+  if (!orchestrator.hasStrategy(id)) {
+    res.status(404).json({ error: `Strategy run ${id} is not currently running` });
+    return;
+  }
+
+  orchestrator.deregisterStrategy(id);
+  await updateStrategyRun(id, { status: "stopped", stoppedAt: nowMs() });
+  logger.info("stopStrategyRun: strategy stopped", { id });
   res.json({ message: `Strategy ${id} stopped` });
 }
 

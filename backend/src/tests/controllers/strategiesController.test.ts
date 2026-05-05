@@ -36,6 +36,9 @@ import {
 } from '../../app/controllers/strategiesController';
 import type { StrategyRun } from '../../types/strategy';
 
+const mockInsertRun = repos.insertStrategyRun as jest.Mock;
+const mockUpdateRun = repos.updateStrategyRun as jest.Mock;
+
 const mockGetAll = repos.getAllStrategyRuns as jest.Mock;
 
 function mockReq(overrides: Partial<Request> = {}): Request {
@@ -121,14 +124,38 @@ describe('startStrategyRun', () => {
 });
 
 describe('startStrategyRun: with orchestrator', () => {
-  it('returns 501 when orchestrator is present (factory not yet implemented)', async () => {
-    const orchestrator = { registerStrategy: jest.fn(), deregisterStrategy: jest.fn() };
+  it('returns 400 when strategy type is unknown', async () => {
+    const orchestrator = { registerStrategy: jest.fn() };
     const res = mockRes();
     await startStrategyRun(
-      ctxReq({ orchestrator }, { body: { strategyType: 'pairs_trading', config: {} } }),
+      ctxReq({ orchestrator }, { body: { strategyType: 'no_such_strategy', config: { name: 'x' } } }),
       res,
     );
-    expect(res.status).toHaveBeenCalledWith(501);
+    expect(res.status).toHaveBeenCalledWith(400);
+  });
+
+  it('returns 201 with run record for a valid pairs_trading start', async () => {
+    const orchestrator = { registerStrategy: jest.fn() };
+    mockInsertRun.mockResolvedValue(undefined);
+    const res = mockRes();
+    await startStrategyRun(
+      ctxReq(
+        { orchestrator },
+        {
+          body: {
+            strategyType: 'pairs_trading',
+            config: { name: 'Test Pairs', symbols: ['SPY', 'QQQ'], leg1Symbol: 'SPY', leg2Symbol: 'QQQ' },
+          },
+        },
+      ),
+      res,
+    );
+    expect(orchestrator.registerStrategy).toHaveBeenCalled();
+    expect(mockInsertRun).toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(201);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ strategyType: 'pairs_trading', status: 'running' }),
+    );
   });
 });
 
@@ -139,14 +166,33 @@ describe('stopStrategyRun', () => {
     expect(res.status).toHaveBeenCalledWith(503);
   });
 
+  it('returns 404 when strategy is not currently running', async () => {
+    const orchestrator = {
+      deregisterStrategy: jest.fn(),
+      hasStrategy: jest.fn().mockReturnValue(false),
+    };
+    const res = mockRes();
+    await stopStrategyRun(
+      ctxReq({ orchestrator }, { params: { id: 'run-1' } } as Partial<Request>),
+      res,
+    );
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(orchestrator.deregisterStrategy).not.toHaveBeenCalled();
+  });
+
   it('calls orchestrator.deregisterStrategy and returns 200', async () => {
-    const orchestrator = { deregisterStrategy: jest.fn() };
+    const orchestrator = {
+      deregisterStrategy: jest.fn(),
+      hasStrategy: jest.fn().mockReturnValue(true),
+    };
+    mockUpdateRun.mockResolvedValue(undefined);
     const res = mockRes();
     await stopStrategyRun(
       ctxReq({ orchestrator }, { params: { id: 'run-1' } } as Partial<Request>),
       res,
     );
     expect(orchestrator.deregisterStrategy).toHaveBeenCalledWith('run-1');
+    expect(mockUpdateRun).toHaveBeenCalledWith('run-1', expect.objectContaining({ status: 'stopped' }));
     expect(res.json).toHaveBeenCalledWith(
       expect.objectContaining({ message: expect.stringContaining('run-1') }),
     );

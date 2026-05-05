@@ -48,7 +48,8 @@ export class Orchestrator {
   ) {}
 
   /**
-   * Registers a strategy with the orchestrator and starts it.
+   * Registers a strategy. If the orchestrator is already running, starts the
+   * strategy immediately and emits STRATEGY_STARTED (or STRATEGY_ERROR on failure).
    * @param strategy - Any IStrategy implementation
    */
   registerStrategy(strategy: IStrategy): void {
@@ -57,18 +58,44 @@ export class Orchestrator {
       strategyId: strategy.id,
       type: strategy.type,
     });
+
+    if (this.running) {
+      try {
+        strategy.start();
+        this.eventBus.publish({
+          id: newId(), type: "STRATEGY_STARTED", ts: nowMs(), mode: this.mode,
+          strategyId: strategy.id, strategyType: strategy.type,
+        });
+      } catch (err) {
+        logger.error("Orchestrator: strategy.start threw", { strategyId: strategy.id, error: String(err) });
+        this.eventBus.publish({
+          id: newId(), type: "STRATEGY_ERROR", ts: nowMs(), mode: this.mode,
+          strategyId: strategy.id, strategyName: strategy.config.name,
+          error: String(err), phase: "start",
+        });
+      }
+    }
   }
 
   /**
-   * Removes and stops a strategy by ID.
+   * Removes and stops a strategy by ID. Returns true if the strategy was found.
    * @param strategyId - ID of the strategy to deregister
    */
-  deregisterStrategy(strategyId: string): void {
+  deregisterStrategy(strategyId: string): boolean {
     const strategy = this.strategies.get(strategyId);
-    if (strategy) {
-      strategy.stop();
-      this.strategies.delete(strategyId);
-    }
+    if (!strategy) return false;
+    strategy.stop();
+    this.strategies.delete(strategyId);
+    this.eventBus.publish({
+      id: newId(), type: "STRATEGY_STOPPED", ts: nowMs(), mode: this.mode,
+      strategyId: strategy.id,
+    });
+    return true;
+  }
+
+  /** Returns true if a strategy with the given ID is currently registered. */
+  hasStrategy(strategyId: string): boolean {
+    return this.strategies.has(strategyId);
   }
 
   /**

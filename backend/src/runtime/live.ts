@@ -85,7 +85,7 @@ async function main(): Promise<void> {
   // ---- Start HTTP + WebSocket server ----
   // http.createServer(app) shares one port for both REST and WebSocket
   // upgrades; attachWebSocketServer scopes WS to /ws/events only.
-  const app = createApp({ orchestrator, symbolState });
+  const app = createApp({ orchestrator, symbolState, marketDataAdapter });
   const server = http.createServer(app);
   attachWebSocketServer(server, eventBus);
   server.listen(env.port, () => {
