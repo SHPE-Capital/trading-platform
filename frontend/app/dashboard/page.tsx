@@ -11,6 +11,7 @@
 
 "use client";
 
+import { useState, useEffect } from "react";
 import SystemHealthCard from "../../components/cards/SystemHealthCard";
 import PortfolioSummaryCard from "../../components/cards/PortfolioSummaryCard";
 import StrategyStatusCard from "../../components/cards/StrategyStatusCard";
@@ -18,15 +19,53 @@ import PnLChart from "../../components/charts/PnLChart";
 import { usePortfolio } from "../../hooks/usePortfolio";
 import { useStrategies } from "../../hooks/useStrategies";
 import { useSystemHealth } from "../../hooks/useSystemHealth";
+import { useWebSocket } from "../../hooks/useWebSocket";
+
+interface StrategyErrorMsg {
+  type: string;
+  strategyId: string;
+  strategyName?: string;
+  error: string;
+  phase: string;
+}
 
 export default function DashboardPage() {
   const { snapshot, equityCurve, isLoading: portfolioLoading } = usePortfolio();
   const { runs, stopStrategy } = useStrategies();
   const { status: systemStatus, isLoading: systemLoading } = useSystemHealth();
 
+  const [strategyErrors, setStrategyErrors] = useState<StrategyErrorMsg[]>([]);
+  const { lastMessage: wsMsg } = useWebSocket<StrategyErrorMsg>("/ws/events");
+
+  useEffect(() => {
+    if (!wsMsg || wsMsg.type !== "STRATEGY_ERROR") return;
+    setStrategyErrors((prev) => [...prev, wsMsg]);
+  }, [wsMsg]);
+
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
       <h1 className="mb-6 text-xl font-semibold text-zinc-900 dark:text-zinc-50">Dashboard</h1>
+
+      {strategyErrors.map((e, i) => (
+        <div
+          key={i}
+          className="mb-4 flex items-start justify-between rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-300"
+        >
+          <span>
+            <span className="font-medium">Strategy error</span>
+            {" · "}
+            <code className="font-mono">{e.strategyName ?? e.strategyId}</code>
+            {" · "}phase: {e.phase}
+            {" · "}{e.error}
+          </span>
+          <button
+            onClick={() => setStrategyErrors((prev) => prev.filter((_, j) => j !== i))}
+            className="ml-4 shrink-0 text-red-400 hover:text-red-600"
+          >
+            ✕
+          </button>
+        </div>
+      ))}
 
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Left column: health + strategy cards */}

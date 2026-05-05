@@ -40,6 +40,7 @@ export type EventType =
   | "STRATEGY_SIGNAL_CREATED"
   | "STRATEGY_STARTED"
   | "STRATEGY_STOPPED"
+  | "STRATEGY_ERROR"
   // Risk events
   | "RISK_REJECTED"
   // System events
@@ -167,6 +168,17 @@ export interface StrategyStoppedEvent extends BaseEvent {
   reason?: string;
 }
 
+export interface StrategyErrorEvent extends BaseEvent {
+  type: "STRATEGY_ERROR";
+  strategyId: string;
+  /** Human-readable name from the strategy's saved config, if available */
+  strategyName?: string;
+  /** String(err) from the thrown exception */
+  error: string;
+  /** Which lifecycle phase the error occurred in */
+  phase: "evaluate" | "start" | "stop";
+}
+
 // ------------------------------------------------------------------
 // Risk Events
 // ------------------------------------------------------------------
@@ -219,6 +231,7 @@ export type TradingEvent =
   | StrategySignalCreatedEvent
   | StrategyStartedEvent
   | StrategyStoppedEvent
+  | StrategyErrorEvent
   | RiskRejectedEvent
   | EngineStartedEvent
   | EngineStoppedEvent

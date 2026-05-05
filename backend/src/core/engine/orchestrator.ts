@@ -95,9 +95,22 @@ export class Orchestrator {
     this.eventBus.on("ORDER_FILLED", (e) => this._onOrderFilled(e as OrderFilledEvent));
     this.eventBus.on("ORDER_CANCELED", (e) => this._onOrderCanceled(e as OrderCanceledEvent));
 
-    // Start all registered strategies
+    // Start all registered strategies and emit per-strategy lifecycle events
     for (const strategy of this.strategies.values()) {
-      strategy.start();
+      try {
+        strategy.start();
+        this.eventBus.publish({
+          id: newId(), type: "STRATEGY_STARTED", ts: nowMs(), mode: this.mode,
+          strategyId: strategy.id, strategyType: strategy.type,
+        });
+      } catch (err) {
+        logger.error("Orchestrator: strategy.start threw", { strategyId: strategy.id, error: String(err) });
+        this.eventBus.publish({
+          id: newId(), type: "STRATEGY_ERROR", ts: nowMs(), mode: this.mode,
+          strategyId: strategy.id, strategyName: strategy.config.name,
+          error: String(err), phase: "start",
+        });
+      }
     }
 
     this.eventBus.publish({
@@ -119,6 +132,10 @@ export class Orchestrator {
 
     for (const strategy of this.strategies.values()) {
       strategy.stop();
+      this.eventBus.publish({
+        id: newId(), type: "STRATEGY_STOPPED", ts: nowMs(), mode: this.mode,
+        strategyId: strategy.id,
+      });
     }
 
     this.eventBus.publish({
@@ -176,9 +193,12 @@ export class Orchestrator {
           });
         }
       } catch (err) {
-        logger.error("Orchestrator: strategy.evaluate threw", {
-          strategyId: strategy.id,
-          error: String(err),
+        const error = String(err);
+        logger.error("Orchestrator: strategy.evaluate threw", { strategyId: strategy.id, error });
+        this.eventBus.publish({
+          id: newId(), type: "STRATEGY_ERROR", ts: nowMs(), mode: this.mode,
+          strategyId: strategy.id, strategyName: strategy.config.name,
+          error, phase: "evaluate",
         });
       }
     }
@@ -277,6 +297,10 @@ export class Orchestrator {
   private _onOrderFilled(event: OrderFilledEvent): void {
     this.orderState.applyFill(event.orderId, event.fill);
     this.portfolioState.applyFill(event.fill);
+    this.eventBus.publish({
+      id: newId(), type: "PORTFOLIO_UPDATED", ts: nowMs(), mode: this.mode,
+      payload: this.portfolioState.getSnapshot(),
+    });
   }
 
   private _onOrderCanceled(event: OrderCanceledEvent): void {
