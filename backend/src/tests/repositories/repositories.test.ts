@@ -272,7 +272,10 @@ describe('insertStrategyRun', () => {
     mockFrom.mockReturnValue(chain);
     await insertStrategyRun(mockStrategyRun);
     expect(mockFrom).toHaveBeenCalledWith('strategy_runs');
-    expect(chain.insert).toHaveBeenCalledWith(mockStrategyRun);
+    const [payload] = chain.insert.mock.calls[0];
+    // Repository maps camelCase StrategyRun → snake_case DB columns
+    expect(payload.id).toBe(mockStrategyRun.id);
+    expect(payload.strategy_id).toBe(mockStrategyRun.strategyId);
   });
 });
 
@@ -304,14 +307,26 @@ describe('getAllStrategyRuns', () => {
   });
 
   it('returns array on success', async () => {
-    const runs = [mockStrategyRun];
+    // DB returns snake_case rows; repository maps them to camelCase StrategyRun objects
+    const dbRow = {
+      id: 'run-1', strategy_id: 'strat-1', strategy_type: 'pairs_trading',
+      name: 'test', config: {}, status: 'running', execution_mode: 'paper',
+      started_at: new Date(1_000_000).toISOString(),
+      total_signals: 0, total_orders: 0, realized_pnl: 0,
+    };
     const chain = buildChain({
-      order: jest.fn().mockResolvedValue({ data: runs, error: null }),
+      order: jest.fn().mockResolvedValue({ data: [dbRow], error: null }),
     });
     chain.select.mockReturnValue(chain);
     mockFrom.mockReturnValue(chain);
     const result = await getAllStrategyRuns();
-    expect(result).toEqual(runs);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toEqual(expect.objectContaining({
+      id: 'run-1',
+      strategyId: 'strat-1',
+      strategyType: 'pairs_trading',
+      status: 'running',
+    }));
   });
 });
 

@@ -12,7 +12,13 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { fetchPortfolioSnapshot, fetchEquityCurve } from "../services/portfolioService";
+import { useWebSocket } from "./useWebSocket";
 import type { PortfolioSnapshot } from "../types/portfolio";
+
+interface PortfolioUpdatedMsg {
+  type: string;
+  payload: PortfolioSnapshot;
+}
 
 interface UsePortfolioResult {
   snapshot: PortfolioSnapshot | null;
@@ -32,6 +38,18 @@ export function usePortfolio(pollIntervalMs = 30_000): UsePortfolioResult {
   const [equityCurve, setEquityCurve] = useState<PortfolioSnapshot[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const { lastMessage } = useWebSocket<PortfolioUpdatedMsg>("/ws/events");
+
+  useEffect(() => {
+    if (!lastMessage || lastMessage.type !== "PORTFOLIO_UPDATED") return;
+    const snap = lastMessage.payload;
+    setSnapshot(snap);
+    setEquityCurve((prev) => {
+      if (prev.length > 0 && prev[prev.length - 1]?.ts === snap.ts) return prev;
+      return [...prev, snap];
+    });
+  }, [lastMessage]);
 
   const fetchData = useCallback(async () => {
     try {

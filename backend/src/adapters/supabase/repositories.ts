@@ -135,32 +135,70 @@ export async function getPortfolioEquityCurve(limit = 500): Promise<PortfolioSna
 // Strategy Runs
 // ------------------------------------------------------------------
 
+// Maps a raw Supabase row (snake_case) to the camelCase StrategyRun type.
+function mapStrategyRun(row: Record<string, unknown>): StrategyRun {
+  return {
+    id: row.id as UUID,
+    strategyId: row.strategy_id as UUID,
+    strategyType: row.strategy_type as StrategyRun["strategyType"],
+    strategyVersion: row.strategy_version as number | undefined,
+    name: row.name as string,
+    config: row.config as StrategyRun["config"],
+    status: row.status as StrategyRun["status"],
+    executionMode: row.execution_mode as string,
+    startedAt: row.started_at ? new Date(row.started_at as string).getTime() : Date.now(),
+    stoppedAt: row.stopped_at ? new Date(row.stopped_at as string).getTime() : undefined,
+    totalSignals: (row.total_signals as number) ?? 0,
+    totalOrders: (row.total_orders as number) ?? 0,
+    realizedPnl: (row.realized_pnl as number) ?? 0,
+    meta: row.meta as StrategyRun["meta"],
+  };
+}
+
 /**
  * Persists a new strategy run record.
- * @param run - The StrategyRun to insert
- * @returns void
+ * Converts camelCase StrategyRun fields to snake_case DB columns.
  */
 export async function insertStrategyRun(run: StrategyRun): Promise<void> {
   const supabase = getSupabaseClient();
-  const { error } = await supabase.from("strategy_runs").insert(run);
+  const payload = {
+    id: run.id,
+    strategy_id: run.strategyId,
+    strategy_type: run.strategyType,
+    strategy_version: run.strategyVersion ?? null,
+    name: run.name,
+    config: run.config,
+    status: run.status,
+    execution_mode: run.executionMode,
+    started_at: run.startedAt ? new Date(run.startedAt).toISOString() : null,
+    stopped_at: run.stoppedAt ? new Date(run.stoppedAt).toISOString() : null,
+    total_signals: run.totalSignals,
+    total_orders: run.totalOrders,
+    realized_pnl: run.realizedPnl,
+    meta: run.meta ?? null,
+  };
+  const { error } = await supabase.from("strategy_runs").insert(payload);
   if (error) logger.error("insertStrategyRun failed", { error: error.message });
 }
 
 /**
  * Updates a strategy run record (e.g. on stop or error).
- * @param runId - Strategy run ID
- * @param updates - Fields to update
- * @returns void
+ * Only maps fields that are present in the updates object.
  */
 export async function updateStrategyRun(runId: UUID, updates: Partial<StrategyRun>): Promise<void> {
   const supabase = getSupabaseClient();
-  const { error } = await supabase.from("strategy_runs").update(updates).eq("id", runId);
+  const payload: Record<string, unknown> = {};
+  if (updates.status !== undefined)       payload.status         = updates.status;
+  if (updates.stoppedAt !== undefined)    payload.stopped_at     = new Date(updates.stoppedAt).toISOString();
+  if (updates.totalSignals !== undefined) payload.total_signals  = updates.totalSignals;
+  if (updates.totalOrders !== undefined)  payload.total_orders   = updates.totalOrders;
+  if (updates.realizedPnl !== undefined)  payload.realized_pnl   = updates.realizedPnl;
+  const { error } = await supabase.from("strategy_runs").update(payload).eq("id", runId);
   if (error) logger.error("updateStrategyRun failed", { error: error.message });
 }
 
 /**
- * Retrieves all strategy run records.
- * @returns Array of StrategyRun records
+ * Retrieves all strategy run records, mapped to camelCase StrategyRun objects.
  */
 export async function getAllStrategyRuns(): Promise<StrategyRun[]> {
   const supabase = getSupabaseClient();
@@ -172,7 +210,7 @@ export async function getAllStrategyRuns(): Promise<StrategyRun[]> {
     logger.error("getAllStrategyRuns failed", { error: error.message });
     return [];
   }
-  return (data ?? []) as StrategyRun[];
+  return (data ?? []).map((row) => mapStrategyRun(row as Record<string, unknown>));
 }
 
 // ------------------------------------------------------------------
@@ -365,8 +403,8 @@ export async function insertBacktestResult(result: BacktestResult): Promise<void
   delete payload.fills;
 
   // Persist the FK link to the strategy definition row if the config referenced one
-  payload.strategy_id = (result.config as { strategyId?: string }).strategyId ?? null;
-  payload.strategy_version = (result.config as { strategyVersion?: number }).strategyVersion ?? null;
+  payload.strategy_id = result.config ? (result.config as { strategyId?: string }).strategyId ?? null : null;
+  payload.strategy_version = result.config ? (result.config as { strategyVersion?: number }).strategyVersion ?? null : null;
 
   const MAX_RETRIES = 3;
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {

@@ -11,7 +11,10 @@
  */
 
 import type { StrategyType } from "../types/strategy";
+import type { IStrategy } from "../strategies/base/strategy";
 import { DEFAULT_PAIRS_CONFIG } from "../strategies/pairs/pairsConfig";
+import { PairsStrategy } from "../strategies/pairs/pairsStrategy";
+import type { PairsStrategyConfig } from "../strategies/pairs/pairsTypes";
 
 export interface StrategyDefinition {
   type: StrategyType;
@@ -21,6 +24,17 @@ export interface StrategyDefinition {
   version: number;
   defaultConfig: Record<string, unknown>;
 }
+
+/**
+ * Maps each strategy type to a factory function that instantiates the
+ * corresponding IStrategy from a raw config object. Used by startStrategyRun
+ * to create strategy instances from JSON payloads at runtime.
+ *
+ * Add a new entry here whenever a new strategy type is introduced.
+ */
+export const STRATEGY_FACTORY: Record<string, (config: Record<string, unknown>) => IStrategy> = {
+  pairs_trading: (config) => new PairsStrategy(config as unknown as PairsStrategyConfig),
+};
 
 export const STRATEGY_DEFINITIONS: Record<string, StrategyDefinition> = {
   pairs_trading: {
