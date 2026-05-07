@@ -102,7 +102,20 @@ export async function getOrdersByStrategyRun(strategyRunId: UUID): Promise<Order
  */
 export async function insertFill(fill: Fill, isPaper = true): Promise<void> {
   const supabase = getSupabaseClient();
-  const { error } = await supabase.from("fills").insert({ ...fill, is_paper: isPaper });
+  const { error } = await supabase.from("fills").insert({
+    id:         fill.id,
+    order_id:   fill.orderId,
+    symbol:     fill.symbol,
+    side:       fill.side,
+    qty:        fill.qty,
+    price:      fill.price,
+    notional:   fill.notional,
+    commission: fill.commission,
+    ts:         fill.isoTs || new Date(fill.ts).toISOString(),
+    exchange:   fill.exchange ?? null,
+    is_paper:   isPaper,
+    // fill.isoTs is omitted — not a DB column; used only as the ts value above
+  });
   if (error) logger.error("insertFill failed", { error: error.message });
 }
 
@@ -117,7 +130,22 @@ export async function insertFill(fill: Fill, isPaper = true): Promise<void> {
  */
 export async function insertPortfolioSnapshot(snapshot: PortfolioSnapshot): Promise<void> {
   const supabase = getSupabaseClient();
-  const { error } = await supabase.from("portfolio_snapshots").insert(snapshot);
+  const { error } = await supabase.from("portfolio_snapshots").insert({
+    id:                   snapshot.id,
+    ts:                   new Date(snapshot.ts).toISOString(),
+    cash:                 snapshot.cash,
+    positions_value:      snapshot.positionsValue,
+    equity:               snapshot.equity,
+    initial_capital:      snapshot.initialCapital,
+    total_unrealized_pnl: snapshot.totalUnrealizedPnl,
+    total_realized_pnl:   snapshot.totalRealizedPnl,
+    total_pnl:            snapshot.totalPnl,
+    return_pct:           snapshot.returnPct,
+    positions:            snapshot.positions,
+    position_count:       snapshot.positionCount,
+    // snapshot.isoTs and snapshot.strategyBreakdowns are not DB columns
+    // strategy_run_id is not populated here (no run context at snapshot time)
+  });
   if (error) logger.error("insertPortfolioSnapshot failed", { error: error.message });
 }
 
