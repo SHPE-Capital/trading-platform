@@ -16,6 +16,7 @@ import {
   getOrdersByStrategyRun,
 } from "../../adapters/supabase/repositories";
 import { logger } from "../../utils/logger";
+import type { AppContext } from "../context";
 
 /**
  * GET /api/portfolio/snapshot
@@ -24,6 +25,11 @@ import { logger } from "../../utils/logger";
  * @param res - Express Response: PortfolioSnapshot JSON or 404
  */
 export async function getPortfolioSnapshot(req: Request, res: Response): Promise<void> {
+  const { portfolioState } = req.app.locals.ctx as AppContext;
+  if (portfolioState) {
+    res.json(portfolioState.getSnapshot());
+    return;
+  }
   try {
     const snapshot = await getLatestPortfolioSnapshot();
     if (!snapshot) {
