@@ -11,7 +11,7 @@
 
 import { newId } from "../../utils/ids";
 import type { PairsStrategyConfig } from "./pairsTypes";
-import type { Symbol } from "../../types/common";
+import type { Symbol, ExecutionAlgoType } from "../../types/common";
 
 /**
  * Default pairs strategy configuration values.
@@ -42,6 +42,11 @@ export const DEFAULT_PAIRS_CONFIG: Omit<
 
   olsWindowMs: 14_400_000,     // 4-hour OLS window (2× the spread window)
   olsRecalcIntervalBars: 5,    // Recompute hedge ratio every 5 bars
+
+  executionAlgo: "market" as ExecutionAlgoType,
+  // TODO: Change executionAlgo to "twap" or "vwap" for large-notional trades to reduce
+  // market impact once TwapExecutionAlgo and VwapExecutionAlgo are implemented in
+  // core/execution/algos/. Register them in ExecutionEngine._algos (executionEngine.ts).
 };
 
 /**

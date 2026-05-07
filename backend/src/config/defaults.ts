@@ -29,6 +29,9 @@ export const DEFAULT_RISK_CONFIG: RiskConfig = {
   staleQuoteThresholdMs: 10_000,
   allowShortSelling: false,
   killSwitchActive: false,
+  maxIntradayDrawdownPct: 0.05,  // 5% intraday drawdown limit — engages kill switch
+  maxConcentrationPct: 0.30,     // 30% max concentration in any single symbol
+  cashReservePct: 0.05,          // 5% cash buffer always kept in reserve
 };
 
 /** Backtest risk configuration (enables short selling for pairs strategies) */
