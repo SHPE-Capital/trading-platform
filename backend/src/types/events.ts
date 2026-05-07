@@ -14,6 +14,7 @@ import type { Quote, Trade, Bar } from "./market";
 import type { OrderIntent, Order, Fill } from "./orders";
 import type { PortfolioSnapshot } from "./portfolio";
 import type { StrategySignal } from "./strategy";
+import type { ReplayStatus, ReplaySpeed } from "./replay";
 
 // ------------------------------------------------------------------
 // Event Type Enum
@@ -52,7 +53,9 @@ export type EventType =
   // System events
   | "ENGINE_STARTED"
   | "ENGINE_STOPPED"
-  | "HEARTBEAT";
+  | "HEARTBEAT"
+  // Replay events
+  | "REPLAY_TICK";
 
 // ------------------------------------------------------------------
 // Base Event
@@ -277,6 +280,35 @@ export interface HeartbeatEvent extends BaseEvent {
 }
 
 // ------------------------------------------------------------------
+// Replay Events
+// ------------------------------------------------------------------
+
+/**
+ * Published by the ReplayEngine after every event emission.
+ * Carries the current playback state so the frontend can update
+ * progress, status, and simulated time in real time over WebSocket
+ * without polling the status endpoint.
+ *
+ * ts on this event is always wall-clock time (Date.now()), not simulated
+ * time, so the WebSocket message carries an accurate delivery timestamp.
+ */
+export interface ReplayTickEvent extends BaseEvent {
+  type: "REPLAY_TICK";
+  /** ID of the active ReplaySession */
+  sessionId: UUID;
+  /** Current cursor position after emitting this tick's event */
+  cursor: number;
+  /** Total number of events in the filtered session */
+  totalEvents: number;
+  /** Playback status after this tick */
+  status: ReplayStatus;
+  /** Active playback speed */
+  speed: ReplaySpeed;
+  /** Simulated clock time of the event that was just emitted */
+  simulatedNow: EpochMs;
+}
+
+// ------------------------------------------------------------------
 // Discriminated Union
 // ------------------------------------------------------------------
 
@@ -306,7 +338,8 @@ export type TradingEvent =
   | ChildOrderCreatedEvent
   | EngineStartedEvent
   | EngineStoppedEvent
-  | HeartbeatEvent;
+  | HeartbeatEvent
+  | ReplayTickEvent;
 
 /** Typed event handler callback */
 export type EventHandler<E extends TradingEvent = TradingEvent> = (event: E) => void | Promise<void>;
