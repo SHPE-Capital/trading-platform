@@ -9,7 +9,7 @@
  */
 
 import type { UUID, EpochMs, ISOTimestamp } from "./common";
-import type { TradingEvent } from "./events";
+import type { TradingEvent, EventType } from "./events";
 
 // ------------------------------------------------------------------
 // Replay Session
@@ -58,8 +58,94 @@ export type ReplayCommand =
   | { action: "pause" }
   | { action: "step" }
   | { action: "seek"; targetIndex: number }
+  | { action: "seek_ts"; targetTs: EpochMs }
   | { action: "set_speed"; speed: ReplaySpeed }
   | { action: "reset" };
+
+// ------------------------------------------------------------------
+// Recorded Event Log (persisted)
+// ------------------------------------------------------------------
+
+// ------------------------------------------------------------------
+// Replay Filters
+// ------------------------------------------------------------------
+
+/**
+ * Optional filter applied to an event log before loading into the engine.
+ * All active fields are ANDed together. Omitting a field means no constraint.
+ * At least one field must be set when the filter object is present.
+ */
+export interface ReplayFilter {
+  /** Only include events whose type is in this list. */
+  eventTypes?: EventType[];
+  /** Only include events whose payload.symbol is in this list.
+   *  Events with no symbol field (system, portfolio) always pass through. */
+  symbols?: string[];
+  /** Lower bound on event.ts (Unix ms, inclusive). */
+  startTs?: EpochMs;
+  /** Upper bound on event.ts (Unix ms, inclusive). */
+  endTs?: EpochMs;
+}
+
+// ------------------------------------------------------------------
+// Performance Attribution
+// ------------------------------------------------------------------
+
+/** Final outcome of a strategy signal during a replay with replayStrategies: true */
+export type SignalOutcome =
+  | "filled"
+  | "risk_rejected"
+  | "capital_unavailable"
+  | "no_fill";
+
+/** Attribution record for a single strategy signal */
+export interface SignalAttribution {
+  signalId: UUID;
+  strategyId: string;
+  symbol: string;
+  direction: string;
+  /** Simulated timestamp when the signal fired */
+  signalTs: EpochMs;
+  /** Mid price at the moment the signal fired (null if symbol state was unavailable) */
+  signalMidPrice: number | null;
+  fillPrice: number | null;
+  fillTs: EpochMs | null;
+  /** (fillPrice - signalMidPrice) / signalMidPrice × 10,000 */
+  slippageBps: number | null;
+  /** Realized PnL on round-trip close (null if position still open) */
+  realizedPnl: number | null;
+  holdingTimeMs: number | null;
+  outcome: SignalOutcome;
+}
+
+/** Per-strategy summary inside a ReplayAttribution */
+export interface StrategyAttributionSummary {
+  totalSignals: number;
+  filledSignals: number;
+  totalRealizedPnl: number;
+  /** Profitable closed round-trips / total closed round-trips */
+  winRate: number;
+}
+
+/** Full attribution report produced after a completed replay with replayStrategies: true */
+export interface ReplayAttribution {
+  sessionId: UUID;
+  totalSignals: number;
+  filledSignals: number;
+  /** filledSignals / totalSignals */
+  fillRate: number;
+  totalRealizedPnl: number;
+  /** Profitable closed round-trips / total closed round-trips */
+  winRate: number;
+  avgSlippageBps: number;
+  avgHoldingTimeMs: number;
+  /** (peakEquity − troughEquity) / peakEquity */
+  maxDrawdown: number;
+  signals: SignalAttribution[];
+  equityCurve: Array<{ ts: EpochMs; equity: number }>;
+  /** Breakdown keyed by strategyId — populated when multiple strategies ran */
+  byStrategy: Record<string, StrategyAttributionSummary>;
+}
 
 // ------------------------------------------------------------------
 // Recorded Event Log (persisted)

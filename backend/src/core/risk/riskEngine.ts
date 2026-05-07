@@ -45,6 +45,9 @@ export class RiskEngine {
       () => this._checkMaxPositionSize(intent, portfolio),
       () => this._checkMaxNotionalExposure(intent, portfolio),
       () => this._checkShortSelling(intent, portfolio),
+      () => this._checkCashReserve(intent, portfolio),
+      () => this._checkIntradayDrawdown(intent, portfolio),
+      () => this._checkConcentration(intent, portfolio),
     ];
 
     for (const check of checks) {
@@ -178,6 +181,55 @@ export class RiskEngine {
         reason: `Sell qty ${intent.qty} exceeds held qty ${heldQty} for ${intent.symbol} and short selling is disabled`,
       };
     }
+    return null;
+  }
+
+  private _checkCashReserve(
+    intent: OrderIntent,
+    portfolio: PortfolioSnapshot,
+  ): { failedCheck: string; reason: string } | null {
+    // TODO: Compute estimatedCost = intent.qty * (intent.limitPrice ?? current position price).
+    //   Use portfolio.positions.find(p => p.symbol === intent.symbol)?.currentPrice as fallback.
+    //   Return null (skip check) if no price estimate is available.
+    // TODO: Compute reserveFloor = portfolio.cash * (this.config.cashReservePct ?? 0).
+    //   This is the minimum cash buffer that must remain untouched.
+    // TODO: Compute availableCash = portfolio.cash - reserveFloor.
+    // TODO: Return failure if estimatedCost > availableCash:
+    //   { failedCheck: "CASH_RESERVE", reason: `Order cost $${estimatedCost} exceeds available cash $${availableCash}` }
+    void intent;
+    void portfolio;
+    return null;
+  }
+
+  private _checkIntradayDrawdown(
+    _intent: OrderIntent,
+    portfolio: PortfolioSnapshot,
+  ): { failedCheck: string; reason: string } | null {
+    // TODO: Track session-start equity in a private field (e.g. this._sessionStartEquity).
+    //   Initialize it on the first call each trading day, or reset it on ENGINE_STARTED.
+    // TODO: Compute drawdownPct = (this._sessionStartEquity - portfolio.equity) / this._sessionStartEquity.
+    // TODO: If drawdownPct >= (this.config.maxIntradayDrawdownPct ?? Infinity):
+    //   1. Call this.setKillSwitch(true) to block all further orders.
+    //   2. Return { failedCheck: "INTRADAY_DRAWDOWN", reason: `Drawdown ${(drawdownPct*100).toFixed(2)}% exceeds limit` }.
+    void portfolio;
+    return null;
+  }
+
+  private _checkConcentration(
+    intent: OrderIntent,
+    portfolio: PortfolioSnapshot,
+  ): { failedCheck: string; reason: string } | null {
+    // TODO: Find existing position for intent.symbol in portfolio.positions.
+    // TODO: Compute estimatedPrice = intent.limitPrice ?? existing position currentPrice ?? 0.
+    //   Return null (skip check) if estimatedPrice is 0.
+    // TODO: Compute qtyDelta = intent.side === "buy" ? intent.qty : -intent.qty.
+    // TODO: Compute newSymbolValue = Math.abs((existingQty + qtyDelta) * estimatedPrice).
+    // TODO: Compute concentrationPct = newSymbolValue / portfolio.equity.
+    //   Return null if portfolio.equity is 0.
+    // TODO: Return failure if concentrationPct > (this.config.maxConcentrationPct ?? 1):
+    //   { failedCheck: "CONCENTRATION_LIMIT", reason: `Symbol ${intent.symbol} would be ${(concentrationPct*100).toFixed(1)}% of portfolio` }
+    void intent;
+    void portfolio;
     return null;
   }
 }

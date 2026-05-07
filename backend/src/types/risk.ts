@@ -56,6 +56,12 @@ export interface RiskConfig {
   allowShortSelling: boolean;
   /** Whether the kill switch is active (blocks all orders) */
   killSwitchActive: boolean;
+  /** Maximum intraday drawdown as a fraction of start-of-day equity before kill switch engages */
+  maxIntradayDrawdownPct?: number;
+  /** Maximum concentration in any single symbol as a fraction of total equity */
+  maxConcentrationPct?: number;
+  /** Minimum cash reserve as a fraction of total equity — orders rejected if breached */
+  cashReservePct?: number;
 }
 
 // ------------------------------------------------------------------

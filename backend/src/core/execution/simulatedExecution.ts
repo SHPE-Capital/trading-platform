@@ -14,7 +14,7 @@ import { EventBus } from "../engine/eventBus";
 import { SymbolStateManager } from "../state/symbolState";
 import { nowMs, msToIso } from "../../utils/time";
 import { newId } from "../../utils/ids";
-import type { IExecutionSink } from "./executionEngine";
+import type { IExecutionSink } from "./IExecutionSink";
 import type { OrderIntent, Order, Fill } from "../../types/orders";
 import type { ExecutionMode } from "../../types/common";
 

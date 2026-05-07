@@ -8,7 +8,7 @@
  * Outputs: StrategySignal or OrderIntent emitted to the execution pipeline.
  */
 
-import type { UUID, EpochMs, Symbol, OrderSide, Metadata } from "./common";
+import type { UUID, EpochMs, Symbol, OrderSide, Metadata, ExecutionAlgoType, SizerType } from "./common";
 
 // ------------------------------------------------------------------
 // Strategy Type Registry
@@ -53,6 +53,10 @@ export interface BaseStrategyConfig {
   cooldownMs: number;
   /** Whether the strategy is enabled */
   enabled: boolean;
+  /** Execution algorithm override for orders from this strategy */
+  executionAlgo?: ExecutionAlgoType;
+  /** Position sizer to use for qty computation */
+  sizerType?: SizerType;
   /** Optional description */
   description?: string;
   /** Optional custom metadata */

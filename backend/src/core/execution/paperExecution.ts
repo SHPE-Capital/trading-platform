@@ -9,7 +9,7 @@
  * Outputs: Order submitted to Alpaca paper endpoint; events published via adapter.
  */
 
-import type { IExecutionSink } from "./executionEngine";
+import type { IExecutionSink } from "./IExecutionSink";
 import type { AlpacaOrderExecutionAdapter } from "../../adapters/alpaca/orderExecution";
 import type { OrderIntent, Order } from "../../types/orders";
 

@@ -14,6 +14,7 @@ import type { Quote, Trade, Bar } from "./market";
 import type { OrderIntent, Order, Fill } from "./orders";
 import type { PortfolioSnapshot } from "./portfolio";
 import type { StrategySignal } from "./strategy";
+import type { ReplayStatus, ReplaySpeed } from "./replay";
 
 // ------------------------------------------------------------------
 // Event Type Enum
@@ -43,10 +44,18 @@ export type EventType =
   | "STRATEGY_ERROR"
   // Risk events
   | "RISK_REJECTED"
+  // OMS events
+  | "CAPITAL_RESERVED"
+  | "CAPITAL_RELEASED"
+  | "CAPITAL_UNAVAILABLE"
+  | "ORDER_QUEUED"
+  | "CHILD_ORDER_CREATED"
   // System events
   | "ENGINE_STARTED"
   | "ENGINE_STOPPED"
-  | "HEARTBEAT";
+  | "HEARTBEAT"
+  // Replay events
+  | "REPLAY_TICK";
 
 // ------------------------------------------------------------------
 // Base Event
@@ -193,6 +202,66 @@ export interface RiskRejectedEvent extends BaseEvent {
 }
 
 // ------------------------------------------------------------------
+// OMS Events
+// ------------------------------------------------------------------
+
+export interface CapitalReservedEvent extends BaseEvent {
+  type: "CAPITAL_RESERVED";
+  /** Reservation receipt ID */
+  reservationId: UUID;
+  /** Amount reserved in USD */
+  amount: number;
+  /** Intent this reservation covers */
+  intentId: UUID;
+  /** Strategy that owns the reservation */
+  strategyId: string;
+}
+
+export interface CapitalReleasedEvent extends BaseEvent {
+  type: "CAPITAL_RELEASED";
+  /** Reservation being released */
+  reservationId: UUID;
+  /** Why the reservation was released */
+  reason: "filled" | "canceled" | "rejected";
+}
+
+export interface CapitalUnavailableEvent extends BaseEvent {
+  type: "CAPITAL_UNAVAILABLE";
+  /** Intent that could not be reserved */
+  intentId: UUID;
+  /** Strategy that submitted the intent */
+  strategyId: string;
+  /** USD amount required */
+  required: number;
+  /** USD amount available after existing reservations */
+  available: number;
+}
+
+export interface OrderQueuedEvent extends BaseEvent {
+  type: "ORDER_QUEUED";
+  /** Intent that was enqueued */
+  intentId: UUID;
+  /** Strategy that owns the intent */
+  strategyId: string;
+  /** Priority assigned in the queue */
+  priority: number;
+  /** Queue depth after enqueue */
+  queueDepth: number;
+}
+
+export interface ChildOrderCreatedEvent extends BaseEvent {
+  type: "CHILD_ORDER_CREATED";
+  /** Parent intent this child belongs to */
+  parentIntentId: UUID;
+  /** Child intent that was submitted */
+  childIntentId: UUID;
+  /** Zero-based index of this slice */
+  sliceIndex: number;
+  /** Total number of slices for the parent */
+  totalSlices: number;
+}
+
+// ------------------------------------------------------------------
 // System Events
 // ------------------------------------------------------------------
 
@@ -208,6 +277,35 @@ export interface EngineStoppedEvent extends BaseEvent {
 
 export interface HeartbeatEvent extends BaseEvent {
   type: "HEARTBEAT";
+}
+
+// ------------------------------------------------------------------
+// Replay Events
+// ------------------------------------------------------------------
+
+/**
+ * Published by the ReplayEngine after every event emission.
+ * Carries the current playback state so the frontend can update
+ * progress, status, and simulated time in real time over WebSocket
+ * without polling the status endpoint.
+ *
+ * ts on this event is always wall-clock time (Date.now()), not simulated
+ * time, so the WebSocket message carries an accurate delivery timestamp.
+ */
+export interface ReplayTickEvent extends BaseEvent {
+  type: "REPLAY_TICK";
+  /** ID of the active ReplaySession */
+  sessionId: UUID;
+  /** Current cursor position after emitting this tick's event */
+  cursor: number;
+  /** Total number of events in the filtered session */
+  totalEvents: number;
+  /** Playback status after this tick */
+  status: ReplayStatus;
+  /** Active playback speed */
+  speed: ReplaySpeed;
+  /** Simulated clock time of the event that was just emitted */
+  simulatedNow: EpochMs;
 }
 
 // ------------------------------------------------------------------
@@ -233,9 +331,15 @@ export type TradingEvent =
   | StrategyStoppedEvent
   | StrategyErrorEvent
   | RiskRejectedEvent
+  | CapitalReservedEvent
+  | CapitalReleasedEvent
+  | CapitalUnavailableEvent
+  | OrderQueuedEvent
+  | ChildOrderCreatedEvent
   | EngineStartedEvent
   | EngineStoppedEvent
-  | HeartbeatEvent;
+  | HeartbeatEvent
+  | ReplayTickEvent;
 
 /** Typed event handler callback */
 export type EventHandler<E extends TradingEvent = TradingEvent> = (event: E) => void | Promise<void>;

@@ -203,6 +203,11 @@ export class PairsStrategy extends BaseStrategy {
 
     const absZ = Math.abs(zScore);
 
+    // TODO: Consider migrating stop-loss z-score exit to a generic StopLossRiskCheck in
+    // RiskEngine that fires on every quote rather than only at strategy evaluation time.
+    // This would ensure stop-loss protection even when evaluate() is skipped due to cooldown
+    // or insufficient observations (see core/risk/riskEngine.ts _checkIntradayDrawdown stub).
+
     // Stop-loss: z-score moved too far against us
     if (absZ >= this.pairsConfig.stopLossZScore) {
       return this._buildExitSignal(leg1, zScore, mean, std, spread, "stop_loss");
@@ -307,6 +312,10 @@ export class PairsStrategy extends BaseStrategy {
     this.state.positionOpenedAt = null;
     this.state.completedTrades++;
 
+    // TODO: Strategy-level cooldown is duplicated with RiskEngine's per-strategy cooldown check.
+    // Consolidate in RiskEngine or OMS to avoid split responsibility and potential inconsistency
+    // (see core/risk/riskEngine.ts _checkCooldown and core/oms/orderQueue.ts).
+
     // Activate cooldown
     this.state.cooldownActive = true;
     this.state.cooldownExpiresAt = nowMs() + this.pairsConfig.cooldownMs;
@@ -338,6 +347,11 @@ export class PairsStrategy extends BaseStrategy {
     });
   }
 
+  // TODO: Remove this method. Qty computation belongs in FixedNotionalSizer
+  // (core/sizing/fixedNotionalSizer.ts). The orchestrator should call
+  // positionSizer.computeQty() before building the OrderIntent, passing
+  // estimatedPrice from the latest symbol state mid quote. Retain until the
+  // orchestrator wiring in core/engine/orchestrator.ts is complete.
   private _computeQty(): number {
     const price = this.state.latestLeg1Price;
     if (!price || price <= 0) return 0;

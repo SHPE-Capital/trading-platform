@@ -11,12 +11,38 @@
 
 import type { EpochMs, ISOTimestamp } from "../types/common";
 
+// ------------------------------------------------------------------
+// Clock override — replay / backtest determinism
+// ------------------------------------------------------------------
+
 /**
- * Returns the current wall-clock time in milliseconds (Unix epoch).
+ * Module-level clock override. When set, nowMs() and nowIso() return
+ * values from this function instead of the wall clock. The ReplayEngine
+ * sets this to () => session.simulatedNow before each event emission
+ * and clears it (null) when the session stops or completes.
+ *
+ * Node.js is single-threaded so this is safe for a single replay session.
+ * Never set this in live or paper mode.
+ */
+let _clockOverride: (() => EpochMs) | null = null;
+
+/**
+ * Injects a simulated clock for replay/backtest modes.
+ * Pass null to restore wall-clock behavior.
+ * @param fn - Function returning the current simulated time in Unix ms, or null
+ */
+export function setClockOverride(fn: (() => EpochMs) | null): void {
+  _clockOverride = fn;
+}
+
+/**
+ * Returns the current time in milliseconds (Unix epoch).
+ * Returns simulated time when a clock override is active (replay/backtest mode),
+ * otherwise returns the real wall-clock time via Date.now().
  * @returns Current time as EpochMs
  */
 export function nowMs(): EpochMs {
-  return Date.now();
+  return _clockOverride ? _clockOverride() : Date.now();
 }
 
 /**
@@ -39,10 +65,12 @@ export function msToIso(ms: EpochMs): ISOTimestamp {
 
 /**
  * Returns the current time as an ISO 8601 string.
+ * Respects the active clock override so simulated time propagates correctly
+ * through any code path that formats timestamps as ISO strings.
  * @returns ISO 8601 string representing now
  */
 export function nowIso(): ISOTimestamp {
-  return new Date().toISOString();
+  return new Date(nowMs()).toISOString();
 }
 
 /**
@@ -53,7 +81,7 @@ export function nowIso(): ISOTimestamp {
  * @returns true if the timestamp is stale
  */
 export function isStale(ts: EpochMs, thresholdMs: number, nowOverride?: EpochMs): boolean {
-  const now = nowOverride ?? Date.now();
+  const now = nowOverride ?? nowMs();
   return now - ts > thresholdMs;
 }
 
