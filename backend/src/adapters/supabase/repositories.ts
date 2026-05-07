@@ -28,7 +28,28 @@ import type { UUID } from "../../types/common";
  */
 export async function insertOrder(order: Order, isPaper = true): Promise<void> {
   const supabase = getSupabaseClient();
-  const { error } = await supabase.from("orders").insert({ ...order, is_paper: isPaper });
+  const { error } = await supabase.from("orders").insert({
+    id:              order.id,
+    broker_order_id: order.brokerOrderId ?? null,
+    intent_id:       order.intentId,
+    strategy_id:     order.strategyId,
+    symbol:          order.symbol,
+    side:            order.side,
+    qty:             order.qty,
+    filled_qty:      order.filledQty,
+    avg_fill_price:  order.avgFillPrice ?? null,
+    order_type:      order.orderType,
+    limit_price:     order.limitPrice ?? null,
+    stop_price:      order.stopPrice ?? null,
+    time_in_force:   order.timeInForce,
+    status:          order.status,
+    submitted_at:    new Date(order.submittedAt).toISOString(),
+    updated_at:      new Date(order.updatedAt).toISOString(),
+    closed_at:       order.closedAt ? new Date(order.closedAt).toISOString() : null,
+    meta:            order.meta ?? null,
+    is_paper:        isPaper,
+    // order.fills is omitted — fills are a separate table with FK to orders.id
+  });
   if (error) logger.error("insertOrder failed", { error: error.message });
 }
 
@@ -40,7 +61,14 @@ export async function insertOrder(order: Order, isPaper = true): Promise<void> {
  */
 export async function updateOrder(orderId: UUID, updates: Partial<Order>): Promise<void> {
   const supabase = getSupabaseClient();
-  const { error } = await supabase.from("orders").update(updates).eq("id", orderId);
+  const payload: Record<string, unknown> = {};
+  if (updates.status !== undefined)        payload.status          = updates.status;
+  if (updates.brokerOrderId !== undefined) payload.broker_order_id = updates.brokerOrderId;
+  if (updates.filledQty !== undefined)     payload.filled_qty      = updates.filledQty;
+  if (updates.avgFillPrice !== undefined)  payload.avg_fill_price  = updates.avgFillPrice;
+  if (updates.updatedAt !== undefined)     payload.updated_at      = new Date(updates.updatedAt).toISOString();
+  if (updates.closedAt !== undefined)      payload.closed_at       = new Date(updates.closedAt).toISOString();
+  const { error } = await supabase.from("orders").update(payload).eq("id", orderId);
   if (error) logger.error("updateOrder failed", { error: error.message, orderId });
 }
 
