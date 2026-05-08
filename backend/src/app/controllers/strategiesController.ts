@@ -93,6 +93,12 @@ export async function startStrategyRun(req: Request, res: Response): Promise<voi
   const def = STRATEGY_DEFINITIONS[strategyType];
   const strategy = factory(config);
 
+  const configId = config.id as string | undefined;
+  if (configId && orchestrator.hasStrategyWithConfigId(configId)) {
+    res.status(409).json({ error: `A strategy from config ${configId} is already running` });
+    return;
+  }
+
   // Generate the run ID before registering so the orchestrator map key matches
   // the run ID returned to the caller. This allows stopStrategyRun to use the
   // URL :id (run ID) directly with hasStrategy/deregisterStrategy.
