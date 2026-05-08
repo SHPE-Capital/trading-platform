@@ -93,8 +93,13 @@ export async function startStrategyRun(req: Request, res: Response): Promise<voi
   const def = STRATEGY_DEFINITIONS[strategyType];
   const strategy = factory(config);
 
+  // Generate the run ID before registering so the orchestrator map key matches
+  // the run ID returned to the caller. This allows stopStrategyRun to use the
+  // URL :id (run ID) directly with hasStrategy/deregisterStrategy.
+  const runId = newId();
+
   // Register with the orchestrator — also calls strategy.start() if already running
-  orchestrator.registerStrategy(strategy);
+  orchestrator.registerStrategy(strategy, runId);
 
   // Subscribe any new symbols to the market data feed
   const symbols = Array.isArray(config.symbols) ? (config.symbols as string[]) : [];
@@ -102,7 +107,6 @@ export async function startStrategyRun(req: Request, res: Response): Promise<voi
     marketDataAdapter.subscribe(symbols);
   }
 
-  const runId = newId();
   const now = nowMs();
   const run: StrategyRun = {
     id: runId,
@@ -119,7 +123,17 @@ export async function startStrategyRun(req: Request, res: Response): Promise<voi
     realizedPnl: 0,
   };
 
-  await insertStrategyRun(run);
+  try {
+    await insertStrategyRun(run);
+  } catch (err) {
+    // DB write failed — roll back the in-memory registration so the engine
+    // state stays consistent with what is persisted.
+    orchestrator.deregisterStrategy(runId);
+    logger.error("startStrategyRun: DB persist failed, rolled back engine registration", { runId, err });
+    res.status(500).json({ error: "Failed to persist strategy run" });
+    return;
+  }
+
   logger.info("startStrategyRun: strategy started", { runId, strategyId: strategy.id, strategyType });
   res.status(201).json(run);
 }
