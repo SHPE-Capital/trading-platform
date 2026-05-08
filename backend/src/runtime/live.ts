@@ -35,6 +35,14 @@ import { createPairsConfig } from "../strategies/pairs/pairsConfig";
 import { createApp } from "../app/index";
 import { attachWebSocketServer } from "../app/websocket";
 import { env } from "../config/env";
+import { DEFAULT_SNAPSHOT_INTERVAL_MS } from "../config/defaults";
+import {
+  insertOrder,
+  insertFill,
+  updateOrder,
+  insertPortfolioSnapshot,
+} from "../adapters/supabase/repositories";
+import type { OrderSubmittedEvent, OrderFilledEvent, OrderCanceledEvent } from "../types/events";
 import { logger } from "../utils/logger";
 
 const INITIAL_CAPITAL = 100_000;
@@ -81,6 +89,40 @@ async function main(): Promise<void> {
   // ---- Start engine ----
   orchestrator.start();
   marketDataAdapter.subscribe(pairsConfig.symbols);
+
+  // ---- Part 4: Persistence hooks ----
+  // Fire-and-forget: errors are logged but never re-thrown so a DB hiccup
+  // cannot crash the live engine or block the synchronous event dispatch loop.
+  eventBus.on<OrderSubmittedEvent>("ORDER_SUBMITTED", (event) => {
+    insertOrder(event.payload).catch((err) =>
+      logger.error("persistence: insertOrder failed", { err }),
+    );
+  });
+
+  eventBus.on<OrderFilledEvent>("ORDER_FILLED", (event) => {
+    insertFill(event.fill).catch((err) =>
+      logger.error("persistence: insertFill failed", { err }),
+    );
+    updateOrder(event.orderId, {
+      status: "filled",
+      filledQty: event.fill.qty,
+      avgFillPrice: event.fill.price,
+      closedAt: event.fill.ts,
+      updatedAt: event.fill.ts,
+    }).catch((err) =>
+      logger.error("persistence: updateOrder (filled) failed", { err }),
+    );
+  });
+
+  eventBus.on<OrderCanceledEvent>("ORDER_CANCELED", (event) => {
+    updateOrder(event.orderId, {
+      status: "canceled",
+      updatedAt: event.ts,
+      closedAt: event.ts,
+    }).catch((err) =>
+      logger.error("persistence: updateOrder (canceled) failed", { err }),
+    );
+  });
 
   // ---- Start HTTP + WebSocket server ----
   // http.createServer(app) shares one port for both REST and WebSocket
