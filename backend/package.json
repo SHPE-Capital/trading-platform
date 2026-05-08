@@ -6,11 +6,13 @@
   "scripts": {
     "dev": "nodemon --exec ts-node src/index.ts",
     "dev:live": "nodemon --exec ts-node src/runtime/live.ts",
+    "dev:live-trading": "nodemon --exec ts-node src/runtime/live-trading.ts",
     "dev:backtest": "nodemon --exec ts-node src/runtime/backtest.ts",
     "dev:replay": "nodemon --exec ts-node src/runtime/replay.ts",
     "build": "tsc",
     "start": "node dist/index.js",
     "start:live": "node dist/runtime/live.js",
+    "start:live-trading": "node dist/runtime/live-trading.js",
     "start:backtest": "node dist/runtime/backtest.js",
     "start:replay": "node dist/runtime/replay.js",
     "lint": "eslint src --ext .ts",
