@@ -124,10 +124,17 @@ async function main(): Promise<void> {
     );
   });
 
+  // ---- Part 5: Portfolio snapshot scheduler ----
+  const snapshotTimer = setInterval(() => {
+    insertPortfolioSnapshot(portfolioState.getSnapshot()).catch((err) =>
+      logger.error("persistence: insertPortfolioSnapshot failed", { err }),
+    );
+  }, DEFAULT_SNAPSHOT_INTERVAL_MS);
+
   // ---- Start HTTP + WebSocket server ----
   // http.createServer(app) shares one port for both REST and WebSocket
   // upgrades; attachWebSocketServer scopes WS to /ws/events only.
-  const app = createApp({ orchestrator, symbolState, marketDataAdapter });
+  const app = createApp({ orchestrator, symbolState, portfolioState, riskEngine, marketDataAdapter });
   const server = http.createServer(app);
   attachWebSocketServer(server, eventBus);
   server.listen(env.port, () => {
@@ -137,6 +144,7 @@ async function main(): Promise<void> {
   // ---- Graceful shutdown ----
   const shutdown = (): void => {
     logger.info("runtime/live: shutting down");
+    clearInterval(snapshotTimer);
     orchestrator.stop();
     marketDataAdapter.disconnect();
     orderAdapter.disconnect();

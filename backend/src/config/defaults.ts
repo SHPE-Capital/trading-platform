@@ -42,7 +42,7 @@ export const BACKTEST_RISK_CONFIG: RiskConfig = {
 export const DEFAULT_HEARTBEAT_INTERVAL_MS = 5_000;
 
 /** Default portfolio snapshot interval (ms) */
-export const DEFAULT_SNAPSHOT_INTERVAL_MS = 30_000;
+export const DEFAULT_SNAPSHOT_INTERVAL_MS = 60_000;
 
 /** Default simulated fill delay for backtest/paper modes (ms) */
 export const DEFAULT_SIMULATED_FILL_DELAY_MS = 100;
