@@ -19,11 +19,20 @@ import type { UUID } from "../../types/common";
 
 /**
  * GET /api/strategies
+ * Returns all strategy run records enriched with a live `isLive` flag that
+ * reflects whether the strategy is actively registered in the orchestrator.
+ * The DB status can lag (e.g. after a server restart); `isLive` is the
+ * authoritative source for whether the strategy is actually executing.
  */
-export async function listStrategyRuns(_req: Request, res: Response): Promise<void> {
+export async function listStrategyRuns(req: Request, res: Response): Promise<void> {
   try {
     const runs = await getAllStrategyRuns();
-    res.json(runs);
+    const { orchestrator } = req.app.locals.ctx as AppContext;
+    const enriched = runs.map((run) => ({
+      ...run,
+      isLive: orchestrator?.hasStrategy(run.id) ?? false,
+    }));
+    res.json(enriched);
   } catch (err) {
     logger.error("listStrategyRuns error", { err });
     res.status(500).json({ error: "Failed to fetch strategy runs" });
