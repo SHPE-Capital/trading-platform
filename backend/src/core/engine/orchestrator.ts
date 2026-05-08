@@ -104,6 +104,14 @@ export class Orchestrator {
     return this.strategies.has(strategyId);
   }
 
+  /** Returns true if any registered strategy was launched from the given config ID. */
+  hasStrategyWithConfigId(configId: string): boolean {
+    for (const strategy of this.strategies.values()) {
+      if (strategy.config.id === configId) return true;
+    }
+    return false;
+  }
+
   /**
    * Starts the orchestrator: wires all EventBus listeners and starts strategies.
    * After this call, the orchestrator reacts to incoming events.
