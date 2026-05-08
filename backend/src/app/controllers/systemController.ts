@@ -13,6 +13,7 @@ import type { Request, Response } from "express";
 import { getSupabaseClient } from "../../adapters/supabase/client";
 import { env } from "../../config/env";
 import { nowIso } from "../../utils/time";
+import type { AppContext } from "../context";
 
 type SystemHealthStatus = "healthy" | "degraded" | "unhealthy";
 type ExecutionMode = "paper" | "live" | "backtest" | "replay";
@@ -86,6 +87,26 @@ async function checkAlpaca(): Promise<ServiceHealth> {
  */
 export function healthCheck(_req: Request, res: Response): void {
   res.json({ status: "ok", ts: nowIso() });
+}
+
+/**
+ * POST /api/system/kill-switch
+ * Body: { enabled: boolean }
+ * Activates or deactivates the risk engine kill switch, halting all new orders.
+ */
+export function setKillSwitch(req: Request, res: Response): void {
+  const { enabled } = req.body as { enabled?: boolean };
+  if (typeof enabled !== "boolean") {
+    res.status(400).json({ error: "enabled (boolean) is required" });
+    return;
+  }
+  const { riskEngine } = req.app.locals.ctx as AppContext;
+  if (!riskEngine) {
+    res.status(503).json({ error: "Risk engine not available in this runtime mode" });
+    return;
+  }
+  riskEngine.setKillSwitch(enabled);
+  res.json({ killSwitch: enabled });
 }
 
 /**
