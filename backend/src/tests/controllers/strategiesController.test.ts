@@ -134,6 +134,23 @@ describe('startStrategyRun: with orchestrator', () => {
     expect(res.status).toHaveBeenCalledWith(400);
   });
 
+  it('returns 409 when a strategy with the same config ID is already running', async () => {
+    const orchestrator = {
+      registerStrategy: jest.fn(),
+      hasStrategyWithConfigId: jest.fn().mockReturnValue(true),
+    };
+    const res = mockRes();
+    await startStrategyRun(
+      ctxReq(
+        { orchestrator },
+        { body: { strategyType: 'pairs_trading', config: { id: 'config-uuid-1', name: 'Test Pairs', symbols: ['SPY', 'QQQ'], leg1Symbol: 'SPY', leg2Symbol: 'QQQ' } } },
+      ),
+      res,
+    );
+    expect(res.status).toHaveBeenCalledWith(409);
+    expect(orchestrator.registerStrategy).not.toHaveBeenCalled();
+  });
+
   it('returns 201 with run record for a valid pairs_trading start', async () => {
     const orchestrator = { registerStrategy: jest.fn() };
     mockInsertRun.mockResolvedValue(undefined);
