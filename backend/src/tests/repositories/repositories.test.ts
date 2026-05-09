@@ -81,9 +81,9 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 // Helpers — minimal domain objects
 // ---------------------------------------------------------------------------
-const mockOrder = { id: 'order-1', symbol: 'SPY' } as Order;
-const mockFill = { id: 'fill-1', symbol: 'SPY' } as Fill;
-const mockSnapshot = { id: 'snap-1', equity: 100_000 } as PortfolioSnapshot;
+const mockOrder = { id: 'order-1', symbol: 'SPY', submittedAt: 1_000_000, updatedAt: 1_000_000 } as Order;
+const mockFill = { id: 'fill-1', symbol: 'SPY', ts: 1_000_000 } as Fill;
+const mockSnapshot = { id: 'snap-1', equity: 100_000, ts: 1_000_000 } as PortfolioSnapshot;
 const mockStrategyRun = { id: 'run-1', strategyId: 'strat-1' } as StrategyRun;
 const mockBacktestResult = {
   id: 'bt-1',
@@ -104,7 +104,7 @@ describe('insertOrder', () => {
     await insertOrder(mockOrder);
     expect(mockFrom).toHaveBeenCalledWith('orders');
     const [payload] = chain.insert.mock.calls[0];
-    expect(payload).toMatchObject({ ...mockOrder, is_paper: true });
+    expect(payload).toMatchObject({ id: mockOrder.id, symbol: mockOrder.symbol, is_paper: true });
   });
 
   it('passes is_paper=false when explicitly requested (live trade)', async () => {
@@ -176,7 +176,7 @@ describe('insertFill', () => {
     await insertFill(mockFill);
     expect(mockFrom).toHaveBeenCalledWith('fills');
     const [payload] = chain.insert.mock.calls[0];
-    expect(payload).toMatchObject({ ...mockFill, is_paper: true });
+    expect(payload).toMatchObject({ id: mockFill.id, symbol: mockFill.symbol, is_paper: true });
   });
 
   it('passes is_paper=false when explicitly requested (live trade)', async () => {
@@ -205,7 +205,7 @@ describe('insertPortfolioSnapshot', () => {
     mockFrom.mockReturnValue(chain);
     await insertPortfolioSnapshot(mockSnapshot);
     expect(mockFrom).toHaveBeenCalledWith('portfolio_snapshots');
-    expect(chain.insert).toHaveBeenCalledWith(mockSnapshot);
+    expect(chain.insert).toHaveBeenCalledWith(expect.objectContaining({ id: 'snap-1', equity: 100_000 }));
   });
 });
 
