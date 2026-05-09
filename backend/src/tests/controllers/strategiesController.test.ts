@@ -78,7 +78,7 @@ describe('listStrategyRuns', () => {
     mockGetAll.mockResolvedValue(runs);
     const res = mockRes();
     await listStrategyRuns(mockReq(), res);
-    expect(res.json).toHaveBeenCalledWith(runs);
+    expect(res.json).toHaveBeenCalledWith([{ id: 'run-1', isLive: false }]);
   });
 
   it('returns 500 on error', async () => {
