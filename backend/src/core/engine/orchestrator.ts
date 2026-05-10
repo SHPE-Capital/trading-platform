@@ -2,15 +2,19 @@
  * core/engine/orchestrator.ts
  *
  * The main trading engine orchestrator. Wires together the EventBus,
- * SymbolStateManager, StrategyRunner, RiskEngine, and ExecutionEngine.
+ * SymbolStateManager, StrategyRunner, RiskEngine, ExecutionEngine, and
+ * OrderManagerService (OMS).
+ *
  * Handles the full event pipeline from market data arrival to order submission.
+ * Signals are routed through the OMS for capital reservation and priority-based
+ * conflict resolution before reaching the execution layer.
  *
  * This class is mode-agnostic: the same orchestrator runs in live, backtest,
  * and replay modes. What differs is the event source and execution sink
  * injected at startup.
  *
  * Inputs:  EventBus events from any source (live, historical, replay).
- * Outputs: Coordinates state updates → strategy evaluation → risk → execution.
+ * Outputs: Coordinates state updates → strategy evaluation → OMS → risk → execution.
  */
 
 import { EventBus } from "./eventBus";
@@ -19,16 +23,20 @@ import { PortfolioStateManager } from "../state/portfolioState";
 import { OrderStateManager } from "../state/orderState";
 import { RiskEngine } from "../risk/riskEngine";
 import { ExecutionEngine } from "../execution/executionEngine";
+import { OrderManagerService } from "../oms/orderManager";
+import { CapitalReservationManager } from "../oms/capitalReservation";
+import { OrderIntentQueue } from "../oms/orderQueue";
+import { getSignalPriority } from "../oms/priorityConfig";
 import { logger } from "../../utils/logger";
 import { nowMs } from "../../utils/time";
 import { newId } from "../../utils/ids";
 import type { IStrategy } from "../../strategies/base/strategy";
 import type { ExecutionMode } from "../../types/common";
+import type { SignalGroup } from "../../types/oms";
 import type {
   QuoteReceivedEvent,
   TradeReceivedEvent,
   BarReceivedEvent,
-  OrderIntentCreatedEvent,
   OrderFilledEvent,
   OrderCanceledEvent,
 } from "../../types/events";
@@ -36,6 +44,9 @@ import type {
 export class Orchestrator {
   private strategies: Map<string, IStrategy> = new Map();
   private running = false;
+
+  /** The Order Management System for capital reservation and priority queue */
+  public readonly orderManager: OrderManagerService;
 
   constructor(
     public readonly eventBus: EventBus,
@@ -45,7 +56,21 @@ export class Orchestrator {
     public readonly riskEngine: RiskEngine,
     public readonly executionEngine: ExecutionEngine,
     private readonly mode: ExecutionMode,
-  ) {}
+  ) {
+    // Build the OMS from existing dependencies
+    const capitalMgr = new CapitalReservationManager();
+    const queue = new OrderIntentQueue();
+    this.orderManager = new OrderManagerService(
+      capitalMgr,
+      queue,
+      riskEngine,
+      executionEngine,
+      portfolioState,
+      symbolState,
+      eventBus,
+      mode,
+    );
+  }
 
   /**
    * Registers a strategy. If the orchestrator is already running, starts the
@@ -111,13 +136,10 @@ export class Orchestrator {
     this.eventBus.on("TRADE_RECEIVED", (e) => this._onTrade(e as TradeReceivedEvent));
     this.eventBus.on("BAR_RECEIVED", (e) => this._onBar(e as BarReceivedEvent));
 
-    // Listen to signals to generate intents
+    // Listen to signals to generate intents → route through OMS
     this.eventBus.on("STRATEGY_SIGNAL_CREATED", (e) => this._onStrategySignal(e as any));
 
-    // Wire order intent → risk → execution
-    this.eventBus.on("ORDER_INTENT_CREATED", (e) => this._onOrderIntent(e as OrderIntentCreatedEvent));
-
-    // Wire fills and state updates back into portfolio and order state
+    // Wire fills and state updates back into portfolio, order state, and OMS
     this.eventBus.on("ORDER_SUBMITTED", (e) => this._onOrderSubmitted(e as any));
     this.eventBus.on("ORDER_FILLED", (e) => this._onOrderFilled(e as OrderFilledEvent));
     this.eventBus.on("ORDER_CANCELED", (e) => this._onOrderCanceled(e as OrderCanceledEvent));
@@ -151,11 +173,14 @@ export class Orchestrator {
   }
 
   /**
-   * Stops the orchestrator and all registered strategies.
+   * Stops the orchestrator, all registered strategies, and the OMS.
    */
   stop(): void {
     if (!this.running) return;
     this.running = false;
+
+    // Clear OMS state (pending queue + reservations)
+    this.orderManager.clear();
 
     for (const strategy of this.strategies.values()) {
       strategy.stop();
@@ -232,10 +257,11 @@ export class Orchestrator {
   }
 
   /**
-   * Converts emitted StrategySignals into actionable OrderIntents.
-   * This currently serves both backtest mode and any future live integration.
-   * TODO: Revisit this routing logic when live order flow is fully wired up, 
-   * to ensure live execution doesn't require a separate dedicated signal router.
+   * Converts emitted StrategySignals into actionable OrderIntents and routes
+   * them through the OMS for capital reservation and priority-based execution.
+   *
+   * Multi-leg signals (e.g., pairs trades with counterpart orders) are grouped
+   * into a single SignalGroup so capital is reserved atomically for all legs.
    */
   private _onStrategySignal(event: any): void {
     const signal = event.payload;
@@ -246,13 +272,11 @@ export class Orchestrator {
     else if (signal.direction === "short" || signal.direction === "close_long") side = "sell";
     else return;
 
-    // TODO: Call positionSizer.computeQty() here when signal.qty should be overridden by
-    // the sizing layer. Inject a Map<SizerType, IPositionSizer> into the Orchestrator
-    // constructor alongside riskEngine and executionEngine. Use signal.meta or strategy
-    // config's sizerType to select the sizer. estimatedPrice = symbolState mid ?? 0.
-    // See core/sizing/IPositionSizer.ts and core/sizing/fixedNotionalSizer.ts.
+    const groupId = newId();
+    const intents: import("../../types/orders").OrderIntent[] = [];
 
-    const intent = {
+    // Primary intent
+    const primaryIntent: import("../../types/orders").OrderIntent = {
       id: newId(),
       strategyId: signal.strategyId,
       symbol: signal.symbol,
@@ -262,76 +286,84 @@ export class Orchestrator {
       timeInForce: "ioc" as const,
       reason: signal.triggerLabel,
       ts: nowMs(),
+      meta: { ...signal.meta, groupId },
     };
+    intents.push(primaryIntent);
 
-    this.eventBus.publish({
-      id: newId(),
-      type: "ORDER_INTENT_CREATED",
-      ts: nowMs(),
-      mode: event.mode,
-      strategyId: signal.strategyId,
-      payload: intent,
-    });
-    
+    // Counterpart intent (for multi-leg signals like pairs trades)
     if (signal.meta && signal.meta.counterpartSymbol && signal.meta.counterpartDirection) {
       let cSide: "buy" | "sell";
       const cDir = signal.meta.counterpartDirection as string;
       if (cDir === "long" || cDir === "close_short") cSide = "buy";
       else if (cDir === "short" || cDir === "close_long") cSide = "sell";
-      else return;
-      
-      const cIntent = {
-        id: newId(),
-        strategyId: signal.strategyId,
-        symbol: signal.meta.counterpartSymbol as string,
-        side: cSide,
-        qty: Math.floor(signal.qty * ((signal.meta.hedgeRatio as number) || 1)),
-        orderType: "market" as const,
-        timeInForce: "ioc" as const,
-        reason: (signal.triggerLabel || "") + "_counterpart",
-        ts: nowMs(),
-      };
+      else {
+        // Invalid counterpart direction — skip counterpart, submit primary only
+        this._submitSingleIntent(primaryIntent, signal);
+        return;
+      }
 
-      // Ensure counterpart qty > 0 to avoid rejection
-      if (cIntent.qty > 0) {
-        this.eventBus.publish({
+      const cQty = Math.floor(signal.qty * ((signal.meta.hedgeRatio as number) || 1));
+      if (cQty > 0) {
+        const counterpartIntent: import("../../types/orders").OrderIntent = {
           id: newId(),
-          type: "ORDER_INTENT_CREATED",
-          ts: nowMs(),
-          mode: event.mode,
           strategyId: signal.strategyId,
-          payload: cIntent,
-        });
+          symbol: signal.meta.counterpartSymbol as string,
+          side: cSide,
+          qty: cQty,
+          orderType: "market" as const,
+          timeInForce: "ioc" as const,
+          reason: (signal.triggerLabel || "") + "_counterpart",
+          ts: nowMs(),
+          meta: { ...signal.meta, groupId },
+        };
+        intents.push(counterpartIntent);
       }
     }
+
+    // Compute priority from strategy type and signal confidence
+    const priority = getSignalPriority(
+      signal.strategyType ?? "momentum",
+      signal.confidence,
+      (signal.meta?.urgency as number) ?? undefined,
+    );
+
+    // Build signal group and submit to OMS
+    const group: SignalGroup = {
+      groupId,
+      strategyId: signal.strategyId,
+      strategyType: signal.strategyType ?? "momentum",
+      intents,
+      totalCapitalRequired: 0, // computed by OMS
+      priority,
+      confidence: signal.confidence,
+      createdAt: nowMs(),
+    };
+
+    this.orderManager.submitSignalGroup(group);
   }
 
-  private _onOrderIntent(event: OrderIntentCreatedEvent): void {
-    // TODO: Route through CapitalReservationManager.reserve() before risk check.
-    // Compute estimatedCost = intent.qty * (intent.limitPrice ?? symbolState midprice).
-    // If insufficient available cash: publish CAPITAL_UNAVAILABLE and return early.
-    // Store reservationId on intent.meta for release on ORDER_FILLED or RISK_REJECTED.
-    // See core/oms/capitalReservation.ts.
+  /**
+   * Shortcut: submit a single intent through the OMS when there's no
+   * counterpart (single-leg signal).
+   */
+  private _submitSingleIntent(intent: import("../../types/orders").OrderIntent, signal: any): void {
+    const priority = getSignalPriority(
+      signal.strategyType ?? "momentum",
+      signal.confidence,
+    );
 
-    // TODO: After risk passes, enqueue in OrderIntentQueue (core/oms/orderQueue.ts) rather
-    // than submitting directly. A dequeue loop driven by a timer or drain event should pop
-    // intents in priority order and call executionEngine.submit(), enabling rate-limiting
-    // and priority-based conflict resolution without blocking the event handler.
+    const group: SignalGroup = {
+      groupId: newId(),
+      strategyId: signal.strategyId,
+      strategyType: signal.strategyType ?? "momentum",
+      intents: [intent],
+      totalCapitalRequired: 0,
+      priority,
+      confidence: signal.confidence,
+      createdAt: nowMs(),
+    };
 
-    const riskResult = this.riskEngine.check(event.payload, this.portfolioState.getSnapshot());
-    if (!riskResult.passed) {
-      this.eventBus.publish({
-        id: newId(),
-        type: "RISK_REJECTED",
-        ts: nowMs(),
-        mode: this.mode,
-        strategyId: event.strategyId,
-        reason: riskResult.reason ?? "Risk check failed",
-        rejectedIntent: event.payload,
-      });
-      return;
-    }
-    this.executionEngine.submit(event.payload);
+    this.orderManager.submitSignalGroup(group);
   }
 
   private _onOrderSubmitted(event: any): void {
@@ -341,6 +373,10 @@ export class Orchestrator {
   private _onOrderFilled(event: OrderFilledEvent): void {
     this.orderState.applyFill(event.orderId, event.fill);
     this.portfolioState.applyFill(event.fill);
+
+    // Release OMS capital reservation for the filled intent
+    this.orderManager.onOrderFilled(event.orderId);
+
     this.eventBus.publish({
       id: newId(), type: "PORTFOLIO_UPDATED", ts: nowMs(), mode: this.mode,
       payload: this.portfolioState.getSnapshot(),
@@ -349,5 +385,8 @@ export class Orchestrator {
 
   private _onOrderCanceled(event: OrderCanceledEvent): void {
     this.orderState.markCanceled(event.orderId);
+
+    // Release OMS capital reservation for the canceled intent
+    this.orderManager.onOrderCanceled(event.orderId);
   }
 }

@@ -43,6 +43,8 @@ export interface QueuedOrderIntent {
   enqueuedAt: EpochMs;
   /** Capital reservation ID, if one has been made for this intent */
   reservationId?: UUID;
+  /** Signal group this intent belongs to (for multi-leg atomic execution) */
+  groupId?: UUID;
 }
 
 // ------------------------------------------------------------------
@@ -132,4 +134,35 @@ export interface VwapParams {
   participationRate: number;
   /** Maximum allowable slippage as a fraction before abandoning (e.g. 0.005 = 50bps) */
   maxSlippage: number;
+}
+
+// ------------------------------------------------------------------
+// Signal Group (multi-leg atomic execution)
+// ------------------------------------------------------------------
+
+/**
+ * A group of order intents that must be executed atomically.
+ * Used for multi-leg signals like pairs trades where both legs
+ * must execute or neither should. Capital is reserved for the
+ * entire group before any intent is enqueued.
+ */
+export interface SignalGroup {
+  /** Unique group ID */
+  groupId: UUID;
+  /** Strategy that generated the signal group */
+  strategyId: string;
+  /** Strategy type (used for priority lookup) */
+  strategyType: string;
+  /** All intents in this group */
+  intents: OrderIntent[];
+  /** Total USD capital required for all buy-side intents */
+  totalCapitalRequired: number;
+  /** Reservation ID once capital is reserved */
+  reservationId?: UUID;
+  /** Computed priority for queue ordering */
+  priority: number;
+  /** Signal confidence (0-1) if available */
+  confidence?: number;
+  /** When the group was created (Unix ms) */
+  createdAt: EpochMs;
 }

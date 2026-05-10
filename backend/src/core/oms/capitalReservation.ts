@@ -6,6 +6,10 @@
  * multiple concurrent strategies from over-committing capital before orders
  * are filled or rejected.
  *
+ * Supports both single-intent and group-level (multi-leg) reservations.
+ * Group reservations are atomic: if the full group cost exceeds available
+ * cash, no reservation is made for any intent in the group.
+ *
  * Inputs:  OrderIntent (to compute reservation amount), total available cash.
  * Outputs: Reservation receipts, reserved total, available cash after reservations.
  */
@@ -17,23 +21,59 @@ import type { UUID } from "../../types/common";
 import type { CapitalReservation } from "../../types/oms";
 import type { OrderIntent } from "../../types/orders";
 
+/** Callback to estimate the current market price for a symbol */
+export type PriceEstimator = (symbol: string) => number;
+
 export class CapitalReservationManager {
   private readonly _reservations: Map<UUID, CapitalReservation> = new Map();
+
+  /**
+   * Estimates the capital cost for a single order intent.
+   * - Buy orders: qty × (limitPrice or estimated market price)
+   * - Sell orders: $0 (sells generate proceeds, not costs)
+   * @param intent - OrderIntent to estimate cost for
+   * @param priceEstimator - Callback returning current price for a symbol
+   * @returns Estimated cost in USD (0 for sell-side intents)
+   */
+  estimateCost(intent: OrderIntent, priceEstimator?: PriceEstimator): number {
+    // Sell orders generate proceeds, they don't consume capital
+    if (intent.side === "sell") return 0;
+
+    const price = intent.limitPrice ?? (priceEstimator ? priceEstimator(intent.symbol) : 0);
+    return intent.qty * price;
+  }
 
   /**
    * Attempts to reserve capital for a pending order intent.
    * Returns null if estimated cost is zero or exceeds available cash.
    * @param intent - OrderIntent to reserve capital for
    * @param totalCash - Current total cash balance (before reservations)
+   * @param priceEstimator - Optional callback for market price estimation
    * @returns Reservation receipt, or null if insufficient capital
    */
   reserve(
     intent: OrderIntent,
     totalCash: number,
+    priceEstimator?: PriceEstimator,
   ): { reservationId: UUID; amount: number } | null {
-    const amount = intent.qty * (intent.limitPrice ?? 0);
+    const amount = this.estimateCost(intent, priceEstimator);
 
+    // Sell orders or zero-cost intents don't need reservation
     if (amount <= 0) {
+      if (intent.side === "sell") {
+        // Sells don't need capital — return a zero-cost reservation for tracking
+        const reservationId = newId();
+        const reservation: CapitalReservation = {
+          reservationId,
+          amount: 0,
+          strategyId: intent.strategyId,
+          intentId: intent.id,
+          ts: nowMs(),
+        };
+        this._reservations.set(reservationId, reservation);
+        return { reservationId, amount: 0 };
+      }
+
       logger.warn("CapitalReservationManager: cannot reserve — amount is zero or negative", {
         intentId: intent.id,
         qty: intent.qty,
@@ -75,6 +115,73 @@ export class CapitalReservationManager {
   }
 
   /**
+   * Reserves capital for an entire signal group atomically.
+   * Computes total buy-side cost across all intents. If the total exceeds
+   * available cash, no reservations are made for any intent in the group.
+   *
+   * @param intents - All OrderIntents in the signal group
+   * @param totalCash - Current total cash balance
+   * @param priceEstimator - Callback returning current price for a symbol
+   * @returns Reservation receipt with total amount, or null if insufficient capital
+   */
+  reserveGroup(
+    intents: OrderIntent[],
+    totalCash: number,
+    priceEstimator?: PriceEstimator,
+  ): { reservationId: UUID; amount: number } | null {
+    // Calculate total cost across all buy-side intents
+    let totalAmount = 0;
+    for (const intent of intents) {
+      totalAmount += this.estimateCost(intent, priceEstimator);
+    }
+
+    // All sell or zero-cost group — create tracking reservation
+    if (totalAmount <= 0) {
+      const reservationId = newId();
+      const reservation: CapitalReservation = {
+        reservationId,
+        amount: 0,
+        strategyId: intents[0]?.strategyId ?? "unknown",
+        intentId: intents[0]?.id ?? "unknown",
+        ts: nowMs(),
+      };
+      this._reservations.set(reservationId, reservation);
+      return { reservationId, amount: 0 };
+    }
+
+    const available = this.getAvailableCash(totalCash);
+    if (totalAmount > available) {
+      logger.info("CapitalReservationManager: insufficient capital for group reservation", {
+        intentCount: intents.length,
+        required: totalAmount,
+        available,
+        alreadyReserved: this.getReservedTotal(),
+      });
+      return null;
+    }
+
+    const reservationId = newId();
+    const reservation: CapitalReservation = {
+      reservationId,
+      amount: totalAmount,
+      strategyId: intents[0]?.strategyId ?? "unknown",
+      intentId: intents[0]?.id ?? "unknown",
+      ts: nowMs(),
+    };
+
+    this._reservations.set(reservationId, reservation);
+    logger.info("CapitalReservationManager: reserved capital for group", {
+      reservationId,
+      amount: totalAmount,
+      intentCount: intents.length,
+      strategyId: reservation.strategyId,
+      totalReserved: this.getReservedTotal(),
+    });
+
+    return { reservationId, amount: totalAmount };
+  }
+
+  /**
    * Releases a capital reservation after an order is filled, canceled, or rejected.
    * @param reservationId - ID of the reservation to release
    */
@@ -96,6 +203,15 @@ export class CapitalReservationManager {
   }
 
   /**
+   * Returns the reservation for a given reservation ID, or null if not found.
+   * @param reservationId - Reservation ID to look up
+   * @returns CapitalReservation or null
+   */
+  getReservation(reservationId: UUID): CapitalReservation | null {
+    return this._reservations.get(reservationId) ?? null;
+  }
+
+  /**
    * Returns the total USD amount currently reserved across all pending intents.
    * @returns Sum of all active reservation amounts
    */
@@ -114,6 +230,14 @@ export class CapitalReservationManager {
    */
   getAvailableCash(totalCash: number): number {
     return totalCash - this.getReservedTotal();
+  }
+
+  /**
+   * Returns the count of active reservations. Useful for diagnostics.
+   * @returns Number of active reservations
+   */
+  get reservationCount(): number {
+    return this._reservations.size;
   }
 
   /**

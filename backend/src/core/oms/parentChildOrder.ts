@@ -70,14 +70,18 @@ export class ParentChildOrderTracker {
       throw new Error(`ParentChildOrderTracker: parent ${parentId} not found`);
     }
 
+    // Determine total slices from algo params
+    let totalSlices = 0;
+    if ("numSlices" in parent.algoParams) {
+      totalSlices = (parent.algoParams as TwapParams).numSlices;
+    }
+
     const child: ChildOrder = {
       childId: newId(),
       parentId,
       intentId: childIntent.id,
       sliceIndex: parent.childIds.length,
-      // TODO: Set totalSlices from parent.algoParams.numSlices (TWAP) or compute
-      // dynamically based on remaining volume participation (VWAP).
-      totalSlices: 0,
+      totalSlices,
       qty: childIntent.qty,
       filledQty: 0,
       submittedAt: nowMs(),
@@ -98,20 +102,54 @@ export class ParentChildOrderTracker {
 
   /**
    * Updates fill accounting for a child order when a fill event arrives.
+   * Accumulates fill qty into both child and parent, marks completion when done.
    * @param childOrderId - ID of the child order that was filled
    * @param fill - Fill event from the execution sink
    */
   onChildFill(childOrderId: UUID, fill: Fill): void {
-    // TODO: Look up the child by childOrderId in _children.
-    // TODO: Accumulate fill.qty into child.filledQty.
-    // TODO: Look up the parent and accumulate fill.qty into parent.filledQty.
-    // TODO: If child is fully filled, set child.filledAt = fill.ts.
-    // TODO: Call this.isComplete(parent.parentId) and if true, set parent.completedAt.
-    logger.info("ParentChildOrderTracker: child fill received (not yet accumulated)", {
-      childOrderId,
-      fillQty: fill.qty,
-      fillPrice: fill.price,
-    });
+    const child = this._children.get(childOrderId);
+    if (!child) {
+      logger.warn("ParentChildOrderTracker: onChildFill — child not found", { childOrderId });
+      return;
+    }
+
+    // Accumulate fill qty into child
+    child.filledQty += fill.qty;
+
+    // Mark child as filled if complete
+    if (child.filledQty >= child.qty) {
+      child.filledAt = fill.ts;
+    }
+
+    // Accumulate fill qty into parent
+    const parent = this._parents.get(child.parentId);
+    if (!parent) {
+      logger.warn("ParentChildOrderTracker: onChildFill — parent not found", {
+        parentId: child.parentId,
+      });
+      return;
+    }
+
+    parent.filledQty += fill.qty;
+
+    // Mark parent as complete if fully filled
+    if (this.isComplete(parent.parentId)) {
+      parent.completedAt = fill.ts;
+      logger.info("ParentChildOrderTracker: parent fully filled", {
+        parentId: parent.parentId,
+        totalQty: parent.totalQty,
+        filledQty: parent.filledQty,
+      });
+    } else {
+      logger.info("ParentChildOrderTracker: child fill recorded", {
+        childOrderId,
+        childFilledQty: child.filledQty,
+        parentFilledQty: parent.filledQty,
+        parentTotalQty: parent.totalQty,
+        fillQty: fill.qty,
+        fillPrice: fill.price,
+      });
+    }
   }
 
   /**
@@ -138,11 +176,9 @@ export class ParentChildOrderTracker {
    * @returns True when all qty is filled, false otherwise
    */
   isComplete(parentId: UUID): boolean {
-    // TODO: Return true when parent.filledQty >= parent.totalQty.
-    // TODO: Alternatively, return true when all child.filledQty === child.qty for every child.
     const parent = this._parents.get(parentId);
     if (!parent) return false;
-    return false;
+    return parent.filledQty >= parent.totalQty;
   }
 
   /**
@@ -150,7 +186,14 @@ export class ParentChildOrderTracker {
    * @returns Array of incomplete ParentOrders
    */
   getPendingParents(): ParentOrder[] {
-    // TODO: Filter _parents by completedAt === undefined.
-    return [];
+    return [...this._parents.values()].filter((p) => p.completedAt === undefined);
+  }
+
+  /**
+   * Clears all parent and child order state. Used in tests and on engine stop.
+   */
+  clear(): void {
+    this._parents.clear();
+    this._children.clear();
   }
 }
