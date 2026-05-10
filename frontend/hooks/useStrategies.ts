@@ -57,8 +57,12 @@ export function useStrategies(pollIntervalMs = 15_000): UseStrategiesResult {
   }, [fetchData]);
 
   const stopStrategy = useCallback(async (id: string) => {
-    await stopStrategyRun(id);
-    await fetchData();
+    try {
+      await stopStrategyRun(id);
+      await fetchData();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to stop strategy");
+    }
   }, [fetchData]);
 
   return { runs, isLoading, error, refetch: fetchData, startStrategy, stopStrategy };

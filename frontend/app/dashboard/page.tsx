@@ -31,7 +31,7 @@ interface StrategyErrorMsg {
 
 export default function DashboardPage() {
   const { snapshot, equityCurve, isLoading: portfolioLoading } = usePortfolio();
-  const { runs, stopStrategy } = useStrategies();
+  const { runs, error: strategyActionError, stopStrategy } = useStrategies();
   const { status: systemStatus, isLoading: systemLoading } = useSystemHealth();
 
   const [strategyErrors, setStrategyErrors] = useState<StrategyErrorMsg[]>([]);
@@ -45,6 +45,12 @@ export default function DashboardPage() {
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
       <h1 className="mb-6 text-xl font-semibold text-zinc-900 dark:text-zinc-50">Dashboard</h1>
+
+      {strategyActionError && (
+        <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-300">
+          {strategyActionError}
+        </div>
+      )}
 
       {strategyErrors.map((e, i) => (
         <div

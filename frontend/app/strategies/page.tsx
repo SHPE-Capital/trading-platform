@@ -15,11 +15,17 @@ import StrategyList from "../../features/strategy/StrategyList";
 import { useStrategies } from "../../hooks/useStrategies";
 
 export default function StrategiesPage() {
-  const { runs, isLoading, launchStrategy, stopStrategy } = useStrategies();
+  const { runs, isLoading, error, startStrategy, stopStrategy } = useStrategies();
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
       <h1 className="mb-6 text-xl font-semibold text-zinc-900 dark:text-zinc-50">Strategies</h1>
+
+      {error && (
+        <div className="mb-6 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-300">
+          {error}
+        </div>
+      )}
 
       <div className="grid gap-8 lg:grid-cols-3">
         {/* Launch form */}
@@ -27,7 +33,7 @@ export default function StrategiesPage() {
           <h2 className="mb-3 text-sm font-semibold text-zinc-500 uppercase tracking-wide">
             Launch Strategy
           </h2>
-          <StrategyForm onSubmit={launchStrategy} />
+          <StrategyForm onSubmit={startStrategy} />
         </div>
 
         {/* Strategy list */}
