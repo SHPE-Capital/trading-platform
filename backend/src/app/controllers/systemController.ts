@@ -4,9 +4,6 @@
  * Controller for system-level endpoints: health check, engine status,
  * and kill-switch activation. These endpoints give the frontend visibility
  * into the backend's current operational state.
- *
- * Inputs:  HTTP requests from the frontend.
- * Outputs: JSON responses with system status information.
  */
 
 import type { Request, Response } from "express";
@@ -81,10 +78,7 @@ async function checkAlpaca(): Promise<ServiceHealth> {
   }
 }
 
-/**
- * GET /api/system/health
- * Returns a simple health check response confirming the server is running.
- */
+/** GET /api/system/health */
 export function healthCheck(_req: Request, res: Response): void {
   res.json({ status: "ok", ts: nowIso() });
 }

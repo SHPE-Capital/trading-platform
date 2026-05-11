@@ -3,9 +3,6 @@
  *
  * Strategy management page.
  * Shows all strategy runs (active + historical) and a form to launch a new strategy.
- *
- * Data:    useStrategies hook for run list and launch/stop actions.
- * Layout:  Two-panel: left = launch form, right = strategy list.
  */
 
 "use client";
@@ -28,7 +25,6 @@ export default function StrategiesPage() {
       )}
 
       <div className="grid gap-8 lg:grid-cols-3">
-        {/* Launch form */}
         <div className="lg:col-span-1">
           <h2 className="mb-3 text-sm font-semibold text-zinc-500 uppercase tracking-wide">
             Launch Strategy
@@ -36,7 +32,6 @@ export default function StrategiesPage() {
           <StrategyForm onSubmit={startStrategy} />
         </div>
 
-        {/* Strategy list */}
         <div className="lg:col-span-2">
           <h2 className="mb-3 text-sm font-semibold text-zinc-500 uppercase tracking-wide">
             All Runs

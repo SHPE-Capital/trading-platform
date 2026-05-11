@@ -5,8 +5,6 @@
  * All database interactions in the backend go through this module, keeping
  * Supabase-specific logic isolated from the rest of the system.
  *
- * Inputs:  Domain objects (Order, Fill, PortfolioSnapshot, StrategyRun, etc.)
- * Outputs: Persisted records; query results for API responses.
  */
 
 import { getSupabaseClient } from "./client";
@@ -21,11 +19,7 @@ import type { UUID } from "../../types/common";
 // Orders
 // ------------------------------------------------------------------
 
-/**
- * Persists a submitted order record to the database.
- * @param order - The Order object to insert
- * @returns void
- */
+/** Persists a submitted order record to the database. */
 export async function insertOrder(order: Order, isPaper = true): Promise<void> {
   const supabase = getSupabaseClient();
   const { error } = await supabase.from("orders").insert({
@@ -53,12 +47,7 @@ export async function insertOrder(order: Order, isPaper = true): Promise<void> {
   if (error) logger.error("insertOrder failed", { error: error.message });
 }
 
-/**
- * Updates an existing order record (status, fill qty, etc.).
- * @param orderId - Internal order ID
- * @param updates - Partial Order fields to update
- * @returns void
- */
+/** Updates an existing order record (status, fill qty, etc.). */
 export async function updateOrder(orderId: UUID, updates: Partial<Order>): Promise<void> {
   const supabase = getSupabaseClient();
   const payload: Record<string, unknown> = {};
@@ -72,11 +61,7 @@ export async function updateOrder(orderId: UUID, updates: Partial<Order>): Promi
   if (error) logger.error("updateOrder failed", { error: error.message, orderId });
 }
 
-/**
- * Fetches all orders for a given strategy run.
- * @param strategyRunId - Strategy run ID to filter by
- * @returns Array of Order records
- */
+/** Fetches all orders for a given strategy run. */
 export async function getOrdersByStrategyRun(strategyRunId: UUID): Promise<Order[]> {
   const supabase = getSupabaseClient();
   const { data, error } = await supabase
@@ -95,11 +80,7 @@ export async function getOrdersByStrategyRun(strategyRunId: UUID): Promise<Order
 // Fills
 // ------------------------------------------------------------------
 
-/**
- * Persists a fill record to the database.
- * @param fill - The Fill object to insert
- * @returns void
- */
+/** Persists a fill record to the database. */
 export async function insertFill(fill: Fill, isPaper = true): Promise<void> {
   const supabase = getSupabaseClient();
   const { error } = await supabase.from("fills").insert({
@@ -123,11 +104,7 @@ export async function insertFill(fill: Fill, isPaper = true): Promise<void> {
 // Portfolio Snapshots
 // ------------------------------------------------------------------
 
-/**
- * Persists a portfolio snapshot to the database.
- * @param snapshot - The PortfolioSnapshot to insert
- * @returns void
- */
+/** Persists a portfolio snapshot to the database. */
 export async function insertPortfolioSnapshot(snapshot: PortfolioSnapshot): Promise<void> {
   const supabase = getSupabaseClient();
   const { error } = await supabase.from("portfolio_snapshots").insert({
@@ -149,10 +126,7 @@ export async function insertPortfolioSnapshot(snapshot: PortfolioSnapshot): Prom
   if (error) logger.error("insertPortfolioSnapshot failed", { error: error.message });
 }
 
-/**
- * Retrieves the most recent portfolio snapshot from the database.
- * @returns PortfolioSnapshot or null if none exists
- */
+/** Retrieves the most recent portfolio snapshot from the database. */
 export async function getLatestPortfolioSnapshot(): Promise<PortfolioSnapshot | null> {
   const supabase = getSupabaseClient();
   const { data, error } = await supabase
@@ -168,11 +142,7 @@ export async function getLatestPortfolioSnapshot(): Promise<PortfolioSnapshot | 
   return data as PortfolioSnapshot;
 }
 
-/**
- * Retrieves the portfolio equity curve (all snapshots) for charting.
- * @param limit - Maximum number of snapshots to return
- * @returns Array of PortfolioSnapshot records ordered by time ascending
- */
+/** Retrieves the portfolio equity curve (all snapshots) for charting. */
 export async function getPortfolioEquityCurve(limit = 500): Promise<PortfolioSnapshot[]> {
   const supabase = getSupabaseClient();
   const { data, error } = await supabase
@@ -436,11 +406,7 @@ export function downsampleEquityCurve<T>(curve: T[], targetPoints = 5000): T[] {
   return downsampled;
 }
 
-/**
- * Persists a full backtest result summary to the backtest_results table.
- * @param result - The BacktestResult to insert
- * @returns void
- */
+/** Persists a full backtest result summary to the backtest_results table. */
 export async function insertBacktestResult(result: BacktestResult): Promise<void> {
   const supabase = getSupabaseClient();
 
@@ -556,10 +522,7 @@ export async function updateBacktestResultStatus(id: string, status: string): Pr
   if (error) logger.error("updateBacktestResultStatus failed", { error: error.message, id });
 }
 
-/**
- * Retrieves all backtest result summaries (without large equity curve payload).
- * @returns Array of BacktestResult records
- */
+/** Retrieves all backtest result summaries (without large equity curve payload). */
 export async function getAllBacktestResults(): Promise<BacktestResult[]> {
   const supabase = getSupabaseClient();
   const { data, error } = await supabase
@@ -573,11 +536,7 @@ export async function getAllBacktestResults(): Promise<BacktestResult[]> {
   return (data ?? []) as unknown as BacktestResult[];
 }
 
-/**
- * Retrieves a single backtest result by ID, including the full equity curve.
- * @param id - Backtest result ID
- * @returns BacktestResult or null
- */
+/** Retrieves a single backtest result by ID, including the full equity curve. */
 export async function getBacktestResultById(id: UUID): Promise<BacktestResult | null> {
   const supabase = getSupabaseClient();
   const { data, error } = await supabase

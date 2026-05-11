@@ -3,9 +3,6 @@
  *
  * Default runtime configuration values used when strategy or engine
  * configs are not explicitly overridden. These are safe starting values.
- *
- * Inputs:  env module values.
- * Outputs: Default config objects consumed by core engine and strategies.
  */
 
 import { env } from "./env";

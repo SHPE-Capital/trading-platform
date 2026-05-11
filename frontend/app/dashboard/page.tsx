@@ -4,9 +4,6 @@
  * Dashboard page — the primary overview screen.
  * Shows: system health, live portfolio summary, active strategy status cards,
  * and the equity curve chart.
- *
- * Data: Fetched via usePortfolio and useStrategies hooks.
- * Layout: 2-column grid on desktop, single column on mobile.
  */
 
 "use client";
@@ -74,7 +71,6 @@ export default function DashboardPage() {
       ))}
 
       <div className="grid gap-6 lg:grid-cols-3">
-        {/* Left column: health + strategy cards */}
         <div className="flex flex-col gap-6 lg:col-span-1">
           <SystemHealthCard status={systemStatus} isLoading={systemLoading} />
 
@@ -92,7 +88,6 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Right column: portfolio summary + equity curve */}
         <div className="flex flex-col gap-6 lg:col-span-2">
           {snapshot ? (
             <PortfolioSummaryCard snapshot={snapshot} />

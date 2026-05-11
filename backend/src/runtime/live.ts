@@ -4,19 +4,6 @@
  * Live paper trading runtime entry point.
  * Bootstraps all components, connects to Alpaca, registers strategies,
  * and starts the Orchestrator for real-time paper trading.
- *
- * Execution flow:
- *   1. Create EventBus, state managers, risk engine, execution engine
- *   2. Connect AlpacaMarketDataAdapter and AlpacaOrderExecutionAdapter
- *   3. Create PaperExecutionSink, inject into ExecutionEngine
- *   4. Instantiate and register strategies
- *   5. Start the Orchestrator
- *   6. Subscribe to symbols via MarketDataAdapter
- *   7. Create HTTP server, attach WebSocket server, start listening
- *   8. Handle shutdown gracefully on SIGINT/SIGTERM
- *
- * Inputs:  Environment variables; strategy config from env/defaults.
- * Outputs: Running live paper trading session.
  */
 
 import http from "http";
@@ -50,22 +37,18 @@ const INITIAL_CAPITAL = 100_000;
 async function main(): Promise<void> {
   logger.info("runtime/live: starting paper trading mode");
 
-  // ---- Core infrastructure ----
   const eventBus = new EventBus();
   const symbolState = new SymbolStateManager();
   const portfolioState = new PortfolioStateManager(INITIAL_CAPITAL);
   const orderState = new OrderStateManager();
   const riskEngine = new RiskEngine();
 
-  // ---- Adapters ----
   const marketDataAdapter = new AlpacaMarketDataAdapter(eventBus, "paper");
   const orderAdapter = new AlpacaOrderExecutionAdapter(eventBus, "paper");
 
-  // ---- Execution ----
   const paperSink = new PaperExecutionSink(orderAdapter);
   const executionEngine = new ExecutionEngine(paperSink);
 
-  // ---- Orchestrator ----
   const orchestrator = new Orchestrator(
     eventBus,
     symbolState,
@@ -76,21 +59,17 @@ async function main(): Promise<void> {
     "paper",
   );
 
-  // ---- Register strategies ----
   // Example: SPY/QQQ pairs trade (configure via env or DB in production)
   const pairsConfig = createPairsConfig("SPY", "QQQ");
   const pairsStrategy = new PairsStrategy(pairsConfig);
   orchestrator.registerStrategy(pairsStrategy);
 
-  // ---- Connect to Alpaca ----
   await marketDataAdapter.connect();
   await orderAdapter.connectTradeStream();
 
-  // ---- Start engine ----
   orchestrator.start();
   marketDataAdapter.subscribe(pairsConfig.symbols);
 
-  // ---- Part 4: Persistence hooks ----
   // Fire-and-forget: errors are logged but never re-thrown so a DB hiccup
   // cannot crash the live engine or block the synchronous event dispatch loop.
   eventBus.on<OrderSubmittedEvent>("ORDER_SUBMITTED", (event) => {
@@ -124,14 +103,12 @@ async function main(): Promise<void> {
     );
   });
 
-  // ---- Part 5: Portfolio snapshot scheduler ----
   const snapshotTimer = setInterval(() => {
     insertPortfolioSnapshot(portfolioState.getSnapshot()).catch((err) =>
       logger.error("persistence: insertPortfolioSnapshot failed", { err }),
     );
   }, DEFAULT_SNAPSHOT_INTERVAL_MS);
 
-  // ---- Start HTTP + WebSocket server ----
   // http.createServer(app) shares one port for both REST and WebSocket
   // upgrades; attachWebSocketServer scopes WS to /ws/events only.
   const app = createApp({ orchestrator, symbolState, portfolioState, riskEngine, marketDataAdapter });
@@ -141,7 +118,6 @@ async function main(): Promise<void> {
     logger.info(`Server listening on port ${env.port} (REST + WebSocket)`);
   });
 
-  // ---- Graceful shutdown ----
   const shutdown = (): void => {
     logger.info("runtime/live: shutting down");
     clearInterval(snapshotTimer);

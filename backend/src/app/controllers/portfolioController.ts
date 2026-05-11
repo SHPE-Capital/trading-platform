@@ -4,9 +4,6 @@
  * Controller for portfolio-related endpoints.
  * Returns the current portfolio snapshot, open positions, order history,
  * fills, and the equity curve for charting.
- *
- * Inputs:  HTTP requests from the frontend portfolio view.
- * Outputs: JSON portfolio data from in-memory state or database.
  */
 
 import type { Request, Response } from "express";
@@ -18,12 +15,7 @@ import {
 import { logger } from "../../utils/logger";
 import type { AppContext } from "../context";
 
-/**
- * GET /api/portfolio/snapshot
- * Returns the most recent portfolio snapshot.
- * @param req - Express Request
- * @param res - Express Response: PortfolioSnapshot JSON or 404
- */
+/** GET /api/portfolio/snapshot */
 export async function getPortfolioSnapshot(req: Request, res: Response): Promise<void> {
   const { portfolioState } = req.app.locals.ctx as AppContext;
   if (portfolioState) {
@@ -43,13 +35,7 @@ export async function getPortfolioSnapshot(req: Request, res: Response): Promise
   }
 }
 
-/**
- * GET /api/portfolio/equity-curve
- * Returns the historical equity curve snapshots for charting.
- * Query param: ?limit=500
- * @param req - Express Request with optional query.limit
- * @param res - Express Response: PortfolioSnapshot[] JSON array
- */
+/** GET /api/portfolio/equity-curve — query param: ?limit=500 */
 export async function getEquityCurve(req: Request, res: Response): Promise<void> {
   const limit = parseInt(String(req.query["limit"] ?? "500"), 10);
   try {
@@ -61,13 +47,7 @@ export async function getEquityCurve(req: Request, res: Response): Promise<void>
   }
 }
 
-/**
- * GET /api/portfolio/orders
- * Returns order history for a strategy run.
- * Query param: ?strategyRunId=<uuid>
- * @param req - Express Request with query.strategyRunId
- * @param res - Express Response: Order[] JSON array
- */
+/** GET /api/portfolio/orders — required query param: ?strategyRunId=<uuid> */
 export async function getOrders(req: Request, res: Response): Promise<void> {
   const strategyRunId = req.query["strategyRunId"] as string | undefined;
   if (!strategyRunId) {

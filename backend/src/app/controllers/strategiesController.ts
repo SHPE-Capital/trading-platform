@@ -107,7 +107,6 @@ export async function startStrategyRun(req: Request, res: Response): Promise<voi
   // Register with the orchestrator — also calls strategy.start() if already running
   orchestrator.registerStrategy(strategy, runId);
 
-  // Subscribe any new symbols to the market data feed
   const symbols = Array.isArray(config.symbols) ? (config.symbols as string[]) : [];
   if (marketDataAdapter && symbols.length > 0) {
     marketDataAdapter.subscribe(symbols);

@@ -13,20 +13,6 @@
  * Either gate failing causes an immediate logged exit before any connection
  * to Alpaca live systems is opened. This prevents accidental live-trading
  * from a misconfigured environment.
- *
- * Execution flow:
- *   1. Enforce dual feature gate (exit if either check fails)
- *   2. Create EventBus, state managers, risk engine, execution engine
- *   3. Connect AlpacaMarketDataAdapter and AlpacaOrderExecutionAdapter (live mode)
- *   4. Create LiveExecutionSink, inject into ExecutionEngine
- *   5. Instantiate and register strategies
- *   6. Start the Orchestrator
- *   7. Subscribe to symbols via MarketDataAdapter
- *   8. Create HTTP server, attach WebSocket server, start listening
- *   9. Handle shutdown gracefully on SIGINT/SIGTERM
- *
- * Inputs:  Environment variables; strategy config from env/defaults.
- * Outputs: Running live trading session with real order execution.
  */
 
 import http from "http";
@@ -58,7 +44,6 @@ import { logger } from "../utils/logger";
 const INITIAL_CAPITAL = 100_000;
 
 async function main(): Promise<void> {
-  // ---- Dual feature gate ----
   // Both flags must be set independently. Requiring two separate env vars
   // prevents live trading from being enabled by a single accidental change.
   if (env.alpacaTradingMode !== "live") {
@@ -78,22 +63,18 @@ async function main(): Promise<void> {
 
   logger.warn("runtime/live-trading: LIVE TRADING MODE — real money at risk");
 
-  // ---- Core infrastructure ----
   const eventBus = new EventBus();
   const symbolState = new SymbolStateManager();
   const portfolioState = new PortfolioStateManager(INITIAL_CAPITAL);
   const orderState = new OrderStateManager();
   const riskEngine = new RiskEngine();
 
-  // ---- Adapters (live mode) ----
   const marketDataAdapter = new AlpacaMarketDataAdapter(eventBus, "live");
   const orderAdapter = new AlpacaOrderExecutionAdapter(eventBus, "live");
 
-  // ---- Execution (live sink) ----
   const liveSink = new LiveExecutionSink(orderAdapter);
   const executionEngine = new ExecutionEngine(liveSink);
 
-  // ---- Orchestrator ----
   const orchestrator = new Orchestrator(
     eventBus,
     symbolState,
@@ -104,20 +85,16 @@ async function main(): Promise<void> {
     "live",
   );
 
-  // ---- Register strategies ----
   const pairsConfig = createPairsConfig("SPY", "QQQ");
   const pairsStrategy = new PairsStrategy(pairsConfig);
   orchestrator.registerStrategy(pairsStrategy);
 
-  // ---- Connect to Alpaca live endpoints ----
   await marketDataAdapter.connect();
   await orderAdapter.connectTradeStream();
 
-  // ---- Start engine ----
   orchestrator.start();
   marketDataAdapter.subscribe(pairsConfig.symbols);
 
-  // ---- Persistence hooks ----
   eventBus.on<OrderSubmittedEvent>("ORDER_SUBMITTED", (event) => {
     insertOrder(event.payload, false).catch((err) =>
       logger.error("persistence: insertOrder failed", { err }),
@@ -149,14 +126,12 @@ async function main(): Promise<void> {
     );
   });
 
-  // ---- Portfolio snapshot scheduler ----
   const snapshotTimer = setInterval(() => {
     insertPortfolioSnapshot(portfolioState.getSnapshot()).catch((err) =>
       logger.error("persistence: insertPortfolioSnapshot failed", { err }),
     );
   }, DEFAULT_SNAPSHOT_INTERVAL_MS);
 
-  // ---- Start HTTP + WebSocket server ----
   const app = createApp({ orchestrator, symbolState, portfolioState, riskEngine, marketDataAdapter });
   const server = http.createServer(app);
   attachWebSocketServer(server, eventBus);
@@ -164,7 +139,6 @@ async function main(): Promise<void> {
     logger.info(`Server listening on port ${env.port} (REST + WebSocket) [LIVE MODE]`);
   });
 
-  // ---- Graceful shutdown ----
   const shutdown = (): void => {
     logger.warn("runtime/live-trading: shutting down live trading session");
     clearInterval(snapshotTimer);
