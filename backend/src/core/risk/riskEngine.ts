@@ -5,7 +5,8 @@
  * the execution layer. Any check failure blocks the order and triggers
  * a RISK_REJECTED event on the EventBus.
  *
- * Inputs:  OrderIntent, current PortfolioSnapshot, RiskConfig.
+ * Inputs:  OrderIntent, current PortfolioSnapshot, RiskConfig,
+ *          optional referencePrice (current market price for the symbol).
  * Outputs: RiskCheckResult (passed or rejected with reason).
  */
 
@@ -19,6 +20,8 @@ export class RiskEngine {
   private config: RiskConfig;
   /** Per-strategy last order timestamp (for cooldown enforcement) */
   private lastOrderTs: Map<string, number> = new Map();
+  /** Equity at the start of the current session (set on first check) */
+  private sessionStartEquity: number | null = null;
 
   /**
    * Creates the risk engine with optional custom config.
@@ -32,22 +35,33 @@ export class RiskEngine {
   /**
    * Runs all risk checks against the given order intent.
    * Checks are run in order; the first failure short-circuits.
+   *
+   * For market orders (no `intent.limitPrice`), pass `referencePrice` to
+   * enable notional / cash / concentration checks. Without it, those
+   * checks fall back to the existing position's currentPrice or skip.
+   *
    * @param intent - The OrderIntent to validate
    * @param portfolio - Current PortfolioSnapshot for exposure checks
+   * @param referencePrice - Current market price for the symbol (optional)
    * @returns RiskCheckResult indicating pass or fail with reason
    */
-  check(intent: OrderIntent, portfolio: PortfolioSnapshot): RiskCheckResult {
+  check(intent: OrderIntent, portfolio: PortfolioSnapshot, referencePrice?: number): RiskCheckResult {
     const ts = nowMs();
+
+    // Initialize session-start equity on first check
+    if (this.sessionStartEquity === null) {
+      this.sessionStartEquity = portfolio.equity > 0 ? portfolio.equity : portfolio.initialCapital;
+    }
 
     const checks = [
       () => this._checkKillSwitch(intent),
       () => this._checkCooldown(intent, ts),
-      () => this._checkMaxPositionSize(intent, portfolio),
-      () => this._checkMaxNotionalExposure(intent, portfolio),
+      () => this._checkMaxPositionSize(intent, portfolio, referencePrice),
+      () => this._checkMaxNotionalExposure(intent, portfolio, referencePrice),
       () => this._checkShortSelling(intent, portfolio),
-      () => this._checkCashReserve(intent, portfolio),
+      () => this._checkCashReserve(intent, portfolio, referencePrice),
       () => this._checkIntradayDrawdown(intent, portfolio),
-      () => this._checkConcentration(intent, portfolio),
+      () => this._checkConcentration(intent, portfolio, referencePrice),
     ];
 
     for (const check of checks) {
@@ -87,11 +101,32 @@ export class RiskEngine {
     this.config = { ...this.config, ...updates };
   }
 
+  /**
+   * Resets session-start equity, e.g. on a new trading session.
+   */
+  resetSession(): void {
+    this.sessionStartEquity = null;
+  }
+
   // ------------------------------------------------------------------
   // Private checks — return { failedCheck, reason } on failure, null on pass
   // ------------------------------------------------------------------
 
-  private _checkKillSwitch(intent: OrderIntent): { failedCheck: string; reason: string } | null {
+  private _resolveReferencePrice(
+    intent: OrderIntent,
+    portfolio: PortfolioSnapshot,
+    referencePrice?: number,
+  ): number | null {
+    if (typeof intent.limitPrice === "number" && intent.limitPrice > 0) return intent.limitPrice;
+    if (typeof referencePrice === "number" && Number.isFinite(referencePrice) && referencePrice > 0) {
+      return referencePrice;
+    }
+    const existing = portfolio.positions.find((p) => p.symbol === intent.symbol);
+    if (existing && existing.currentPrice > 0) return existing.currentPrice;
+    return null;
+  }
+
+  private _checkKillSwitch(_intent: OrderIntent): { failedCheck: string; reason: string } | null {
     if (!this.config.killSwitchActive) return null;
     return { failedCheck: "KILL_SWITCH", reason: "Global kill switch is active — all orders blocked" };
   }
@@ -115,15 +150,12 @@ export class RiskEngine {
   private _checkMaxPositionSize(
     intent: OrderIntent,
     portfolio: PortfolioSnapshot,
+    referencePrice?: number,
   ): { failedCheck: string; reason: string } | null {
     const existingPosition = portfolio.positions.find((p) => p.symbol === intent.symbol);
-    const existingNotional = existingPosition ? existingPosition.marketValue : 0;
-    // Use a rough estimate of entry price: last market value / qty or intent limitPrice
-    const estimatedPrice = existingPosition?.currentPrice ?? intent.limitPrice ?? 0;
-    if (estimatedPrice === 0) return null; // Can't check without a price estimate
+    const estimatedPrice = this._resolveReferencePrice(intent, portfolio, referencePrice);
+    if (estimatedPrice === null) return null;
 
-    // New qty depends on side: Buy increases qty, Sell decreases qty.
-    // intent.qty is always positive.
     const qtyDelta = intent.side === "buy" ? intent.qty : -intent.qty;
     const newQty = (existingPosition?.qty ?? 0) + qtyDelta;
     const newNotional = Math.abs(newQty * estimatedPrice);
@@ -140,24 +172,24 @@ export class RiskEngine {
   private _checkMaxNotionalExposure(
     intent: OrderIntent,
     portfolio: PortfolioSnapshot,
+    referencePrice?: number,
   ): { failedCheck: string; reason: string } | null {
-    const estimatedPrice = intent.limitPrice ?? 0;
-    if (estimatedPrice === 0) return null;
+    const estimatedPrice = this._resolveReferencePrice(intent, portfolio, referencePrice);
+    if (estimatedPrice === null) return null;
 
-    const intentNotional = intent.qty * estimatedPrice;
     const existingPosition = portfolio.positions.find((p) => p.symbol === intent.symbol);
-    const existingNotional = existingPosition ? existingPosition.qty * existingPosition.currentPrice : 0;
-
-    // What would be the new notional for THIS symbol?
     const qtyDelta = intent.side === "buy" ? intent.qty : -intent.qty;
-    const symbolNewNotional = ((existingPosition?.qty ?? 0) + qtyDelta) * (existingPosition?.currentPrice ?? estimatedPrice);
+    const newSymbolQty = (existingPosition?.qty ?? 0) + qtyDelta;
+    const newSymbolPrice = existingPosition?.currentPrice && existingPosition.currentPrice > 0
+      ? existingPosition.currentPrice
+      : estimatedPrice;
+    const symbolNewNotional = Math.abs(newSymbolQty * newSymbolPrice);
 
-    // Total notional = (all other positions) + |symbolNewNotional|
     const otherPositionsNotional = portfolio.positions
       .filter((p) => p.symbol !== intent.symbol)
       .reduce((sum, p) => sum + Math.abs(p.qty * p.currentPrice), 0);
 
-    const totalExposure = otherPositionsNotional + Math.abs(symbolNewNotional);
+    const totalExposure = otherPositionsNotional + symbolNewNotional;
 
     if (totalExposure > this.config.maxNotionalExposureUsd) {
       return {
@@ -187,17 +219,29 @@ export class RiskEngine {
   private _checkCashReserve(
     intent: OrderIntent,
     portfolio: PortfolioSnapshot,
+    referencePrice?: number,
   ): { failedCheck: string; reason: string } | null {
-    // TODO: Compute estimatedCost = intent.qty * (intent.limitPrice ?? current position price).
-    //   Use portfolio.positions.find(p => p.symbol === intent.symbol)?.currentPrice as fallback.
-    //   Return null (skip check) if no price estimate is available.
-    // TODO: Compute reserveFloor = portfolio.cash * (this.config.cashReservePct ?? 0).
-    //   This is the minimum cash buffer that must remain untouched.
-    // TODO: Compute availableCash = portfolio.cash - reserveFloor.
-    // TODO: Return failure if estimatedCost > availableCash:
-    //   { failedCheck: "CASH_RESERVE", reason: `Order cost $${estimatedCost} exceeds available cash $${availableCash}` }
-    void intent;
-    void portfolio;
+    // Only buys consume cash; sells produce cash (we treat covers / short opens
+    // conservatively as not consuming cash here, matching simulation behavior).
+    if (intent.side !== "buy") return null;
+
+    const estimatedPrice = this._resolveReferencePrice(intent, portfolio, referencePrice);
+    if (estimatedPrice === null) return null;
+
+    const estimatedCost = intent.qty * estimatedPrice;
+    const reservePct = this.config.cashReservePct ?? 0;
+    // Reserve floor is computed against equity, not cash, so positions held
+    // in non-cash assets are reflected. Falls back to cash if equity is zero.
+    const reserveBase = portfolio.equity > 0 ? portfolio.equity : portfolio.cash;
+    const reserveFloor = reserveBase * reservePct;
+    const availableCash = portfolio.cash - reserveFloor;
+
+    if (estimatedCost > availableCash) {
+      return {
+        failedCheck: "CASH_RESERVE",
+        reason: `Order cost $${estimatedCost.toFixed(2)} exceeds available cash $${availableCash.toFixed(2)} (cash=$${portfolio.cash.toFixed(2)}, reserve floor=$${reserveFloor.toFixed(2)})`,
+      };
+    }
     return null;
   }
 
@@ -205,31 +249,44 @@ export class RiskEngine {
     _intent: OrderIntent,
     portfolio: PortfolioSnapshot,
   ): { failedCheck: string; reason: string } | null {
-    // TODO: Track session-start equity in a private field (e.g. this._sessionStartEquity).
-    //   Initialize it on the first call each trading day, or reset it on ENGINE_STARTED.
-    // TODO: Compute drawdownPct = (this._sessionStartEquity - portfolio.equity) / this._sessionStartEquity.
-    // TODO: If drawdownPct >= (this.config.maxIntradayDrawdownPct ?? Infinity):
-    //   1. Call this.setKillSwitch(true) to block all further orders.
-    //   2. Return { failedCheck: "INTRADAY_DRAWDOWN", reason: `Drawdown ${(drawdownPct*100).toFixed(2)}% exceeds limit` }.
-    void portfolio;
+    const limit = this.config.maxIntradayDrawdownPct;
+    if (limit == null || !Number.isFinite(limit)) return null;
+    if (this.sessionStartEquity == null || this.sessionStartEquity <= 0) return null;
+
+    const drawdownPct = (this.sessionStartEquity - portfolio.equity) / this.sessionStartEquity;
+    if (drawdownPct >= limit) {
+      this.setKillSwitch(true);
+      return {
+        failedCheck: "INTRADAY_DRAWDOWN",
+        reason: `Drawdown ${(drawdownPct * 100).toFixed(2)}% exceeds limit ${(limit * 100).toFixed(2)}% — kill switch engaged`,
+      };
+    }
     return null;
   }
 
   private _checkConcentration(
     intent: OrderIntent,
     portfolio: PortfolioSnapshot,
+    referencePrice?: number,
   ): { failedCheck: string; reason: string } | null {
-    // TODO: Find existing position for intent.symbol in portfolio.positions.
-    // TODO: Compute estimatedPrice = intent.limitPrice ?? existing position currentPrice ?? 0.
-    //   Return null (skip check) if estimatedPrice is 0.
-    // TODO: Compute qtyDelta = intent.side === "buy" ? intent.qty : -intent.qty.
-    // TODO: Compute newSymbolValue = Math.abs((existingQty + qtyDelta) * estimatedPrice).
-    // TODO: Compute concentrationPct = newSymbolValue / portfolio.equity.
-    //   Return null if portfolio.equity is 0.
-    // TODO: Return failure if concentrationPct > (this.config.maxConcentrationPct ?? 1):
-    //   { failedCheck: "CONCENTRATION_LIMIT", reason: `Symbol ${intent.symbol} would be ${(concentrationPct*100).toFixed(1)}% of portfolio` }
-    void intent;
-    void portfolio;
+    const limit = this.config.maxConcentrationPct;
+    if (limit == null || !Number.isFinite(limit)) return null;
+    if (portfolio.equity <= 0) return null;
+
+    const estimatedPrice = this._resolveReferencePrice(intent, portfolio, referencePrice);
+    if (estimatedPrice === null) return null;
+
+    const existing = portfolio.positions.find((p) => p.symbol === intent.symbol);
+    const qtyDelta = intent.side === "buy" ? intent.qty : -intent.qty;
+    const newSymbolValue = Math.abs(((existing?.qty ?? 0) + qtyDelta) * estimatedPrice);
+    const concentrationPct = newSymbolValue / portfolio.equity;
+
+    if (concentrationPct > limit) {
+      return {
+        failedCheck: "CONCENTRATION_LIMIT",
+        reason: `Symbol ${intent.symbol} would be ${(concentrationPct * 100).toFixed(1)}% of portfolio (limit ${(limit * 100).toFixed(1)}%)`,
+      };
+    }
     return null;
   }
 }

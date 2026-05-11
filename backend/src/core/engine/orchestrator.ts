@@ -325,7 +325,17 @@ export class Orchestrator {
     // intents in priority order and call executionEngine.submit(), enabling rate-limiting
     // and priority-based conflict resolution without blocking the event handler.
 
-    const riskResult = this.riskEngine.check(event.payload, this.portfolioState.getSnapshot());
+    const symState = this.symbolState.get(event.payload.symbol);
+    const referencePrice =
+      symState?.latestMid ??
+      symState?.latestTrade?.price ??
+      symState?.latestBar?.close ??
+      undefined;
+    const riskResult = this.riskEngine.check(
+      event.payload,
+      this.portfolioState.getSnapshot(),
+      referencePrice ?? undefined,
+    );
     if (!riskResult.passed) {
       this.eventBus.publish({
         id: newId(),
