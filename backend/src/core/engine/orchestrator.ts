@@ -31,6 +31,9 @@ import type {
   OrderIntentCreatedEvent,
   OrderFilledEvent,
   OrderCanceledEvent,
+  OrderRejectedEvent,
+  OrderPartialFillEvent,
+  OrderExpiredEvent,
 } from "../../types/events";
 
 export class Orchestrator {
@@ -119,8 +122,11 @@ export class Orchestrator {
 
     // Wire fills and state updates back into portfolio and order state
     this.eventBus.on("ORDER_SUBMITTED", (e) => this._onOrderSubmitted(e as any));
+    this.eventBus.on("ORDER_PARTIAL_FILL", (e) => this._onOrderPartialFill(e as OrderPartialFillEvent));
     this.eventBus.on("ORDER_FILLED", (e) => this._onOrderFilled(e as OrderFilledEvent));
     this.eventBus.on("ORDER_CANCELED", (e) => this._onOrderCanceled(e as OrderCanceledEvent));
+    this.eventBus.on("ORDER_REJECTED", (e) => this._onOrderRejected(e as OrderRejectedEvent));
+    this.eventBus.on("ORDER_EXPIRED", (e) => this._onOrderExpired(e as OrderExpiredEvent));
 
     // Start all registered strategies and emit per-strategy lifecycle events
     for (const strategy of this.strategies.values()) {
@@ -370,7 +376,35 @@ export class Orchestrator {
     this.orderState.addOrder(event.payload);
   }
 
+  /**
+   * Handles partial fill events. Applies the (delta) fill to both order and
+   * portfolio state incrementally and emits PORTFOLIO_UPDATED so downstream
+   * consumers (WS push, snapshot persister) see the change immediately.
+   *
+   * Convention: `event.fill.qty` is the delta qty for THIS partial fill, not
+   * the cumulative. The terminal `ORDER_FILLED` event that follows also carries
+   * a delta — see AlpacaOrderExecutionAdapter — so applying both does not
+   * double-count. OrderStateManager.applyFill recomputes status from the running
+   * cumulative filledQty and transitions to "filled" once it reaches order.qty.
+   */
+  private _onOrderPartialFill(event: OrderPartialFillEvent): void {
+    this.orderState.applyFill(event.orderId, event.fill);
+    this.portfolioState.applyFill(event.fill);
+    this.eventBus.publish({
+      id: newId(), type: "PORTFOLIO_UPDATED", ts: nowMs(), mode: this.mode,
+      payload: this.portfolioState.getSnapshot(),
+    });
+  }
+
   private _onOrderFilled(event: OrderFilledEvent): void {
+    // If an upstream sink already applied a partial-fill chain that consumed
+    // the full order qty, skip re-applying — partials already covered it.
+    // This guards adapters that emit BOTH cumulative partial events and a
+    // final cumulative fill (rare but defensible: protocol bugs / replays).
+    const order = this.orderState.getOrder(event.orderId);
+    if (order && order.status === "filled" && order.filledQty >= order.qty) {
+      return;
+    }
     this.orderState.applyFill(event.orderId, event.fill);
     this.portfolioState.applyFill(event.fill);
     this.eventBus.publish({
@@ -380,6 +414,26 @@ export class Orchestrator {
   }
 
   private _onOrderCanceled(event: OrderCanceledEvent): void {
+    this.orderState.markCanceled(event.orderId);
+  }
+
+  /**
+   * Handles broker/sim rejection. Transitions the order to "rejected" so it
+   * doesn't remain stuck as "submitted" in OrderStateManager — critical for
+   * backtest accounting (e.g. SimulatedExecutionSink rejects orders that have
+   * no usable reference price). No portfolio change: a rejection means no fill
+   * occurred.
+   */
+  private _onOrderRejected(event: OrderRejectedEvent): void {
+    this.orderState.markRejected(event.orderId);
+  }
+
+  /**
+   * Handles broker-side expiration (e.g. IOC orders that didn't fill in time).
+   * Equivalent terminal transition to cancellation from the orchestrator's
+   * perspective — no portfolio change.
+   */
+  private _onOrderExpired(event: OrderExpiredEvent): void {
     this.orderState.markCanceled(event.orderId);
   }
 }
