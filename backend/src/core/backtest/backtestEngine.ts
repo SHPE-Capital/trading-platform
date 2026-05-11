@@ -185,37 +185,75 @@ export class BacktestEngine {
     periodStart: number,
     periodEnd: number,
   ) {
-    // Compute trade-level metrics by pairing entry and exit fills per symbol
+    // Trade-level metrics with proper FIFO lot accounting.
+    //
+    // Each opener fill is broken into a "lot" with remaining qty plus a
+    // commission-per-share figure (commission / qty). A closer fill consumes
+    // qty from the front of the opener queue; each consumed slice produces
+    // exactly one realized PnL entry. Residual opener qty is preserved across
+    // closers (fix for partial closes that previously dropped the residual).
+    //
+    // Trade-count definition (encoded here): one realized PnL entry per
+    // closer-vs-opener slice. A 10-lot opened then closed in two 5-lot
+    // closers therefore counts as TWO trades — one per matched slice. This
+    // matches the convention used elsewhere in the audit's test suite.
+    interface Lot { price: number; qty: number; commissionPerShare: number; }
+    const longLots = new Map<string, Lot[]>();   // openers held long, to be closed by sells
+    const shortLots = new Map<string, Lot[]>();  // openers held short, to be closed by buys
     const pnlPerTrade: number[] = [];
-    const buyMap = new Map<string, Fill[]>();
-    const sellMap = new Map<string, Fill[]>();
+
+    const consume = (
+      lots: Lot[],
+      closerQty: number,
+      closerPrice: number,
+      closerCommissionPerShare: number,
+      direction: "long" | "short",
+    ): number => {
+      // Returns the qty actually closed (≤ closerQty) — any remainder must
+      // open a position on the opposite side by the caller.
+      let remaining = closerQty;
+      while (remaining > 0 && lots.length > 0) {
+        const lot = lots[0];
+        const slice = Math.min(lot.qty, remaining);
+        const grossPnl =
+          direction === "long"
+            ? (closerPrice - lot.price) * slice
+            : (lot.price - closerPrice) * slice;
+        const allocatedCommission =
+          slice * lot.commissionPerShare + slice * closerCommissionPerShare;
+        pnlPerTrade.push(grossPnl - allocatedCommission);
+        lot.qty -= slice;
+        remaining -= slice;
+        if (lot.qty === 0) lots.shift();
+      }
+      return closerQty - remaining;
+    };
 
     for (const fill of fills) {
+      const commissionPerShare = fill.qty > 0 ? fill.commission / fill.qty : 0;
       if (fill.side === "buy") {
-        const sells = sellMap.get(fill.symbol);
-        if (sells && sells.length > 0) {
-          // Covering a short
-          const matchedSell = sells.shift()!;
-          const pnl = (matchedSell.price - fill.price) * fill.qty - fill.commission - matchedSell.commission;
-          pnlPerTrade.push(pnl);
-        } else {
-          // Opening a long
-          const existing = buyMap.get(fill.symbol) ?? [];
-          existing.push(fill);
-          buyMap.set(fill.symbol, existing);
+        const shorts = shortLots.get(fill.symbol) ?? [];
+        const closedQty = shorts.length > 0
+          ? consume(shorts, fill.qty, fill.price, commissionPerShare, "short")
+          : 0;
+        if (shorts.length > 0 || closedQty > 0) shortLots.set(fill.symbol, shorts);
+        const residual = fill.qty - closedQty;
+        if (residual > 0) {
+          const lots = longLots.get(fill.symbol) ?? [];
+          lots.push({ price: fill.price, qty: residual, commissionPerShare });
+          longLots.set(fill.symbol, lots);
         }
       } else {
-        const buys = buyMap.get(fill.symbol);
-        if (buys && buys.length > 0) {
-          // Closing a long
-          const matchedBuy = buys.shift()!;
-          const pnl = (fill.price - matchedBuy.price) * fill.qty - fill.commission - matchedBuy.commission;
-          pnlPerTrade.push(pnl);
-        } else {
-          // Opening a short
-          const existing = sellMap.get(fill.symbol) ?? [];
-          existing.push(fill);
-          sellMap.set(fill.symbol, existing);
+        const longs = longLots.get(fill.symbol) ?? [];
+        const closedQty = longs.length > 0
+          ? consume(longs, fill.qty, fill.price, commissionPerShare, "long")
+          : 0;
+        if (longs.length > 0 || closedQty > 0) longLots.set(fill.symbol, longs);
+        const residual = fill.qty - closedQty;
+        if (residual > 0) {
+          const lots = shortLots.get(fill.symbol) ?? [];
+          lots.push({ price: fill.price, qty: residual, commissionPerShare });
+          shortLots.set(fill.symbol, lots);
         }
       }
     }
