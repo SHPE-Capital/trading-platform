@@ -22,6 +22,9 @@ import type { ExecutionMode } from "../../types/common";
 export class AlpacaOrderExecutionAdapter {
   private tradeStreamWs: WebSocket | null = null;
   private isConnected = false;
+  /** Cumulative filled qty seen so far per orderId — used to derive per-event
+   * delta qty if `data.qty` is absent on a trade_updates payload. */
+  private lastFilledCumulative: Map<string, number> = new Map();
 
   constructor(
     private readonly eventBus: EventBus,
@@ -200,12 +203,28 @@ export class AlpacaOrderExecutionAdapter {
     switch (event) {
       case "fill":
       case "partial_fill": {
+        // Alpaca trade_updates payload: `data.qty` is the qty of THIS event;
+        // `order.filled_qty` is the cumulative qty across all fills for the
+        // order. Use the per-event delta — using cumulative double-counted
+        // qty on subsequent partial fills. As a defensive fallback, if the
+        // delta isn't present, derive it from cumulative - already-recorded.
+        const deltaQtyRaw = data["qty"];
+        const eventDeltaQty = deltaQtyRaw !== undefined ? parseFloat(String(deltaQtyRaw)) : NaN;
+        const cumulativeFilled = parseFloat(String(order["filled_qty"] ?? 0));
+        const prevCumulative = this.lastFilledCumulative.get(orderId) ?? 0;
+        const fillQty = Number.isFinite(eventDeltaQty) && eventDeltaQty > 0
+          ? eventDeltaQty
+          : Math.max(0, cumulativeFilled - prevCumulative);
+        // Update the running cumulative for this orderId so a later partial
+        // fill can derive its delta even if `data.qty` is missing.
+        this.lastFilledCumulative.set(orderId, Math.max(prevCumulative, cumulativeFilled, prevCumulative + fillQty));
+
         const fill: Fill = {
           id: newId(),
           orderId,
           symbol: order["symbol"] as string,
           side: order["side"] as "buy" | "sell",
-          qty: parseFloat(String(order["filled_qty"] ?? 0)),
+          qty: fillQty,
           price: parseFloat(String(data["price"] ?? order["filled_avg_price"] ?? 0)),
           notional: 0,
           commission: 0,

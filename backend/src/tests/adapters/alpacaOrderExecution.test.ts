@@ -239,6 +239,81 @@ describe('AlpacaOrderExecutionAdapter: trade update events', () => {
     );
   });
 
+  it('partial fills use per-event delta qty when data.qty is provided (fix #7)', () => {
+    // Alpaca trade_updates payload contains both `data.qty` (this event's qty)
+    // and `order.filled_qty` (cumulative across all fills). Previously the
+    // adapter used the cumulative figure on every event, double-counting.
+    const { adapter, eventBus } = makeAdapter();
+    const pubs: unknown[] = [];
+    (eventBus.publish as jest.Mock).mockImplementation((e: unknown) => { pubs.push(e); });
+
+    // First partial: 6 of 10.
+    callTradeStream(adapter, {
+      stream: 'trade_updates',
+      data: {
+        event: 'partial_fill', price: '100', qty: '6',
+        order: {
+          client_order_id: 'intent-1', id: 'alpaca-order-id-1',
+          symbol: 'SPY', side: 'buy', qty: '10', filled_qty: '6',
+        },
+      },
+    });
+
+    // Second partial: 4 more, cumulative=10.
+    callTradeStream(adapter, {
+      stream: 'trade_updates',
+      data: {
+        event: 'fill', price: '101', qty: '4',
+        order: {
+          client_order_id: 'intent-1', id: 'alpaca-order-id-1',
+          symbol: 'SPY', side: 'buy', qty: '10', filled_qty: '10',
+        },
+      },
+    });
+
+    const fillEvents = pubs.filter(
+      (e: any) => e?.type === 'ORDER_PARTIAL_FILL' || e?.type === 'ORDER_FILLED',
+    ) as Array<{ fill: { qty: number; price: number } }>;
+    expect(fillEvents).toHaveLength(2);
+    expect(fillEvents[0].fill.qty).toBe(6);  // not cumulative 6
+    expect(fillEvents[1].fill.qty).toBe(4);  // delta, not cumulative 10
+  });
+
+  it('partial fills derive delta from cumulative when data.qty is absent (fallback)', () => {
+    const { adapter, eventBus } = makeAdapter();
+    const pubs: unknown[] = [];
+    (eventBus.publish as jest.Mock).mockImplementation((e: unknown) => { pubs.push(e); });
+
+    // No data.qty — must fall back to (cumulative - previous).
+    callTradeStream(adapter, {
+      stream: 'trade_updates',
+      data: {
+        event: 'partial_fill', price: '100',
+        order: {
+          client_order_id: 'intent-1', id: 'alpaca-order-id-1',
+          symbol: 'SPY', side: 'buy', qty: '10', filled_qty: '3',
+        },
+      },
+    });
+    callTradeStream(adapter, {
+      stream: 'trade_updates',
+      data: {
+        event: 'fill', price: '101',
+        order: {
+          client_order_id: 'intent-1', id: 'alpaca-order-id-1',
+          symbol: 'SPY', side: 'buy', qty: '10', filled_qty: '10',
+        },
+      },
+    });
+
+    const fillEvents = pubs.filter(
+      (e: any) => e?.type === 'ORDER_PARTIAL_FILL' || e?.type === 'ORDER_FILLED',
+    ) as Array<{ fill: { qty: number } }>;
+    expect(fillEvents).toHaveLength(2);
+    expect(fillEvents[0].fill.qty).toBe(3);
+    expect(fillEvents[1].fill.qty).toBe(7);
+  });
+
   it('publishes ORDER_EXPIRED on expired event', () => {
     const { adapter, eventBus } = makeAdapter();
     callTradeStream(adapter, {

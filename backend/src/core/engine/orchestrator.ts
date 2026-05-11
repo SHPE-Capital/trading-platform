@@ -271,6 +271,42 @@ export class Orchestrator {
       ts: nowMs(),
     };
 
+    // Fix #8: when a pair/hedge signal includes a counterpart leg, compute the
+    // counterpart's intent FIRST. If the counterpart rounds to zero qty, drop
+    // the leg-1 intent too — otherwise we'd execute a naked leg that no longer
+    // hedges anything (the original silent-drop bug).
+    let cIntent: typeof intent | null = null;
+    if (signal.meta && signal.meta.counterpartSymbol && signal.meta.counterpartDirection) {
+      let cSide: "buy" | "sell" | null = null;
+      const cDir = signal.meta.counterpartDirection as string;
+      if (cDir === "long" || cDir === "close_short") cSide = "buy";
+      else if (cDir === "short" || cDir === "close_long") cSide = "sell";
+
+      if (cSide !== null) {
+        const cQty = Math.floor(signal.qty * ((signal.meta.hedgeRatio as number) || 1));
+        if (cQty <= 0) {
+          logger.warn("Orchestrator: dropping pair signal — counterpart qty rounded to zero", {
+            strategyId: signal.strategyId,
+            symbol: signal.symbol,
+            counterpart: signal.meta.counterpartSymbol,
+            hedgeRatio: signal.meta.hedgeRatio,
+          });
+          return;
+        }
+        cIntent = {
+          id: newId(),
+          strategyId: signal.strategyId,
+          symbol: signal.meta.counterpartSymbol as string,
+          side: cSide,
+          qty: cQty,
+          orderType: "market" as const,
+          timeInForce: "ioc" as const,
+          reason: (signal.triggerLabel || "") + "_counterpart",
+          ts: nowMs(),
+        };
+      }
+    }
+
     this.eventBus.publish({
       id: newId(),
       type: "ORDER_INTENT_CREATED",
@@ -279,37 +315,16 @@ export class Orchestrator {
       strategyId: signal.strategyId,
       payload: intent,
     });
-    
-    if (signal.meta && signal.meta.counterpartSymbol && signal.meta.counterpartDirection) {
-      let cSide: "buy" | "sell";
-      const cDir = signal.meta.counterpartDirection as string;
-      if (cDir === "long" || cDir === "close_short") cSide = "buy";
-      else if (cDir === "short" || cDir === "close_long") cSide = "sell";
-      else return;
-      
-      const cIntent = {
-        id: newId(),
-        strategyId: signal.strategyId,
-        symbol: signal.meta.counterpartSymbol as string,
-        side: cSide,
-        qty: Math.floor(signal.qty * ((signal.meta.hedgeRatio as number) || 1)),
-        orderType: "market" as const,
-        timeInForce: "ioc" as const,
-        reason: (signal.triggerLabel || "") + "_counterpart",
-        ts: nowMs(),
-      };
 
-      // Ensure counterpart qty > 0 to avoid rejection
-      if (cIntent.qty > 0) {
-        this.eventBus.publish({
-          id: newId(),
-          type: "ORDER_INTENT_CREATED",
-          ts: nowMs(),
-          mode: event.mode,
-          strategyId: signal.strategyId,
-          payload: cIntent,
-        });
-      }
+    if (cIntent) {
+      this.eventBus.publish({
+        id: newId(),
+        type: "ORDER_INTENT_CREATED",
+        ts: nowMs(),
+        mode: event.mode,
+        strategyId: signal.strategyId,
+        payload: cIntent,
+      });
     }
   }
 
