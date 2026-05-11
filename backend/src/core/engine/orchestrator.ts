@@ -346,6 +346,16 @@ export class Orchestrator {
     // intents in priority order and call executionEngine.submit(), enabling rate-limiting
     // and priority-based conflict resolution without blocking the event handler.
 
+    // MODELING LIMITATION (backtest): the reference price below is the latest
+    // observed close/mid/trade — but for IOC market orders under
+    // SimulatedExecutionSink fills land at the NEXT bar's open price, which
+    // can diverge from the reference. We deliberately do not peek at the next
+    // bar (that would be lookahead) nor inflate by a slippage buffer (that
+    // would silently tighten risk vs configured limits). For liquid names the
+    // divergence is bounded by the bar duration and the configured slippageBps;
+    // tighten maxPositionSizeUsd / maxNotionalExposureUsd if you want a harder
+    // margin against gap risk. Limit orders are exempt because limitPrice
+    // itself bounds the fill (see RiskEngine._resolveReferencePrice).
     const symState = this.symbolState.get(event.payload.symbol);
     const referencePrice =
       symState?.latestMid ??
