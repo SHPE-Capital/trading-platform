@@ -217,7 +217,8 @@ export class AlpacaOrderExecutionAdapter {
           : Math.max(0, cumulativeFilled - prevCumulative);
         // Update the running cumulative for this orderId so a later partial
         // fill can derive its delta even if `data.qty` is missing.
-        this.lastFilledCumulative.set(orderId, Math.max(prevCumulative, cumulativeFilled, prevCumulative + fillQty));
+        const newCumulative = Math.max(prevCumulative, cumulativeFilled, prevCumulative + fillQty);
+        this.lastFilledCumulative.set(orderId, newCumulative);
 
         const fill: Fill = {
           id: newId(),
@@ -233,6 +234,13 @@ export class AlpacaOrderExecutionAdapter {
         };
         fill.notional = fill.qty * fill.price;
 
+        // remainingQty must subtract the CUMULATIVE filled, not just this
+        // event's delta. Previously: `orderQty - fill.qty` produced wildly
+        // wrong residuals on the 2nd+ partial fill (e.g. order=10, partial
+        // 1 delta=6, partial 2 delta=2 → reported remaining=8 instead of 2).
+        const orderTotalQty = parseFloat(String(order["qty"] ?? 0));
+        const remainingQty = Math.max(0, orderTotalQty - newCumulative);
+
         this.eventBus.publish({
           id: newId(),
           type: event === "fill" ? "ORDER_FILLED" : "ORDER_PARTIAL_FILL",
@@ -240,15 +248,22 @@ export class AlpacaOrderExecutionAdapter {
           mode: this.mode,
           orderId,
           fill,
-          ...(event === "partial_fill"
-            ? { remainingQty: parseFloat(String(order["qty"] ?? 0)) - fill.qty }
-            : {}),
+          ...(event === "partial_fill" ? { remainingQty } : {}),
         } as never);
+
+        // Terminal event: clear per-order tracking to avoid leaking entries
+        // across order ids. Partial fills keep the entry alive so the next
+        // delta can be derived.
+        if (event === "fill") {
+          this.lastFilledCumulative.delete(orderId);
+        }
         break;
       }
 
       case "canceled":
       case "expired":
+        // Terminal: drop per-order tracking.
+        this.lastFilledCumulative.delete(orderId);
         this.eventBus.publish({
           id: newId(),
           type: event === "canceled" ? "ORDER_CANCELED" : "ORDER_EXPIRED",
@@ -259,6 +274,8 @@ export class AlpacaOrderExecutionAdapter {
         break;
 
       case "rejected":
+        // Terminal: drop per-order tracking.
+        this.lastFilledCumulative.delete(orderId);
         this.eventBus.publish({
           id: newId(),
           type: "ORDER_REJECTED",
@@ -272,6 +289,15 @@ export class AlpacaOrderExecutionAdapter {
       default:
         logger.debug("AlpacaOrderExecution: unhandled trade update event", { event });
     }
+  }
+
+  /**
+   * Test/diagnostics: returns the number of orderIds being tracked for
+   * cumulative fill derivation. A growing value across many terminal-state
+   * orders would indicate a leak.
+   */
+  trackedOrderCount(): number {
+    return this.lastFilledCumulative.size;
   }
 
   private _rawToOrder(raw: Record<string, unknown>, intent: OrderIntent): Order {
