@@ -186,16 +186,23 @@ export class Orchestrator {
 
   private _onQuote(event: QuoteReceivedEvent): void {
     this.symbolState.onQuote(event.payload);
+    // Mark-to-market: refresh unrealized PnL on every quote so equity tracks
+    // price moves even when no new fills occur.
+    this.portfolioState.updatePrice(event.payload.symbol, event.payload.midPrice);
     this._evaluateStrategies(event.payload.symbol);
   }
 
   private _onTrade(event: TradeReceivedEvent): void {
     this.symbolState.onTrade(event.payload);
+    this.portfolioState.updatePrice(event.payload.symbol, event.payload.price);
     this._evaluateStrategies(event.payload.symbol);
   }
 
   private _onBar(event: BarReceivedEvent): void {
     this.symbolState.onBar(event.payload);
+    // Mark-to-market against the bar close: this is what the equity snapshot
+    // taken right after this handler returns will see.
+    this.portfolioState.updatePrice(event.payload.symbol, event.payload.close);
     this._evaluateStrategies(event.payload.symbol);
   }
 
