@@ -42,8 +42,22 @@ export class BacktestLoader {
       logger.info("BacktestLoader: loaded bars", { symbol, count: bars.length, timeframe });
     }
 
-    // Sort all bars across symbols by timestamp ascending
-    allBars.sort((a, b) => a.ts - b.ts);
+    // Deterministic ordering: timestamp ascending, with symbol ascending as
+    // a tiebreaker. Without the secondary key, two bars at the same ts could
+    // arrive in any order (depending on per-symbol fetch latency / fetch
+    // order), producing non-reproducible backtest results.
+    //
+    // NOTE: this does not eliminate the cross-symbol informational asymmetry
+    // — when bars A and B share a timestamp, evaluating A first lets a pair
+    // strategy see A's close before B is even seen on this tick. We accept
+    // that as a modeling limitation; the alphabetical tiebreaker just makes
+    // the asymmetry STABLE and reproducible across runs.
+    allBars.sort((a, b) => {
+      if (a.ts !== b.ts) return a.ts - b.ts;
+      if (a.symbol < b.symbol) return -1;
+      if (a.symbol > b.symbol) return 1;
+      return 0;
+    });
     return allBars;
   }
 
