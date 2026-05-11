@@ -247,12 +247,27 @@ export class Orchestrator {
   /**
    * Converts emitted StrategySignals into actionable OrderIntents.
    * This currently serves both backtest mode and any future live integration.
-   * TODO: Revisit this routing logic when live order flow is fully wired up, 
+   * TODO: Revisit this routing logic when live order flow is fully wired up,
    * to ensure live execution doesn't require a separate dedicated signal router.
+   *
+   * Two-sided market-making signals (signal.meta.kind === "maker_quotes")
+   * are handled separately: instead of producing one market intent, the
+   * orchestrator emits one limit OrderIntent per leg of meta.makerQuotes.
+   * This keeps existing single-direction strategies untouched while
+   * letting market makers post a bid and ask in a single dispatch.
    */
   private _onStrategySignal(event: any): void {
     const signal = event.payload;
-    if (!signal || signal.qty <= 0) return;
+    if (!signal) return;
+
+    // Maker-quote signals (e.g. Avellaneda-Stoikov): emit one limit intent
+    // per leg of meta.makerQuotes. Top-level qty/direction are ignored.
+    if (signal.meta && signal.meta.kind === "maker_quotes") {
+      this._onMakerQuoteSignal(signal, event.mode);
+      return;
+    }
+
+    if (signal.qty <= 0) return;
 
     let side: "buy" | "sell";
     if (signal.direction === "long" || signal.direction === "close_short") side = "buy";
@@ -330,6 +345,50 @@ export class Orchestrator {
         mode: event.mode,
         strategyId: signal.strategyId,
         payload: cIntent,
+      });
+    }
+  }
+
+  /**
+   * Routes a maker-quote signal (meta.kind === "maker_quotes") by emitting
+   * one ORDER_INTENT_CREATED event per leg of meta.makerQuotes. Each leg
+   * becomes a LIMIT order with the per-leg side/price/qty; the requested
+   * timeInForce from meta is honored (defaulting to "day" for resting
+   * orders).
+   *
+   * No-op when makerQuotes is empty (e.g. kill-switch state).
+   */
+  private _onMakerQuoteSignal(signal: any, mode: ExecutionMode): void {
+    const meta = signal.meta as {
+      kind: "maker_quotes";
+      makerQuotes?: Array<{ side: "buy" | "sell"; price: number; qty: number }>;
+      timeInForce?: "day" | "gtc" | "ioc";
+    };
+    const quotes = meta.makerQuotes ?? [];
+    if (quotes.length === 0) return;
+
+    const tif = meta.timeInForce ?? "day";
+    for (const q of quotes) {
+      if (!q || q.qty <= 0 || !Number.isFinite(q.price) || q.price <= 0) continue;
+      const intent = {
+        id: newId(),
+        strategyId: signal.strategyId,
+        symbol: signal.symbol,
+        side: q.side,
+        qty: q.qty,
+        orderType: "limit" as const,
+        limitPrice: q.price,
+        timeInForce: tif,
+        reason: signal.triggerLabel,
+        ts: nowMs(),
+      };
+      this.eventBus.publish({
+        id: newId(),
+        type: "ORDER_INTENT_CREATED",
+        ts: nowMs(),
+        mode,
+        strategyId: signal.strategyId,
+        payload: intent,
       });
     }
   }
