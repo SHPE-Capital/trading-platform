@@ -231,23 +231,30 @@ This is the *minimum* engine change required to make true two-sided quoting expr
 
 ## Backtest limitations
 
-The simulated execution sink (`src/core/execution/simulatedExecution.ts`) was designed primarily for directional strategies submitting **market** orders. Several gaps affect realistic AS-style market-making backtests:
+The simulated execution path now runs each queued intent through the configurable fill model in `src/core/execution/fillModel.ts` (`evaluateFill`). That closes the largest historical gap for maker-style strategies — limit orders are now gated against a simulated touch price — but several modeling caveats remain.
 
-1. **No limit-price gating on fills.** `SimulatedExecutionSink._fillAt` fills every queued intent at the next bar's open regardless of `orderType` or `limitPrice`. In production a limit buy at $99.95 would only fill if the market trades ≤ $99.95; in the simulator it fills unconditionally at the next open. This *overstates* maker fill rates and *understates* adverse selection.
-2. **No queue-position model.** Even if a fill were gated by limit price, a real maker queue would only fill the portion of size that survived priority in the book. The simulator has no queue-priority model.
-3. **No cancel-on-refresh.** When the strategy emits a fresh quote (after `quoteRefreshMs`), the previous resting orders are not automatically canceled. In live mode the OMS would issue cancels; in backtest the prior intents fill at the next bar's open and the engine can accumulate unwanted inventory rapidly. Use a long `quoteRefreshMs` (e.g. equal to your bar duration) or post-process backtest results with a "rest-and-cancel" assumption baked in.
-4. **No spread-crossing protection.** If quotes are placed inside the spread of a future bar, both sides may fill on the same bar in the simulator — impossible in a real venue.
+### What the new fill model gives you
 
-### What full two-sided quoting would need
+1. **Limit-price gating.** `evaluateFill` computes a simulated touch price from the bar reference (open / close / vwap, configurable), adds the configured `halfSpreadBps`, then applies `slippageBps` adversely. A limit `buy` only fills if that touch price is ≤ `intent.limitPrice`; a limit `sell` only fills if it is ≥ `intent.limitPrice`. Quotes that do not cross the simulated touch are emitted as `ORDER_REJECTED` with reason `"Limit price not crossed by reference price"`. End-to-end coverage lives in `src/tests/core/backtestMakerQuotesFillModel.test.ts`.
+2. **Volume participation cap.** Per-leg fill quantity is capped at `volumeParticipationCap * bar.volume`; the residual either partial-fills or rejects depending on `allowPartialFills`. Zero-volume (halt) bars reject all queued intents.
+3. **Cancel by broker order id.** `SimulatedExecutionSink.cancelOrder()` removes a queued intent before it can fill, so a strategy that tracks its own resting order ids can implement cancel-replace.
 
-To produce realistic maker P&L the engine would need at minimum:
+### Remaining caveats
 
-- Limit-order fill simulation that gates by `intent.limitPrice` against the next bar's high/low (a "touch" model) or per-trade tape (a "crossed" model).
-- Optional queue-position state: track time-priority and partial-fill across multiple ticks at the same price.
-- Cancel-replace semantics in `SimulatedExecutionSink`: cancel any resting maker intents for a strategy before posting a new pair.
-- Adverse-selection metrics in `computeMetrics`: track fill-side vs subsequent mid drift.
+1. **Touch model uses bar reference, not bar high/low.** The simulated touch price is `referencePrice ± halfSpread ± slippage`, *not* the bar's actual high (for buys) or low (for sells). A quote inside the bar's range may still be rejected if the chosen reference + spread does not reach it, and conversely a quote outside the bar's range can fill if `halfSpreadBps`/`slippageBps` push the touch that far. Tune `referencePrice`, `halfSpreadBps`, and `slippageBps` to bracket the bar's range if you need a stricter crossed-tape approximation.
+2. **No queue-position model.** When a limit price *does* cross, the entire residual (subject to participation cap) fills. A real maker queue would fill only the portion of size that survived time priority at that price. The simulator has no queue-priority state.
+3. **No automatic cancel-on-refresh.** When the strategy emits a fresh quote (after `quoteRefreshMs`), prior resting intents are not auto-canceled — `SimulatedExecutionSink` only cancels via explicit `cancelOrder(brokerOrderId)`. The strategy itself does not currently issue cancels for its own prior quotes, so until that wiring lands, prefer `quoteRefreshMs ≥ bar duration` or call `cancelOrder()` from the harness around each new quote pair.
+4. **Both legs can fill on the same bar.** If the simulated touch sits between the bid and ask of a refreshed quote pair, both legs may fill against the same bar — impossible at a real venue, where only one side of a posted pair can be hit at any one instant.
+5. **No adverse-selection metric.** `computeMetrics` does not yet track fill-side vs subsequent mid drift, so an aggressively-priced spread that always crosses will look profitable without the toxicity penalty a real venue would impose.
 
-These are out of scope for this PR — the strategy and its tests are written so the strategy logic is correct *independent* of how the simulator chooses to fill the resulting orders. The backtest results should be interpreted accordingly until the simulator is extended.
+### What would still need work
+
+- Replace the reference-based touch with a true `[bar.low, bar.high]` "crossed" rule (or per-trade tape) for tighter gating.
+- Queue-position state: time-priority + partial-fill across ticks at the same price.
+- Strategy-driven cancel-replace: have `AvellanedaStoikovStrategy` track its own resting intent ids and emit `cancelOrder()` for the previous pair when a new quote is emitted.
+- Adverse-selection / mid-drift metric in `computeMetrics` so toxicity is reflected in P&L attribution.
+
+The strategy and its unit tests are written so the strategy logic is correct *independent* of how the simulator chooses to fill the resulting orders. The integration test for the maker-quote → fill-model path lives in `src/tests/core/backtestMakerQuotesFillModel.test.ts` — interpret backtest results with the remaining caveats above in mind.
 
 ---
 
