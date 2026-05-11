@@ -236,3 +236,35 @@ describe('SimulatedExecutionSink: zero/missing reference price rejection (fix #6
     expect(rejects[0].reason).toMatch(/reference price/i);
   });
 });
+
+describe('SimulatedExecutionSink: terminal drain (last-bar orders)', () => {
+  it('expireAllPending emits ORDER_EXPIRED for each queued intent and clears the queue', async () => {
+    const bus = new EventBus();
+    const symbolState = new SymbolStateManager();
+    const sink = new SimulatedExecutionSink(bus, symbolState, 'backtest', 0, 0);
+
+    const expired: { orderId: string }[] = [];
+    bus.on('ORDER_EXPIRED', (e) => { expired.push(e as never); });
+
+    await sink.submitOrder(makeIntent({ id: 'last-1' }));
+    await sink.submitOrder(makeIntent({ id: 'last-2', symbol: 'AAPL' }));
+
+    expect(sink.pendingCount()).toBe(2);
+    const n = sink.expireAllPending();
+
+    expect(n).toBe(2);
+    expect(expired.map((e) => e.orderId).sort()).toEqual(['last-1', 'last-2']);
+    expect(sink.pendingCount()).toBe(0);
+  });
+
+  it('expireAllPending is a no-op when nothing is queued', () => {
+    const bus = new EventBus();
+    const symbolState = new SymbolStateManager();
+    const sink = new SimulatedExecutionSink(bus, symbolState, 'backtest', 0, 0);
+    const expired: unknown[] = [];
+    bus.on('ORDER_EXPIRED', (e) => { expired.push(e); });
+
+    expect(sink.expireAllPending()).toBe(0);
+    expect(expired).toHaveLength(0);
+  });
+});

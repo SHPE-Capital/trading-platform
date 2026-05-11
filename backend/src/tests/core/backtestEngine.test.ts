@@ -277,3 +277,85 @@ describe('_computeMetrics', () => {
     expect(m.avgLoss).toBeCloseTo(-100, 1);
   });
 });
+
+// ------------------------------------------------------------------
+// Terminal cleanup: last-bar pending orders
+// ------------------------------------------------------------------
+
+import type { IStrategy } from '../../strategies/base/strategy';
+import type { UUID } from '../../types/common';
+import type { StrategySignal } from '../../types/strategy';
+
+/**
+ * Strategy that emits a single buy signal exactly on the final bar — the
+ * resulting order has no subsequent bar to fill against and must therefore
+ * be expired by the backtest engine's terminal drain.
+ */
+function makeLastBarSignalStrategy(symbol: string, lastBarTs: number): IStrategy {
+  let evalCount = 0;
+  return {
+    id: 'last-bar-strat' as UUID,
+    type: 'pairs_trading',
+    config: {
+      id: 'last-bar-strat' as UUID,
+      name: 'Last bar signaller',
+      type: 'pairs_trading',
+      symbols: [symbol],
+      rollingWindowMs: 60_000,
+      maxPositionSizeUsd: 100_000,
+      cooldownMs: 0,
+      enabled: true,
+    },
+    start: () => { evalCount = 0; },
+    stop: () => {},
+    evaluate: (ctx): StrategySignal | null => {
+      evalCount++;
+      const bar = ctx.symbolState.get(symbol)?.latestBar;
+      if (!bar || bar.ts !== lastBarTs) return null;
+      return {
+        id: 'sig-1' as UUID,
+        strategyId: 'last-bar-strat',
+        strategyType: 'pairs_trading',
+        symbol,
+        direction: 'long',
+        qty: 1,
+        triggerLabel: 'last-bar',
+        ts: bar.ts,
+      };
+    },
+  };
+}
+
+describe('BacktestEngine: terminal pending order cleanup', () => {
+  it('an order generated on the final bar ends with terminal status, not "submitted"', async () => {
+    const bars = [makeBar('SPY', 1_000, 100), makeBar('SPY', 2_000, 101), makeBar('SPY', 3_000, 102)];
+    const engine = makeEngineWithBars(bars);
+
+    const result = await engine.run(
+      makeConfig({ slippageBps: 0, commissionPerShare: 0 }),
+      () => [makeLastBarSignalStrategy('SPY', 3_000)],
+    );
+
+    expect(result.orders).toHaveLength(1);
+    const order = result.orders[0];
+    // Must NOT remain "submitted" — that was the bug.
+    expect(order.status).not.toBe('submitted');
+    // Acceptable terminal states for an IOC intent that never had a next-bar
+    // open to fill at: expired (drained) or canceled.
+    expect(['expired', 'canceled']).toContain(order.status);
+  });
+
+  it('terminal-drained orders do not affect equity (no phantom fill)', async () => {
+    const bars = [makeBar('SPY', 1_000, 100), makeBar('SPY', 2_000, 101)];
+    const engine = makeEngineWithBars(bars);
+
+    const result = await engine.run(
+      makeConfig({ slippageBps: 0, commissionPerShare: 0 }),
+      () => [makeLastBarSignalStrategy('SPY', 2_000)],
+    );
+
+    // No fill ever occurred → equity stays at initialCapital throughout.
+    expect(result.fills).toHaveLength(0);
+    result.equity_curve.forEach((snap) => expect(snap.equity).toBe(100_000));
+  });
+});

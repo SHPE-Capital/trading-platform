@@ -134,6 +134,12 @@ export class BacktestEngine {
       Date.now = realDateNow;
     }
 
+    // Terminal cleanup: expire any IOC market intents still queued for the
+    // next bar open. These were generated on the final bar's close and have
+    // no bar left to fill against — without this drain they would remain
+    // stuck as `submitted` in OrderStateManager and break getOpenOrders().
+    simulatedSink.expireAllPending();
+
     // TASK 1: End-of-run Mark-to-Market (MTM)
     // 5. Final MTM pass: value all open positions at the final bar's close price.
     // This ensures totalReturn reflects current market value of open positions.

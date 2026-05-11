@@ -158,6 +158,45 @@ export class SimulatedExecutionSink implements IExecutionSink {
     // Simulated fills are deterministic — nothing to cancel
   }
 
+  /**
+   * Terminal cleanup for any intents still queued at the end of a backtest.
+   *
+   * Under next-bar-open execution, a signal generated on the final bar
+   * produces an intent that has no subsequent bar to fill against. Without
+   * this drain, those orders would remain stuck as `submitted` forever in
+   * OrderStateManager, distorting open-order counts and breaking any
+   * reconciliation that expects every order to have a terminal status.
+   *
+   * Implementation: publish ORDER_EXPIRED for each queued intent (IOC market
+   * orders by construction in the orchestrator pipeline; EXPIRED is the
+   * correct terminal state for those). The orchestrator's ORDER_EXPIRED
+   * handler will transition the order in OrderStateManager.
+   *
+   * @returns Number of intents expired.
+   */
+  expireAllPending(): number {
+    let expired = 0;
+    for (const [symbol, queue] of this.pending) {
+      if (queue.length === 0) continue;
+      for (const { order } of queue) {
+        const ts = order.updatedAt;
+        this.eventBus.publish({
+          id: newId(),
+          type: "ORDER_EXPIRED",
+          ts,
+          mode: this.mode,
+          orderId: order.id,
+        });
+        expired++;
+      }
+      this.pending.set(symbol, []);
+    }
+    if (expired > 0) {
+      logger.info("SimulatedExecutionSink: expired pending intents at terminal drain", { expired });
+    }
+    return expired;
+  }
+
   // ------------------------------------------------------------------
   // Private
   // ------------------------------------------------------------------
