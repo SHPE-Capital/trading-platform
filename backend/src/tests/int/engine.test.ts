@@ -127,14 +127,22 @@ describe("BacktestEngine Integration", () => {
 
     const result = await engine.run(config as any, strategyFactory);
 
-    // Each entry signal should produce exactly 2 fills (one per symbol)
-    // 1 entry (2 fills) + 1 exit (2 fills) = 4 fills total
-    expect(result.fills.length).toBe(4);
+    // Under no-lookahead semantics (fix #1), signals on bar N fill at bar N+1's open
+    // for the same symbol. With 5 SPY/QQQ bars interleaved by ts:
+    //   - SPY bar 3 close → entry signals queued for SPY+QQQ
+    //   - QQQ bar 3 fills the QQQ leg at QQQ4.open  (+1 fill: QQQ entry)
+    //   - SPY bar 4 fills the SPY leg at SPY5.open  (+1 fill: SPY entry)
+    //   - SPY bar 4 close → exit signals queued
+    //   - QQQ bar 4 fills the QQQ exit                (+1 fill: QQQ exit)
+    //   - No SPY bar 5+ exists, so the SPY exit stays queued.
+    // → 3 fills total. The SPY exit never executes because there is no next SPY bar
+    // — that is the correct, lookahead-free outcome.
+    expect(result.fills.length).toBe(3);
 
-    // Entry fires on the 4th SPY bar (index 3), which is allBars[6] in the interleaved sorted array
-    const entryFills = result.fills.filter(f => f.ts === allBars[6].ts);
-    expect(entryFills).toHaveLength(2);
-    expect(new Set(entryFills.map(f => f.symbol))).toEqual(new Set(["SPY", "QQQ"]));
+    const symbolsFilled = result.fills.map(f => f.symbol).sort();
+    // QQQ has both legs filled (entry+exit), SPY has only the entry leg filled.
+    expect(symbolsFilled).toEqual(["QQQ", "QQQ", "SPY"]);
+    void allBars;
   });
 
   test("INT 2.3 — Zero-crossing flip in the engine", async () => {
