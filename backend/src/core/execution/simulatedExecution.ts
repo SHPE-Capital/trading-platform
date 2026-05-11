@@ -6,11 +6,14 @@
  * Behavior (backtest, bar-driven):
  *   - submitOrder() returns an unfilled Order (status="submitted", filledQty=0,
  *     fills=[]) and queues the intent. ORDER_FILLED is NOT emitted at submit time.
- *   - processBarOpen(bar) fills any queued intents for that symbol at the new
- *     bar's open price. This guarantees no same-bar lookahead: a strategy that
- *     submits on bar N's close can only see fills at bar N+1's open.
+ *   - processBarOpen(bar) fills any queued intents for that symbol against the
+ *     bar using the configured FillModel. This guarantees no same-bar lookahead:
+ *     a strategy that submits on bar N's close can only see fills at bar N+1.
  *   - flushPending(symbol) fills queued intents at the latest mid price. Used
  *     for replay/quote-driven modes that don't emit bars.
+ *   - cancelOrder() can target either a queued intent (cancels before fill) or
+ *     a broker order id; broker-id cancellation is a no-op since simulated
+ *     fills complete atomically once a bar arrives.
  *   - If no usable reference price is available, the order is rejected via
  *     ORDER_REJECTED rather than filled at $0.
  *
@@ -21,8 +24,13 @@
 import { EventBus } from "../engine/eventBus";
 import { SymbolStateManager } from "../state/symbolState";
 import { logger } from "../../utils/logger";
-import { msToIso } from "../../utils/time";
+import { msToIso, nowMs } from "../../utils/time";
 import { newId } from "../../utils/ids";
+import {
+  DEFAULT_FILL_MODEL,
+  evaluateFill,
+  type FillModelConfig,
+} from "./fillModel";
 import type { IExecutionSink } from "./IExecutionSink";
 import type { OrderIntent, Order, Fill } from "../../types/orders";
 import type { ExecutionMode, Symbol } from "../../types/common";
@@ -35,21 +43,45 @@ interface QueuedIntent {
 
 export class SimulatedExecutionSink implements IExecutionSink {
   private readonly pending: Map<Symbol, QueuedIntent[]> = new Map();
+  private readonly fillModel: FillModelConfig;
 
   /**
    * @param eventBus - EventBus to publish fill events onto
    * @param symbolState - SymbolStateManager for current market prices
    * @param mode - Execution mode (backtest or replay)
-   * @param slippageBps - Slippage in basis points applied to fill price
-   * @param commissionPerShare - Commission per share (USD)
+   * @param slippageBps - Legacy slippage (overridden by fillModel.slippageBps if provided)
+   * @param commissionPerShare - Legacy commission (overridden by fillModel.commissionPerShare)
+   * @param fillModel - Optional partial fill-model override
    */
   constructor(
     private readonly eventBus: EventBus,
     private readonly symbolState: SymbolStateManager,
     private readonly mode: ExecutionMode,
-    private readonly slippageBps = 5,
-    private readonly commissionPerShare = 0.005,
+    slippageBps = 5,
+    commissionPerShare = 0.005,
+    fillModel?: Partial<FillModelConfig>,
   ) {
+    // Legacy ctor compatibility: when no explicit fillModel override is
+    // supplied, the sink behaves like the prior revision — no half-spread,
+    // no volume cap, no partial fills. Callers that want the new modeling
+    // depth must opt in by passing a fillModel argument (BacktestEngine does).
+    const legacy = fillModel === undefined;
+    this.fillModel = legacy
+      ? {
+          ...DEFAULT_FILL_MODEL,
+          slippageBps,
+          commissionPerShare,
+          halfSpreadBps: 0,
+          volumeParticipationCap: 1,
+          allowPartialFills: false,
+        }
+      : {
+          ...DEFAULT_FILL_MODEL,
+          slippageBps,
+          commissionPerShare,
+          ...fillModel,
+        };
+
     // Subscribe BEFORE the Orchestrator's BAR_RECEIVED handler so queued
     // intents fill at the new bar's open price prior to strategies seeing
     // the bar. EventBus dispatches handlers in registration order.
@@ -59,14 +91,14 @@ export class SimulatedExecutionSink implements IExecutionSink {
     });
   }
 
+  /** Returns the effective fill model in use (after defaults + overrides). */
+  getFillModel(): FillModelConfig {
+    return { ...this.fillModel };
+  }
+
   /**
    * Submits an intent. The order is created in "submitted" state with zero
    * fills and queued for execution on the next bar's open (or via flushPending).
-   * This is the no-lookahead path: a strategy reacting to bar N's close cannot
-   * see a fill earlier than bar N+1's open.
-   *
-   * @param intent - OrderIntent to queue
-   * @returns Promise resolving to the unfilled submitted Order
    */
   async submitOrder(intent: OrderIntent): Promise<Order> {
     const ts = intent.ts;
@@ -107,19 +139,15 @@ export class SimulatedExecutionSink implements IExecutionSink {
   }
 
   /**
-   * Drains all queued intents for the given symbol, filling each at the new
-   * bar's open price. Called by the Orchestrator at the start of every bar,
-   * BEFORE the bar updates symbol state or strategies evaluate. This guarantees
-   * deterministic no-lookahead semantics for bar-backtests.
-   *
-   * @param bar - The new bar whose `open` is used as the fill reference price.
+   * Drains all queued intents for the given symbol, filling each through the
+   * fill model against the new bar.
    */
   processBarOpen(bar: Bar): void {
     const queue = this.pending.get(bar.symbol);
     if (!queue || queue.length === 0) return;
     this.pending.set(bar.symbol, []);
     for (const { intent, order } of queue) {
-      this._fillAt(intent, order, bar.open, bar.ts);
+      this._fillWithModel(intent, order, bar);
     }
   }
 
@@ -134,9 +162,13 @@ export class SimulatedExecutionSink implements IExecutionSink {
     this.pending.set(symbol, []);
     const symState = this.symbolState.get(symbol);
     const refPrice = symState?.latestMid ?? null;
-    const ts = symState?.latestQuote?.ts ?? symState?.latestTrade?.ts ?? symState?.latestBar?.ts ?? Date.now();
+    const ts =
+      symState?.latestQuote?.ts ??
+      symState?.latestTrade?.ts ??
+      symState?.latestBar?.ts ??
+      nowMs();
     for (const { intent, order } of queue) {
-      this._fillAt(intent, order, refPrice, ts);
+      this._fillAtFlush(intent, order, refPrice, ts);
     }
     return queue.length;
   }
@@ -150,27 +182,40 @@ export class SimulatedExecutionSink implements IExecutionSink {
   }
 
   /**
-   * No-op for simulated execution — cancellation of queued intents is not
-   * currently supported. Queued intents always fill on the next bar.
-   * @param brokerOrderId - Simulated broker order ID (unused)
+   * Cancels a queued simulated order. Accepts either the broker order id
+   * (e.g. "sim_<intentId>") or the internal order id directly. If found,
+   * publishes ORDER_CANCELED and removes the intent from the queue so it
+   * will not fill on the next bar. Returns true if a queued order was found.
    */
-  async cancelOrder(_brokerOrderId: string): Promise<void> {
-    // Simulated fills are deterministic — nothing to cancel
+  async cancelOrder(brokerOrderId: string): Promise<void> {
+    const normalized = brokerOrderId.startsWith("sim_")
+      ? brokerOrderId.slice(4)
+      : brokerOrderId;
+
+    for (const [symbol, queue] of this.pending) {
+      const idx = queue.findIndex(
+        (q) => q.order.id === normalized || q.order.brokerOrderId === brokerOrderId,
+      );
+      if (idx === -1) continue;
+      const [{ order }] = queue.splice(idx, 1);
+      this.pending.set(symbol, queue);
+      this.eventBus.publish({
+        id: newId(),
+        type: "ORDER_CANCELED",
+        ts: nowMs(),
+        mode: this.mode,
+        orderId: order.id,
+        reason: "Canceled via SimulatedExecutionSink",
+      });
+      return;
+    }
+    // No-op if the order is not queued — it has already filled, expired, or
+    // was rejected before this call.
   }
 
   /**
    * Terminal cleanup for any intents still queued at the end of a backtest.
-   *
-   * Under next-bar-open execution, a signal generated on the final bar
-   * produces an intent that has no subsequent bar to fill against. Without
-   * this drain, those orders would remain stuck as `submitted` forever in
-   * OrderStateManager, distorting open-order counts and breaking any
-   * reconciliation that expects every order to have a terminal status.
-   *
-   * Implementation: publish ORDER_EXPIRED for each queued intent (IOC market
-   * orders by construction in the orchestrator pipeline; EXPIRED is the
-   * correct terminal state for those). The orchestrator's ORDER_EXPIRED
-   * handler will transition the order in OrderStateManager.
+   * Each pending intent is expired via ORDER_EXPIRED.
    *
    * @returns Number of intents expired.
    */
@@ -201,19 +246,95 @@ export class SimulatedExecutionSink implements IExecutionSink {
   // Private
   // ------------------------------------------------------------------
 
-  private _fillAt(
+  /** Runs the configured fill model against a bar and emits fill/reject events. */
+  private _fillWithModel(intent: OrderIntent, order: Order, bar: Bar): void {
+    const decision = evaluateFill(intent, bar, this.fillModel);
+    const ts = bar.ts;
+
+    if (decision.outcome === "rejected" || decision.fillPrice === null) {
+      order.status = "rejected";
+      order.updatedAt = ts;
+      order.closedAt = ts;
+      logger.warn("SimulatedExecutionSink: order rejected by fill model", {
+        symbol: intent.symbol,
+        side: intent.side,
+        qty: intent.qty,
+        reason: decision.reason,
+      });
+      this.eventBus.publish({
+        id: newId(),
+        type: "ORDER_REJECTED",
+        ts,
+        mode: this.mode,
+        orderId: order.id,
+        reason: decision.reason ?? "Rejected by fill model",
+      });
+      return;
+    }
+
+    const fill: Fill = {
+      id: newId(),
+      orderId: intent.id,
+      symbol: intent.symbol,
+      side: intent.side,
+      qty: decision.filledQty,
+      price: decision.fillPrice,
+      notional: decision.filledQty * decision.fillPrice,
+      commission: decision.filledQty * this.fillModel.commissionPerShare,
+      ts,
+      isoTs: msToIso(ts),
+    };
+
+    if (decision.outcome === "partial") {
+      this.eventBus.publish({
+        id: newId(),
+        type: "ORDER_PARTIAL_FILL",
+        ts,
+        mode: this.mode,
+        orderId: order.id,
+        fill,
+        remainingQty: decision.remainingQty,
+      });
+      // IOC: the unfilled remainder cannot be requeued. Mark the order as
+      // expired (the orchestrator will transition it to a terminal state).
+      if (intent.timeInForce === "ioc" || intent.timeInForce === "fok") {
+        this.eventBus.publish({
+          id: newId(),
+          type: "ORDER_EXPIRED",
+          ts,
+          mode: this.mode,
+          orderId: order.id,
+        });
+      }
+      return;
+    }
+
+    this.eventBus.publish({
+      id: newId(),
+      type: "ORDER_FILLED",
+      ts,
+      mode: this.mode,
+      orderId: order.id,
+      fill,
+    });
+  }
+
+  /**
+   * Legacy mid-based fill path used by `flushPending` (quote-driven flows).
+   * Simpler than the bar fill model — no volume cap or spread synthesis since
+   * the mid price already comes from a fresh quote.
+   */
+  private _fillAtFlush(
     intent: OrderIntent,
     order: Order,
     refPrice: number | null | undefined,
     ts: number,
   ): void {
     if (refPrice == null || !Number.isFinite(refPrice) || refPrice <= 0) {
-      // Fix #6: never fill at $0. Reject the order so portfolio/cash are not
-      // corrupted by a phantom zero-price fill.
       order.status = "rejected";
       order.updatedAt = ts;
       order.closedAt = ts;
-      logger.warn("SimulatedExecutionSink: rejecting order, no valid reference price", {
+      logger.warn("SimulatedExecutionSink: rejecting flush order, no valid reference price", {
         symbol: intent.symbol,
         side: intent.side,
         qty: intent.qty,
@@ -228,13 +349,11 @@ export class SimulatedExecutionSink implements IExecutionSink {
       });
       return;
     }
-
-    const slippageFactor = this.slippageBps / 10_000;
+    const slippageFactor = this.fillModel.slippageBps / 10_000;
     const fillPrice =
       intent.side === "buy"
         ? refPrice * (1 + slippageFactor)
         : refPrice * (1 - slippageFactor);
-
     const fill: Fill = {
       id: newId(),
       orderId: intent.id,
@@ -243,11 +362,10 @@ export class SimulatedExecutionSink implements IExecutionSink {
       qty: intent.qty,
       price: fillPrice,
       notional: intent.qty * fillPrice,
-      commission: intent.qty * this.commissionPerShare,
+      commission: intent.qty * this.fillModel.commissionPerShare,
       ts,
       isoTs: msToIso(ts),
     };
-
     this.eventBus.publish({
       id: newId(),
       type: "ORDER_FILLED",

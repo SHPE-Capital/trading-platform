@@ -127,21 +127,22 @@ describe("BacktestEngine Integration", () => {
 
     const result = await engine.run(config as any, strategyFactory);
 
-    // Under no-lookahead semantics (fix #1), signals on bar N fill at bar N+1's open
-    // for the same symbol. With 5 SPY/QQQ bars interleaved by ts:
-    //   - SPY bar 3 close → entry signals queued for SPY+QQQ
-    //   - QQQ bar 3 fills the QQQ leg at QQQ4.open  (+1 fill: QQQ entry)
-    //   - SPY bar 4 fills the SPY leg at SPY5.open  (+1 fill: SPY entry)
-    //   - SPY bar 4 close → exit signals queued
-    //   - QQQ bar 4 fills the QQQ exit                (+1 fill: QQQ exit)
-    //   - No SPY bar 5+ exists, so the SPY exit stays queued.
-    // → 3 fills total. The SPY exit never executes because there is no next SPY bar
-    // — that is the correct, lookahead-free outcome.
-    expect(result.fills.length).toBe(3);
+    // Under multi-symbol timestamp batching (this revision) and no-lookahead
+    // semantics, signals on batch N fill at batch N+1 for ALL symbols in the
+    // batch. With 5 SPY/QQQ bars sharing 5 timestamps:
+    //   - batch ts3 (SPY3+QQQ3 together): strategy evaluation sees a coherent
+    //     cross-section. Entry signals queued for SPY+QQQ.
+    //   - batch ts4: both queued orders fill at ts4 opens (+2 fills, entries).
+    //     Strategy evaluation then re-checks and queues exit signals on the
+    //     same batch.
+    //   - No batch ts5 exists, so both queued exit orders are expired by the
+    //     terminal drain — no exit fills.
+    // → 2 fills total (one SPY entry + one QQQ entry). This is the correct,
+    // lookahead-free outcome under per-timestamp batch semantics.
+    expect(result.fills.length).toBe(2);
 
     const symbolsFilled = result.fills.map(f => f.symbol).sort();
-    // QQQ has both legs filled (entry+exit), SPY has only the entry leg filled.
-    expect(symbolsFilled).toEqual(["QQQ", "QQQ", "SPY"]);
+    expect(symbolsFilled).toEqual(["QQQ", "SPY"]);
     void allBars;
   });
 

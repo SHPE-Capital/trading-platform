@@ -5,12 +5,21 @@
  * Orchestrator pipeline used in live trading: state updates → strategy
  * evaluation → risk → simulated execution → portfolio update.
  *
- * Key design: the engine uses the same Orchestrator and strategy code.
- * The only difference is that events are sourced from historical bars
- * and fills are simulated rather than sent to a live broker.
+ * Key design changes vs the prior revision:
+ *   - Deterministic clock injection via setClockOverride(). The legacy
+ *     `Date.now = …` monkey patch is gone.
+ *   - Multi-symbol timestamp batching: all bars sharing a timestamp are
+ *     processed together. For each ts we first flush queued orders against
+ *     the new bars (no-lookahead next-open fills), then update symbol state
+ *     and mark portfolio prices for ALL same-ts symbols, then evaluate
+ *     strategies once per (ts, symbol) so pair/multi-symbol strategies see
+ *     a coherent cross-section.
+ *   - Configurable fill model and data validation, surfaced in the result
+ *     metadata.
  *
  * Inputs:  BacktestConfig, historical Bar array from BacktestLoader.
- * Outputs: BacktestResult with equity curve, fills, and performance metrics.
+ * Outputs: BacktestResult with equity curve, fills, performance metrics, and
+ *          fill-model / validation metadata.
  */
 
 import { EventBus } from "../engine/eventBus";
@@ -21,15 +30,19 @@ import { OrderStateManager } from "../state/orderState";
 import { RiskEngine } from "../risk/riskEngine";
 import { ExecutionEngine } from "../execution/executionEngine";
 import { SimulatedExecutionSink } from "../execution/simulatedExecution";
+import { DEFAULT_FILL_MODEL, type FillModelConfig } from "../execution/fillModel";
+import { validateBars } from "./dataValidation";
+import { computeAnalytics } from "./performanceAnalytics";
 import { BacktestLoader } from "./backtestLoader";
 import { BACKTEST_RISK_CONFIG } from "../../config/defaults";
 import { logger } from "../../utils/logger";
-import { nowMs, msToIso } from "../../utils/time";
+import { nowMs, setClockOverride } from "../../utils/time";
 import { newId } from "../../utils/ids";
 import type { BacktestConfig, BacktestResult } from "../../types/backtest";
 import type { PortfolioSnapshot } from "../../types/portfolio";
 import type { IStrategy } from "../../strategies/base/strategy";
 import type { Fill } from "../../types/orders";
+import type { Bar } from "../../types/market";
 import type { BacktestProgressPoint } from "./backtestStreamManager";
 
 export class BacktestEngine {
@@ -37,12 +50,6 @@ export class BacktestEngine {
 
   /**
    * Runs a full backtest with the given config and strategy factory.
-   * The strategyFactory receives the Orchestrator's shared state objects
-   * so strategies can be instantiated with the correct dependencies.
-   *
-   * @param config - BacktestConfig describing the test parameters
-   * @param strategyFactory - Function that creates and returns IStrategy instances
-   * @returns BacktestResult with full equity curve, metrics, and order history
    */
   async run(
     config: BacktestConfig,
@@ -57,6 +64,14 @@ export class BacktestEngine {
     const startedAt = nowMs();
     logger.info("BacktestEngine: starting", { id: config.id, name: config.name });
 
+    // Resolve effective fill model: defaults < legacy slippage/commission fields < explicit override.
+    const fillModel: FillModelConfig = {
+      ...DEFAULT_FILL_MODEL,
+      slippageBps: config.slippageBps,
+      commissionPerShare: config.commissionPerShare,
+      ...(config.fillModel ?? {}),
+    };
+
     // Set up isolated engine instances for this run
     const eventBus = new EventBus();
     const symbolState = new SymbolStateManager();
@@ -67,8 +82,9 @@ export class BacktestEngine {
       eventBus,
       symbolState,
       "backtest",
-      config.slippageBps,
-      config.commissionPerShare,
+      fillModel.slippageBps,
+      fillModel.commissionPerShare,
+      fillModel,
     );
     const executionEngine = new ExecutionEngine(simulatedSink);
 
@@ -88,61 +104,123 @@ export class BacktestEngine {
       orchestrator.registerStrategy(strategy);
     }
 
-    // Load historical bars
-    const bars = await this.loader.loadBars(
+    // Load and validate historical bars.
+    const rawBars = await this.loader.loadBars(
       config.strategyConfig.symbols,
       config.startDate,
       config.endDate,
       "1Min",
     );
+    const validation = validateBars(rawBars, config.strategyConfig.symbols, "raw");
+
+    if (!validation.ok && config.strictDataValidation) {
+      throw new Error(
+        `BacktestEngine: data validation failed in strict mode (${
+          validation.issues.filter((i) => i.severity === "error").length
+        } errors)`,
+      );
+    }
+    if (!validation.ok) {
+      logger.warn("BacktestEngine: dropping invalid bars after validation", {
+        invalid: validation.metadata.invalidBarsDropped,
+        duplicates: validation.metadata.duplicateBarsDropped,
+      });
+    }
+    const bars = validation.bars;
 
     const equityCurve: PortfolioSnapshot[] = [];
     orchestrator.start();
 
-    const realDateNow = Date.now;
     const totalBars = bars.length;
-    // Sample at most 5000 equity curve points to prevent OOM on long backtests
+    // Sample at most 5000 equity curve points to prevent OOM on long backtests.
+    // We still emit one snapshot per *timestamp batch* (not per bar) to keep
+    // the equity curve aligned with the simulated wall clock.
     const sampleEvery = Math.max(1, Math.floor(totalBars / 5000));
 
-    try {
-      // OVERRIDE: Simulate wall-clock time for the duration of the backtest loop.
-      // This process-global patch ensures that strategies and state managers using `nowMs()`
-      // correctly advance with simulated bar time rather than collapsing all historical bars
-      // into a single wall-clock millisecond.
-      // TODO: Future refactor should remove this and inject a deterministic clock via `EvaluationContext`.
-      let barIndex = 0;
-      for (const bar of bars) {
-        Date.now = () => bar.ts;
-        eventBus.publish({
-          id: newId(),
-          type: "BAR_RECEIVED",
-          ts: bar.ts,
-          mode: "backtest",
-          simulatedTs: bar.ts,
-          payload: bar,
-        });
+    // Group bars by timestamp so we process all same-ts symbols together —
+    // this eliminates the cross-symbol same-bar lookahead asymmetry that the
+    // alphabetical tiebreaker only partially mitigated. Bars are already
+    // sorted (ts asc, symbol asc) by BacktestLoader.
+    const batches: Bar[][] = [];
+    let currentBatch: Bar[] = [];
+    let currentTs: number | null = null;
+    for (const bar of bars) {
+      if (currentTs === null || bar.ts === currentTs) {
+        currentBatch.push(bar);
+        currentTs = bar.ts;
+      } else {
+        batches.push(currentBatch);
+        currentBatch = [bar];
+        currentTs = bar.ts;
+      }
+    }
+    if (currentBatch.length > 0) batches.push(currentBatch);
 
-        if (barIndex % sampleEvery === 0) {
+    // Inject simulated clock so any code that calls nowMs() during the run
+    // sees the simulated time rather than wall-clock time. The override is
+    // updated for every batch and cleared in the finally block.
+    let simulatedNow = startedAt;
+    setClockOverride(() => simulatedNow);
+
+    try {
+      let processedBars = 0;
+      for (let i = 0; i < batches.length; i++) {
+        const batch = batches[i];
+        const ts = batch[0].ts;
+        simulatedNow = ts;
+
+        // Phase 1: flush queued orders against each bar in this batch BEFORE
+        // exposing the new bars to strategies. The sink subscribes to
+        // BAR_RECEIVED in its constructor and runs before the orchestrator's
+        // handler, so publishing the BAR_RECEIVED events in phase 2 alone
+        // would already produce per-bar flush semantics — but we want
+        // strategies to see the full cross-section at this ts, with state
+        // already updated. We split flush from publish below.
+        for (const bar of batch) {
+          simulatedSink.processBarOpen(bar);
+        }
+
+        // Phase 2: update symbol state and portfolio marks for every bar in
+        // the batch BEFORE evaluating any strategy. This is the multi-symbol
+        // no-lookahead phase.
+        for (const bar of batch) {
+          symbolState.onBar(bar);
+          portfolioState.updatePrice(bar.symbol, bar.close);
+        }
+
+        // Phase 3: publish a synthetic BAR_RECEIVED for each bar in the
+        // batch. The simulated sink will see an empty queue (we already
+        // flushed in phase 1) so this is a strict no-op for fills. The
+        // orchestrator's handler will call _evaluateStrategies for each
+        // symbol — strategies see a coherent cross-section because all
+        // symbol states were already updated in phase 2.
+        for (const bar of batch) {
+          eventBus.publish({
+            id: newId(),
+            type: "BAR_RECEIVED",
+            ts: bar.ts,
+            mode: "backtest",
+            simulatedTs: bar.ts,
+            payload: bar,
+          });
+        }
+
+        if (i % sampleEvery === 0) {
           const snap = portfolioState.getSnapshot();
           equityCurve.push(snap);
-          onProgress?.({ ts: bar.ts, equity: snap.equity, barIndex, totalBars });
+          onProgress?.({ ts, equity: snap.equity, barIndex: processedBars, totalBars });
         }
-        barIndex++;
+        processedBars += batch.length;
       }
     } finally {
-      // Guarantee restoration even if an error is thrown
-      Date.now = realDateNow;
+      // Always clear the clock override — even if the run threw partway through.
+      setClockOverride(null);
     }
 
-    // Terminal cleanup: expire any IOC market intents still queued for the
-    // next bar open. These were generated on the final bar's close and have
-    // no bar left to fill against — without this drain they would remain
-    // stuck as `submitted` in OrderStateManager and break getOpenOrders().
+    // Terminal cleanup: expire any IOC market intents still queued.
     simulatedSink.expireAllPending();
 
-    // TASK 1: End-of-run Mark-to-Market (MTM)
-    // 5. Final MTM pass: value all open positions at the final bar's close price.
-    // This ensures totalReturn reflects current market value of open positions.
+    // Final mark-to-market against the last observed close for every symbol.
     for (const symbol of symbolState.getSymbols()) {
       const state = symbolState.get(symbol);
       if (state?.latestBar) {
@@ -157,6 +235,39 @@ export class BacktestEngine {
 
     const fills = orderState.getAllOrders().flatMap((o) => o.fills);
 
+    const baseMetrics = this._computeMetrics(equityCurve, fills, config.initialCapital, startedAt, completedAt);
+    const analytics = computeAnalytics(
+      equityCurve,
+      baseMetrics.tradePnls,
+      startedAt,
+      completedAt,
+      config.riskFreeRateAnnual ?? 0,
+      config.benchmarkCurve,
+    );
+
+    const metrics = {
+      totalReturn: baseMetrics.totalReturn,
+      totalReturnPct: baseMetrics.totalReturnPct,
+      maxDrawdown: baseMetrics.maxDrawdown,
+      winRate: baseMetrics.winRate,
+      totalTrades: baseMetrics.totalTrades,
+      avgWin: baseMetrics.avgWin,
+      avgLoss: baseMetrics.avgLoss,
+      sharpeRatio: analytics.sharpeRatio,
+      sortinoRatio: analytics.sortinoRatio,
+      calmarRatio: analytics.calmarRatio,
+      profitFactor: analytics.profitFactor,
+      periodStart: startedAt,
+      periodEnd: completedAt,
+      meta: {
+        annualizedReturn: analytics.annualizedReturn,
+        annualizedVol: analytics.annualizedVol,
+        riskFreeRateAnnual: analytics.riskFreeRateAnnual,
+        benchmarkReturn: analytics.benchmarkReturn,
+        returnPeriods: analytics.periodCount,
+      },
+    };
+
     const result: BacktestResult = {
       id: config.id,
       config,
@@ -164,11 +275,23 @@ export class BacktestEngine {
       started_at: startedAt,
       completed_at: completedAt,
       final_portfolio: finalPortfolio,
-      metrics: this._computeMetrics(equityCurve, fills, config.initialCapital, startedAt, completedAt),
+      metrics,
       equity_curve: equityCurve,
       orders: orderState.getAllOrders(),
       fills,
       event_count: bars.length,
+      data_validation: {
+        issues: validation.issues,
+        metadata: validation.metadata,
+      },
+      fill_model: fillModel,
+      assumptions: {
+        periodCount: analytics.periodCount,
+        insufficientReturnsForRatios:
+          analytics.sharpeRatio === undefined && analytics.sortinoRatio === undefined,
+        benchmarkProvided: !!config.benchmarkCurve && config.benchmarkCurve.length >= 2,
+        riskFreeRateAnnual: analytics.riskFreeRateAnnual,
+      },
     };
 
     logger.info("BacktestEngine: completed", {
@@ -191,21 +314,10 @@ export class BacktestEngine {
     periodStart: number,
     periodEnd: number,
   ) {
-    // Trade-level metrics with proper FIFO lot accounting.
-    //
-    // Each opener fill is broken into a "lot" with remaining qty plus a
-    // commission-per-share figure (commission / qty). A closer fill consumes
-    // qty from the front of the opener queue; each consumed slice produces
-    // exactly one realized PnL entry. Residual opener qty is preserved across
-    // closers (fix for partial closes that previously dropped the residual).
-    //
-    // Trade-count definition (encoded here): one realized PnL entry per
-    // closer-vs-opener slice. A 10-lot opened then closed in two 5-lot
-    // closers therefore counts as TWO trades — one per matched slice. This
-    // matches the convention used elsewhere in the audit's test suite.
+    // Trade-level FIFO lot accounting — unchanged from the prior revision.
     interface Lot { price: number; qty: number; commissionPerShare: number; }
-    const longLots = new Map<string, Lot[]>();   // openers held long, to be closed by sells
-    const shortLots = new Map<string, Lot[]>();  // openers held short, to be closed by buys
+    const longLots = new Map<string, Lot[]>();
+    const shortLots = new Map<string, Lot[]>();
     const pnlPerTrade: number[] = [];
 
     const consume = (
@@ -215,8 +327,6 @@ export class BacktestEngine {
       closerCommissionPerShare: number,
       direction: "long" | "short",
     ): number => {
-      // Returns the qty actually closed (≤ closerQty) — any remainder must
-      // open a position on the opposite side by the caller.
       let remaining = closerQty;
       while (remaining > 0 && lots.length > 0) {
         const lot = lots[0];
@@ -282,16 +392,14 @@ export class BacktestEngine {
         avgLoss,
         periodStart,
         periodEnd,
+        tradePnls: pnlPerTrade,
       };
     }
 
-    // TASK 3: Reconcile totals with the portfolio ledger
-    // The portfolio is the source of truth for equity and total realized/unrealized PnL.
     const lastSnapshot = equityCurve[equityCurve.length - 1];
     const totalReturn = lastSnapshot.equity - initialCapital;
     const totalReturnPct = totalReturn / initialCapital;
 
-    // Maximum drawdown
     let peak = initialCapital;
     let maxDrawdown = 0;
     for (const snap of equityCurve) {
@@ -310,6 +418,7 @@ export class BacktestEngine {
       avgLoss,
       periodStart,
       periodEnd,
+      tradePnls: pnlPerTrade,
     };
   }
 }
