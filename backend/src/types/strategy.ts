@@ -9,6 +9,7 @@
  */
 
 import type { UUID, EpochMs, Symbol, OrderSide, Metadata, ExecutionAlgoType, SizerType } from "./common";
+import type { StrategyRiskBudget } from "./risk";
 
 // ------------------------------------------------------------------
 // Strategy Type Registry
@@ -57,6 +58,8 @@ export interface BaseStrategyConfig {
   executionAlgo?: ExecutionAlgoType;
   /** Position sizer to use for qty computation */
   sizerType?: SizerType;
+  /** Per-strategy capital allocation registered with the risk engine at startup */
+  riskBudget?: StrategyRiskBudget;
   /** Optional description */
   description?: string;
   /** Optional custom metadata */

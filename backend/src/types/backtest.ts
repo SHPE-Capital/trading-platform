@@ -15,6 +15,7 @@ import type { PortfolioSnapshot, PerformanceMetrics } from "./portfolio";
 import type { Order, Fill } from "./orders";
 import type { FillModelConfig } from "../core/execution/fillModel";
 import type { ValidationIssue, ValidationMetadata } from "../core/backtest/dataValidation";
+import type { RiskConfig } from "./risk";
 
 // ------------------------------------------------------------------
 // Backtest Config
@@ -74,6 +75,12 @@ export interface BacktestConfig {
    * surfaces a warning in the result.
    */
   strictDataValidation?: boolean;
+  /**
+   * Risk configuration override for this run. Merged with BACKTEST_RISK_CONFIG.
+   * Included in the deduplication fingerprint so runs with different risk limits
+   * are never treated as identical.
+   */
+  riskConfig?: Partial<RiskConfig>;
   /** Optional extra config */
   meta?: Metadata;
 }
