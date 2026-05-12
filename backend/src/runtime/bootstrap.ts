@@ -41,7 +41,9 @@ import {
   insertStrategyRun,
   updateStrategyRun,
   findRunningStartupRun,
+  getAllStrategyRuns,
 } from "../adapters/supabase/repositories";
+import { STRATEGY_FACTORY } from "../config/strategyDefaults";
 import type { IExecutionSink } from "../core/execution/executionEngine";
 import type { OrderSubmittedEvent, OrderFilledEvent, OrderCanceledEvent } from "../types/events";
 import type { StrategyRun } from "../types/strategy";
@@ -157,6 +159,45 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
     logger.info(`bootstrap: startup strategy active [${startupLeg1}/${startupLeg2}]`);
   } else {
     logger.info("bootstrap: no startup strategy configured — waiting for API-managed strategies");
+  }
+
+  // ------------------------------------------------------------------
+  // Resume API-managed running strategies from DB.
+  //
+  // On server restart the orchestrator's in-memory registry is empty, so
+  // any run that still has status="running" in the DB would appear stale.
+  // Re-register each one using the factory so isLive stays true and the
+  // strategy resumes evaluating incoming market data immediately.
+  // ------------------------------------------------------------------
+  try {
+    const allRuns = await getAllStrategyRuns();
+    const toResume = allRuns.filter(
+      (r) => r.status === "running" && r.id !== startupRunId,
+    );
+    for (const run of toResume) {
+      const factory = STRATEGY_FACTORY[run.strategyType];
+      if (!factory) {
+        logger.warn("bootstrap: no factory for run type, skipping resume", {
+          runId: run.id, strategyType: run.strategyType,
+        });
+        continue;
+      }
+      try {
+        const rawConfig = run.config as unknown as Record<string, unknown>;
+        const strategy = factory(rawConfig);
+        orchestrator.registerStrategy(strategy, run.id);
+        const symbols = Array.isArray(rawConfig.symbols) ? (rawConfig.symbols as string[]) : [];
+        if (symbols.length > 0) marketDataAdapter.subscribe(symbols);
+        logger.info("bootstrap: resumed strategy run", { runId: run.id, strategyType: run.strategyType });
+      } catch (err) {
+        logger.error("bootstrap: failed to resume strategy run", { runId: run.id, err });
+      }
+    }
+    if (toResume.length > 0) {
+      logger.info(`bootstrap: resumed ${toResume.length} running strategy run(s) from DB`);
+    }
+  } catch (err) {
+    logger.error("bootstrap: could not load running runs for resume — continuing without resume", { err });
   }
 
   // ------------------------------------------------------------------
