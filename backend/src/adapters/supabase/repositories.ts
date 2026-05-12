@@ -406,9 +406,13 @@ export async function insertBacktestResult(result: BacktestResult): Promise<void
     equity_curve: downsampledEquity,
   };
   
-  // Strip orders and fills from the summary row completely
+  // Strip fields that are not DB columns
   delete payload.orders;
   delete payload.fills;
+  delete payload.reused_from_id;   // serve-time annotation, not a persisted fact
+  delete payload.data_validation;  // derivable by re-running validateBars(); not a run result
+  delete payload.fill_model;       // derivable from config + DEFAULT_FILL_MODEL merge
+  delete payload.assumptions;      // derivable from metrics + config fields
 
   // Persist the FK link to the strategy definition row if the config referenced one
   payload.strategy_id = result.config ? (result.config as { strategyId?: string }).strategyId ?? null : null;
