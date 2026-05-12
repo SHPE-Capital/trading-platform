@@ -45,6 +45,12 @@ export default function BacktestForm({ onSubmit, isLoading }: Props) {
   const [initialCapital, setInitialCapital] = useState(100_000);
   const [slippageBps, setSlippageBps] = useState(5);
 
+  // Risk config overrides (collapsed by default)
+  const [showRiskConfig, setShowRiskConfig] = useState(false);
+  const [gapBufferBps, setGapBufferBps] = useState(20);
+  const [maxIntradayDrawdownPct, setMaxIntradayDrawdownPct] = useState(5);
+  const [cashReservePct, setCashReservePct] = useState(5);
+
   // Populate strategy fields whenever the selected config changes
   useEffect(() => {
     const src: Record<string, unknown> =
@@ -68,6 +74,12 @@ export default function BacktestForm({ onSubmit, isLoading }: Props) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const selectedStrategy = strategies.find((s) => s.id === selectedId);
+
+    const riskConfigOverride: Record<string, number> = {};
+    if (gapBufferBps !== 20) riskConfigOverride.gapBufferBps = gapBufferBps;
+    if (maxIntradayDrawdownPct !== 5) riskConfigOverride.maxIntradayDrawdownPct = maxIntradayDrawdownPct / 100;
+    if (cashReservePct !== 5) riskConfigOverride.cashReservePct = cashReservePct / 100;
+
     await onSubmit({
       name: `${leg1}/${leg2} Pairs Backtest ${startDate} → ${endDate}`,
       strategyConfig: {
@@ -100,6 +112,7 @@ export default function BacktestForm({ onSubmit, isLoading }: Props) {
       commissionPerShare: 0.005,
       strategyId: selectedStrategy?.id,
       strategyVersion: selectedStrategy?.version,
+      ...(Object.keys(riskConfigOverride).length > 0 ? { riskConfig: riskConfigOverride } : {}),
     });
   };
 
@@ -189,6 +202,55 @@ export default function BacktestForm({ onSubmit, isLoading }: Props) {
         <Field label="Slippage (bps)">
           <input type="number" min="0" max="100" step="1" value={slippageBps} onChange={(e) => setSlippageBps(Number(e.target.value))} className={inputClass} />
         </Field>
+      </div>
+
+      {/* Risk Config (collapsible) */}
+      <div className="flex flex-col gap-2 rounded-md border border-zinc-200 p-3 dark:border-zinc-700">
+        <button
+          type="button"
+          onClick={() => setShowRiskConfig((v) => !v)}
+          className="flex items-center justify-between text-xs font-semibold text-zinc-700 dark:text-zinc-300"
+        >
+          <span>Risk Config</span>
+          <span>{showRiskConfig ? "▲" : "▼"}</span>
+        </button>
+        {showRiskConfig && (
+          <div className="grid grid-cols-2 gap-3 pt-1">
+            <Field label="Gap Buffer (bps)">
+              <input
+                type="number"
+                min="0"
+                max="200"
+                step="1"
+                value={gapBufferBps}
+                onChange={(e) => setGapBufferBps(Number(e.target.value))}
+                className={inputClass}
+              />
+            </Field>
+            <Field label="Max Intraday Drawdown (%)">
+              <input
+                type="number"
+                min="0"
+                max="100"
+                step="0.5"
+                value={maxIntradayDrawdownPct}
+                onChange={(e) => setMaxIntradayDrawdownPct(Number(e.target.value))}
+                className={inputClass}
+              />
+            </Field>
+            <Field label="Cash Reserve (%)">
+              <input
+                type="number"
+                min="0"
+                max="100"
+                step="0.5"
+                value={cashReservePct}
+                onChange={(e) => setCashReservePct(Number(e.target.value))}
+                className={inputClass}
+              />
+            </Field>
+          </div>
+        )}
       </div>
 
       <button

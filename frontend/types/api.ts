@@ -52,6 +52,12 @@ export interface BacktestConfig {
   /** Algorithm version of the saved strategy at run time */
   strategyVersion?: number;
   description?: string;
+  /** Risk configuration override merged with server defaults for this run */
+  riskConfig?: {
+    gapBufferBps?: number;
+    maxIntradayDrawdownPct?: number;
+    cashReservePct?: number;
+  };
 }
 
 export interface BacktestResult {

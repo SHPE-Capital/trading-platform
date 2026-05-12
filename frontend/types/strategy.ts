@@ -48,10 +48,17 @@ export interface StrategyDefinition {
   defaultConfig: Record<string, unknown>;
 }
 
+export interface RiskBudget {
+  maxCapitalPct: number;
+  maxOrderNotionalPct?: number;
+  maxOpenOrders?: number;
+}
+
 export interface PairsStrategyConfig {
   id: string;
   name: string;
   type: "pairs_trading";
+  riskBudget?: RiskBudget;
   leg1Symbol: string;
   leg2Symbol: string;
   symbols: [string, string];
