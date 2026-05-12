@@ -126,6 +126,28 @@ export async function insertPortfolioSnapshot(snapshot: PortfolioSnapshot): Prom
   if (error) logger.error("insertPortfolioSnapshot failed", { error: error.message });
 }
 
+// Maps a raw Supabase portfolio_snapshots row (snake_case, ts as ISO string)
+// to the camelCase PortfolioSnapshot type (ts as EpochMs number).
+function mapPortfolioSnapshot(row: Record<string, unknown>): PortfolioSnapshot {
+  const tsRaw = row.ts as string | number;
+  const ts = typeof tsRaw === "number" ? tsRaw : new Date(tsRaw).getTime();
+  return {
+    id:                 row.id as string,
+    ts,
+    isoTs:              typeof tsRaw === "string" ? tsRaw : new Date(tsRaw).toISOString(),
+    cash:               row.cash as number,
+    positionsValue:     row.positions_value as number,
+    equity:             row.equity as number,
+    initialCapital:     row.initial_capital as number,
+    totalUnrealizedPnl: row.total_unrealized_pnl as number,
+    totalRealizedPnl:   row.total_realized_pnl as number,
+    totalPnl:           row.total_pnl as number,
+    returnPct:          row.return_pct as number,
+    positions:          (row.positions as PortfolioSnapshot["positions"]) ?? [],
+    positionCount:      (row.position_count as number) ?? 0,
+  };
+}
+
 /** Retrieves the most recent portfolio snapshot from the database. */
 export async function getLatestPortfolioSnapshot(): Promise<PortfolioSnapshot | null> {
   const supabase = getSupabaseClient();
@@ -139,7 +161,7 @@ export async function getLatestPortfolioSnapshot(): Promise<PortfolioSnapshot | 
     logger.error("getLatestPortfolioSnapshot failed", { error: error.message });
     return null;
   }
-  return data as PortfolioSnapshot;
+  return mapPortfolioSnapshot(data as Record<string, unknown>);
 }
 
 /** Retrieves the portfolio equity curve (all snapshots) for charting. */
@@ -154,7 +176,7 @@ export async function getPortfolioEquityCurve(limit = 500): Promise<PortfolioSna
     logger.error("getPortfolioEquityCurve failed", { error: error.message });
     return [];
   }
-  return (data ?? []) as PortfolioSnapshot[];
+  return (data ?? []).map((row) => mapPortfolioSnapshot(row as Record<string, unknown>));
 }
 
 // ------------------------------------------------------------------
@@ -204,7 +226,10 @@ export async function insertStrategyRun(run: StrategyRun): Promise<void> {
     meta: run.meta ?? null,
   };
   const { error } = await supabase.from("strategy_runs").insert(payload);
-  if (error) logger.error("insertStrategyRun failed", { error: error.message });
+  if (error) {
+    logger.error("insertStrategyRun failed", { error: error.message });
+    throw new Error(`insertStrategyRun failed: ${error.message}`);
+  }
 }
 
 /**
@@ -219,6 +244,7 @@ export async function updateStrategyRun(runId: UUID, updates: Partial<StrategyRu
   if (updates.totalSignals !== undefined) payload.total_signals  = updates.totalSignals;
   if (updates.totalOrders !== undefined)  payload.total_orders   = updates.totalOrders;
   if (updates.realizedPnl !== undefined)  payload.realized_pnl   = updates.realizedPnl;
+  if (updates.meta !== undefined)         payload.meta           = updates.meta;
   const { error } = await supabase.from("strategy_runs").update(payload).eq("id", runId);
   if (error) logger.error("updateStrategyRun failed", { error: error.message });
 }
@@ -237,6 +263,29 @@ export async function getAllStrategyRuns(): Promise<StrategyRun[]> {
     return [];
   }
   return (data ?? []).map((row) => mapStrategyRun(row as Record<string, unknown>));
+}
+
+
+/**
+ * Finds an existing running startup strategy run by its stable startup key
+ * (stored in meta.startupKey). Used on boot to resume rather than create a
+ * duplicate row when the runtime restarts with STARTUP_LEG1/LEG2 set.
+ */
+export async function findRunningStartupRun(startupKey: string): Promise<StrategyRun | null> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase
+    .from("strategy_runs")
+    .select("*")
+    .eq("status", "running")
+    .filter("meta->>startupKey", "eq", startupKey)
+    .order("started_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    logger.error("findRunningStartupRun failed", { error: error.message });
+    return null;
+  }
+  return data ? mapStrategyRun(data as Record<string, unknown>) : null;
 }
 
 // ------------------------------------------------------------------

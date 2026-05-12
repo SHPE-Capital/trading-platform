@@ -84,7 +84,7 @@ export async function startStrategyRun(req: Request, res: Response): Promise<voi
     return;
   }
 
-  const { orchestrator, marketDataAdapter } = req.app.locals.ctx as AppContext;
+  const { orchestrator, marketDataAdapter, executionMode } = req.app.locals.ctx as AppContext;
   if (!orchestrator) {
     res.status(503).json({ error: "Orchestrator not available in this runtime mode" });
     return;
@@ -121,7 +121,7 @@ export async function startStrategyRun(req: Request, res: Response): Promise<voi
     name: (config.name as string | undefined) ?? `${strategyType} run`,
     config: config as unknown as StrategyRun["config"],
     status: "running",
-    executionMode: "paper",
+    executionMode: executionMode ?? "paper",
     startedAt: now,
     totalSignals: 0,
     totalOrders: 0,
@@ -157,12 +157,14 @@ export async function stopStrategyRun(req: Request, res: Response): Promise<void
     return;
   }
 
-  if (!orchestrator.hasStrategy(id)) {
-    res.status(404).json({ error: `Strategy run ${id} is not currently running` });
-    return;
+  if (orchestrator.hasStrategy(id)) {
+    orchestrator.deregisterStrategy(id);
+  } else {
+    // Orchestrator lost in-memory state (server restart). Skip deregister and
+    // fall through to mark the DB row stopped so the UI cleans up.
+    logger.warn("stopStrategyRun: strategy not in orchestrator — cleaning up stale DB state", { id });
   }
 
-  orchestrator.deregisterStrategy(id);
   await updateStrategyRun(id, { status: "stopped", stoppedAt: nowMs() });
   logger.info("stopStrategyRun: strategy stopped", { id });
   res.json({ message: `Strategy ${id} stopped` });

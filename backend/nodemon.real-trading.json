@@ -1,0 +1,17 @@
+{
+  "watch": [
+    "src/core",
+    "src/strategies",
+    "src/adapters",
+    "src/runtime",
+    "src/config",
+    "src/types",
+    "src/utils"
+  ],
+  "ignore": ["src/app/**"],
+  "ext": "ts",
+  "exec": "ts-node src/runtime/real-trading.ts",
+  "env": {
+    "PORT": "8081"
+  }
+}

@@ -225,16 +225,39 @@ describe('getLatestPortfolioSnapshot', () => {
     expect(result).toBeNull();
   });
 
-  it('returns snapshot on success', async () => {
+  it('returns a mapped snapshot on success', async () => {
+    // Simulate the snake_case row that Supabase actually returns
+    const dbRow = {
+      id: 'snap-1',
+      ts: '1970-01-01T00:16:40.000Z', // EpochMs 1_000_000 as ISO string
+      equity: 100_000,
+      cash: 50_000,
+      positions_value: 50_000,
+      initial_capital: 100_000,
+      total_unrealized_pnl: 0,
+      total_realized_pnl: 0,
+      total_pnl: 0,
+      return_pct: 0,
+      positions: [],
+      position_count: 0,
+    };
     const chain = buildChain({
-      single: jest.fn().mockResolvedValue({ data: mockSnapshot, error: null }),
+      single: jest.fn().mockResolvedValue({ data: dbRow, error: null }),
     });
     chain.select.mockReturnValue(chain);
     chain.order.mockReturnValue(chain);
     chain.limit.mockReturnValue(chain);
     mockFrom.mockReturnValue(chain);
     const result = await getLatestPortfolioSnapshot();
-    expect(result).toEqual(mockSnapshot);
+    expect(result).toEqual(expect.objectContaining({
+      id: 'snap-1',
+      ts: 1_000_000,
+      isoTs: '1970-01-01T00:16:40.000Z',
+      equity: 100_000,
+      cash: 50_000,
+      positionsValue: 50_000,
+      initialCapital: 100_000,
+    }));
   });
 });
 

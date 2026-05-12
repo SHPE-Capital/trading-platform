@@ -17,4 +17,6 @@ export interface AppContext {
   riskEngine?: RiskEngine;
   /** Used by startStrategyRun to subscribe new symbols when a strategy starts at runtime. */
   marketDataAdapter?: MarketDataSubscriber;
+  /** Execution mode of the current runtime — used to label strategy runs created via the API. */
+  executionMode?: string;
 }
