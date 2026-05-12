@@ -417,6 +417,47 @@ describe('checkStrategyBudget', () => {
     );
     expect(result).toBeNull();
   });
+
+  it('returns MAX_OPEN_ORDERS when strategy is at its open-order limit', () => {
+    const engine = new RiskEngine();
+    engine.registerStrategyBudget({ strategyId: 'strat-1', maxCapitalPct: 1.0, maxOpenOrders: 2 });
+    // openOrderCount=2 equals the limit → blocked
+    const result = engine.checkStrategyBudget(
+      makeIntent({ strategyId: 'strat-1' }), 1_000, makePortfolio({ equity: 100_000 }), 0, 2,
+    );
+    expect(result).not.toBeNull();
+    expect(result!.failedCheck).toBe('MAX_OPEN_ORDERS');
+    expect(result!.reason).toMatch(/strat-1/);
+  });
+
+  it('allows an order when open-order count is below the limit', () => {
+    const engine = new RiskEngine();
+    engine.registerStrategyBudget({ strategyId: 'strat-1', maxCapitalPct: 1.0, maxOpenOrders: 3 });
+    const result = engine.checkStrategyBudget(
+      makeIntent({ strategyId: 'strat-1' }), 1_000, makePortfolio({ equity: 100_000 }), 0, 2,
+    );
+    expect(result).toBeNull();
+  });
+
+  it('skips the open-order check when maxOpenOrders is not set', () => {
+    const engine = new RiskEngine();
+    engine.registerStrategyBudget({ strategyId: 'strat-1', maxCapitalPct: 1.0 });
+    // high count, but no limit configured → passes
+    const result = engine.checkStrategyBudget(
+      makeIntent({ strategyId: 'strat-1' }), 1_000, makePortfolio({ equity: 100_000 }), 0, 99,
+    );
+    expect(result).toBeNull();
+  });
+
+  it('MAX_OPEN_ORDERS is checked before capital budget', () => {
+    const engine = new RiskEngine();
+    // budget is tiny but open-order gate fires first
+    engine.registerStrategyBudget({ strategyId: 'strat-1', maxCapitalPct: 0.01, maxOpenOrders: 1 });
+    const result = engine.checkStrategyBudget(
+      makeIntent({ strategyId: 'strat-1' }), 500, makePortfolio({ equity: 100_000 }), 0, 1,
+    );
+    expect(result!.failedCheck).toBe('MAX_OPEN_ORDERS');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -500,7 +541,7 @@ describe('checkPortfolio', () => {
     const engine = new RiskEngine({
       maxIntradayDrawdownPct: 0.05, maxGrossExposurePct: undefined, maxNetExposurePct: undefined,
     });
-    engine.sessionStartEquity = 100_000;
+    engine.check(makeIntent({ id: 'seed' }), makePortfolio({ equity: 100_000 }));
     const portfolio = makePortfolio({ equity: 94_000 }); // 6% drawdown > 5%
     const result = engine.checkPortfolio(portfolio);
     expect(result).not.toBeNull();
@@ -521,7 +562,7 @@ describe('checkPortfolio', () => {
     const engine = new RiskEngine({
       maxIntradayDrawdownPct: 0.05, maxGrossExposurePct: undefined, maxNetExposurePct: undefined,
     });
-    engine.sessionStartEquity = 100_000;
+    engine.check(makeIntent({ id: 'seed' }), makePortfolio({ equity: 100_000 }));
     // 4.999% drawdown is below 5% limit
     expect(engine.checkPortfolio(makePortfolio({ equity: 95_001 }))).toBeNull();
   });
@@ -530,7 +571,8 @@ describe('checkPortfolio', () => {
     const engine = new RiskEngine({
       maxIntradayDrawdownPct: 0.05, maxGrossExposurePct: undefined, maxNetExposurePct: undefined,
     });
-    engine.sessionStartEquity = 100_000;
+    // Seed sessionStartEquity via check() — the canonical initialization path
+    engine.check(makeIntent({ id: 'seed' }), makePortfolio({ equity: 100_000 }));
     // Exactly 5% drawdown → 0.05 >= 0.05 is true → triggers
     const result = engine.checkPortfolio(makePortfolio({ equity: 95_000 }));
     expect(result).not.toBeNull();

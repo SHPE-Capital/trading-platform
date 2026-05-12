@@ -266,3 +266,98 @@ describe('CapitalReservationManager: sell order reservations', () => {
     expect(mgr.getAvailableCash(100_000)).toBe(70_000);
   });
 });
+
+// ---------------------------------------------------------------------------
+// getOpenOrderCount
+// ---------------------------------------------------------------------------
+describe('CapitalReservationManager.getOpenOrderCount', () => {
+  it('returns 0 when no reservations exist for the strategy', () => {
+    const mgr = new CapitalReservationManager();
+    expect(mgr.getOpenOrderCount('strat-1')).toBe(0);
+  });
+
+  it('counts every pending reservation for the strategy regardless of amount', () => {
+    const mgr = new CapitalReservationManager();
+    mgr.reserve(makeIntent({ id: 'i1', strategyId: 'strat-A', side: 'buy' }), 10_000, 100_000);
+    mgr.reserve(makeIntent({ id: 'i2', strategyId: 'strat-A', side: 'sell', qty: 5 }), 0, 100_000);
+    expect(mgr.getOpenOrderCount('strat-A')).toBe(2);
+  });
+
+  it('does not include reservations from other strategies', () => {
+    const mgr = new CapitalReservationManager();
+    mgr.reserve(makeIntent({ id: 'i1', strategyId: 'strat-A' }), 10_000, 100_000);
+    mgr.reserve(makeIntent({ id: 'i2', strategyId: 'strat-B' }), 10_000, 100_000);
+    expect(mgr.getOpenOrderCount('strat-A')).toBe(1);
+    expect(mgr.getOpenOrderCount('strat-B')).toBe(1);
+  });
+
+  it('decreases after a reservation is released', () => {
+    const mgr = new CapitalReservationManager();
+    const r = mgr.reserve(makeIntent({ strategyId: 'strat-A' }), 10_000, 100_000)!;
+    expect(mgr.getOpenOrderCount('strat-A')).toBe(1);
+    mgr.release(r.reservationId);
+    expect(mgr.getOpenOrderCount('strat-A')).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getReservation
+// ---------------------------------------------------------------------------
+describe('CapitalReservationManager.getReservation', () => {
+  it('returns the reservation record for a known id', () => {
+    const mgr = new CapitalReservationManager();
+    const receipt = mgr.reserve(makeIntent(), 5_000, 100_000)!;
+    const r = mgr.getReservation(receipt.reservationId);
+    expect(r).toBeDefined();
+    expect(r!.amount).toBe(5_000);
+    expect(r!.intentId).toBe('intent-1');
+  });
+
+  it('returns undefined for an unknown id', () => {
+    const mgr = new CapitalReservationManager();
+    expect(mgr.getReservation('nonexistent')).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// adjustAmount
+// ---------------------------------------------------------------------------
+describe('CapitalReservationManager.adjustAmount', () => {
+  it('reduces the reserved amount in place', () => {
+    const mgr = new CapitalReservationManager();
+    const receipt = mgr.reserve(makeIntent(), 10_000, 100_000)!;
+    mgr.adjustAmount(receipt.reservationId, 6_000);
+    expect(mgr.getReservedTotal()).toBe(6_000);
+    expect(mgr.getAvailableCash(100_000)).toBe(94_000);
+  });
+
+  it('clamps negative values to 0', () => {
+    const mgr = new CapitalReservationManager();
+    const receipt = mgr.reserve(makeIntent(), 10_000, 100_000)!;
+    mgr.adjustAmount(receipt.reservationId, -500);
+    expect(mgr.getReservedTotal()).toBe(0);
+  });
+
+  it('does not throw for an unknown reservationId', () => {
+    const mgr = new CapitalReservationManager();
+    expect(() => mgr.adjustAmount('nonexistent', 5_000)).not.toThrow();
+  });
+
+  it('proportional adjustment reflects partial fill correctly', () => {
+    const mgr = new CapitalReservationManager();
+    // 100 shares reserved at $100 worst-case = $10,000
+    const receipt = mgr.reserve(makeIntent({ qty: 100 }), 10_000, 100_000)!;
+    // 40 shares fill → 60 remaining → new amount = 10,000 * 60/100 = $6,000
+    const remaining = 60 / 100;
+    mgr.adjustAmount(receipt.reservationId, 10_000 * remaining);
+    expect(mgr.getReservedTotal()).toBe(6_000);
+  });
+
+  it('a second strategy reservation is unaffected by adjusting the first', () => {
+    const mgr = new CapitalReservationManager();
+    const r1 = mgr.reserve(makeIntent({ id: 'i1' }), 10_000, 100_000)!;
+    mgr.reserve(makeIntent({ id: 'i2' }), 20_000, 100_000);
+    mgr.adjustAmount(r1.reservationId, 4_000);
+    expect(mgr.getReservedTotal()).toBe(24_000);
+  });
+});
