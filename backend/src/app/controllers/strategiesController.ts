@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
 import {
   getAllStrategyRuns,
+  getStrategyRunById,
   getAllStrategies,
   getStrategyById,
   insertStrategy,
@@ -19,11 +20,20 @@ import type { UUID } from "../../types/common";
 
 /**
  * GET /api/strategies
+ * Returns all strategy run records enriched with a live `isLive` flag that
+ * reflects whether the strategy is actively registered in the orchestrator.
+ * The DB status can lag (e.g. after a server restart); `isLive` is the
+ * authoritative source for whether the strategy is actually executing.
  */
-export async function listStrategyRuns(_req: Request, res: Response): Promise<void> {
+export async function listStrategyRuns(req: Request, res: Response): Promise<void> {
   try {
     const runs = await getAllStrategyRuns();
-    res.json(runs);
+    const { orchestrator } = req.app.locals.ctx as AppContext;
+    const enriched = runs.map((run) => ({
+      ...run,
+      isLive: orchestrator?.hasStrategy(run.id) ?? false,
+    }));
+    res.json(enriched);
   } catch (err) {
     logger.error("listStrategyRuns error", { err });
     res.status(500).json({ error: "Failed to fetch strategy runs" });
@@ -34,15 +44,15 @@ export async function listStrategyRuns(_req: Request, res: Response): Promise<vo
  * GET /api/strategies/:id
  */
 export async function getStrategyRun(req: Request, res: Response): Promise<void> {
-  const { id } = req.params;
+  const id = String(req.params.id);
   try {
-    const runs = await getAllStrategyRuns();
-    const run = runs.find((r) => r.id === id);
+    const run = await getStrategyRunById(id);
     if (!run) {
       res.status(404).json({ error: `Strategy run ${id} not found` });
       return;
     }
-    res.json(run);
+    const { orchestrator } = req.app.locals.ctx as AppContext;
+    res.json({ ...run, isLive: orchestrator?.hasStrategy(run.id) ?? false });
   } catch (err) {
     logger.error("getStrategyRun error", { id, err });
     res.status(500).json({ error: "Failed to fetch strategy run" });
@@ -75,7 +85,7 @@ export async function startStrategyRun(req: Request, res: Response): Promise<voi
     return;
   }
 
-  const { orchestrator, marketDataAdapter } = req.app.locals.ctx as AppContext;
+  const { orchestrator, marketDataAdapter, executionMode } = req.app.locals.ctx as AppContext;
   if (!orchestrator) {
     res.status(503).json({ error: "Orchestrator not available in this runtime mode" });
     return;
@@ -84,16 +94,25 @@ export async function startStrategyRun(req: Request, res: Response): Promise<voi
   const def = STRATEGY_DEFINITIONS[strategyType];
   const strategy = factory(config);
 
-  // Register with the orchestrator — also calls strategy.start() if already running
-  orchestrator.registerStrategy(strategy);
+  const configId = config.id as string | undefined;
+  if (configId && orchestrator.hasStrategyWithConfigId(configId)) {
+    res.status(409).json({ error: `A strategy from config ${configId} is already running` });
+    return;
+  }
 
-  // Subscribe any new symbols to the market data feed
+  // Generate the run ID before registering so the orchestrator map key matches
+  // the run ID returned to the caller. This allows stopStrategyRun to use the
+  // URL :id (run ID) directly with hasStrategy/deregisterStrategy.
+  const runId = newId();
+
+  // Register with the orchestrator — also calls strategy.start() if already running
+  orchestrator.registerStrategy(strategy, runId);
+
   const symbols = Array.isArray(config.symbols) ? (config.symbols as string[]) : [];
   if (marketDataAdapter && symbols.length > 0) {
     marketDataAdapter.subscribe(symbols);
   }
 
-  const runId = newId();
   const now = nowMs();
   const run: StrategyRun = {
     id: runId,
@@ -103,14 +122,24 @@ export async function startStrategyRun(req: Request, res: Response): Promise<voi
     name: (config.name as string | undefined) ?? `${strategyType} run`,
     config: config as unknown as StrategyRun["config"],
     status: "running",
-    executionMode: "paper",
+    executionMode: executionMode ?? "paper",
     startedAt: now,
     totalSignals: 0,
     totalOrders: 0,
     realizedPnl: 0,
   };
 
-  await insertStrategyRun(run);
+  try {
+    await insertStrategyRun(run);
+  } catch (err) {
+    // DB write failed — roll back the in-memory registration so the engine
+    // state stays consistent with what is persisted.
+    orchestrator.deregisterStrategy(runId);
+    logger.error("startStrategyRun: DB persist failed, rolled back engine registration", { runId, err });
+    res.status(500).json({ error: "Failed to persist strategy run" });
+    return;
+  }
+
   logger.info("startStrategyRun: strategy started", { runId, strategyId: strategy.id, strategyType });
   res.status(201).json(run);
 }
@@ -129,12 +158,14 @@ export async function stopStrategyRun(req: Request, res: Response): Promise<void
     return;
   }
 
-  if (!orchestrator.hasStrategy(id)) {
-    res.status(404).json({ error: `Strategy run ${id} is not currently running` });
-    return;
+  if (orchestrator.hasStrategy(id)) {
+    orchestrator.deregisterStrategy(id);
+  } else {
+    // Orchestrator lost in-memory state (server restart). Skip deregister and
+    // fall through to mark the DB row stopped so the UI cleans up.
+    logger.warn("stopStrategyRun: strategy not in orchestrator — cleaning up stale DB state", { id });
   }
 
-  orchestrator.deregisterStrategy(id);
   await updateStrategyRun(id, { status: "stopped", stoppedAt: nowMs() });
   logger.info("stopStrategyRun: strategy stopped", { id });
   res.json({ message: `Strategy ${id} stopped` });

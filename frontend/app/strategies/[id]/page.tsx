@@ -10,7 +10,7 @@
 
 "use client";
 
-import { use } from "react";
+import { use, useEffect, useState } from "react";
 import Link from "next/link";
 import ZScoreChart from "../../../components/charts/ZScoreChart";
 import SpreadChart from "../../../components/charts/SpreadChart";
@@ -18,6 +18,8 @@ import OrdersTable from "../../../components/tables/OrdersTable";
 import FillsTable from "../../../components/tables/FillsTable";
 import StrategyControls from "../../../components/controls/StrategyControls";
 import { useStrategies } from "../../../hooks/useStrategies";
+import { fetchOrders } from "../../../services/portfolioService";
+import type { Order, Fill } from "../../../types/portfolio";
 
 interface Props {
   params: Promise<{ id: string }>;
@@ -28,6 +30,19 @@ export default function StrategyDetailPage({ params }: Props) {
   const { runs, stopStrategy } = useStrategies();
 
   const run = runs.find((r) => r.id === id) ?? null;
+
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [fills, setFills] = useState<Fill[]>([]);
+
+  useEffect(() => {
+    if (!run) return;
+    fetchOrders(run.id)
+      .then((fetched) => {
+        setOrders(fetched);
+        setFills(fetched.flatMap((o) => o.fills ?? []));
+      })
+      .catch(() => {});
+  }, [run?.id]);
 
   if (!run) {
     return (
@@ -42,6 +57,10 @@ export default function StrategyDetailPage({ params }: Props) {
       </div>
     );
   }
+
+  const startedLabel = run.startedAt
+    ? new Date(run.startedAt).toLocaleString()
+    : "—";
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
@@ -59,10 +78,10 @@ export default function StrategyDetailPage({ params }: Props) {
           </h1>
           <p className="text-xs text-zinc-400">
             Status: <span className="font-medium">{run.status}</span> · Started:{" "}
-            {new Date(run.startedAt).toLocaleString()}
+            {startedLabel}
           </p>
         </div>
-        <StrategyControls run={run} onStop={stopStrategy} />
+        <StrategyControls strategyId={run.id} status={run.status} onStop={stopStrategy} />
       </div>
 
       {/* Charts */}
@@ -71,8 +90,8 @@ export default function StrategyDetailPage({ params }: Props) {
           <h2 className="mb-2 text-sm font-semibold text-zinc-500">Z-Score</h2>
           <ZScoreChart
             data={[]}
-            entryThreshold={(run.config as Record<string, number>)?.entryZScore ?? 2}
-            exitThreshold={(run.config as Record<string, number>)?.exitZScore ?? 0.5}
+            entryZScore={(run.config as Record<string, number>)?.entryZScore ?? 2}
+            exitZScore={(run.config as Record<string, number>)?.exitZScore ?? 0.5}
             height={240}
           />
         </div>
@@ -85,13 +104,13 @@ export default function StrategyDetailPage({ params }: Props) {
       {/* Orders */}
       <div className="mb-6">
         <h2 className="mb-2 text-sm font-semibold text-zinc-500">Orders</h2>
-        <OrdersTable orders={run.orders ?? []} />
+        <OrdersTable orders={orders} />
       </div>
 
       {/* Fills */}
       <div>
         <h2 className="mb-2 text-sm font-semibold text-zinc-500">Fills</h2>
-        <FillsTable fills={run.fills ?? []} />
+        <FillsTable fills={fills} />
       </div>
     </div>
   );

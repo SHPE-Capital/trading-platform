@@ -4,15 +4,13 @@
  * Controller for system-level endpoints: health check, engine status,
  * and kill-switch activation. These endpoints give the frontend visibility
  * into the backend's current operational state.
- *
- * Inputs:  HTTP requests from the frontend.
- * Outputs: JSON responses with system status information.
  */
 
 import type { Request, Response } from "express";
 import { getSupabaseClient } from "../../adapters/supabase/client";
 import { env } from "../../config/env";
 import { nowIso } from "../../utils/time";
+import type { AppContext } from "../context";
 
 type SystemHealthStatus = "healthy" | "degraded" | "unhealthy";
 type ExecutionMode = "paper" | "live" | "backtest" | "replay";
@@ -80,12 +78,29 @@ async function checkAlpaca(): Promise<ServiceHealth> {
   }
 }
 
-/**
- * GET /api/system/health
- * Returns a simple health check response confirming the server is running.
- */
+/** GET /api/system/health */
 export function healthCheck(_req: Request, res: Response): void {
   res.json({ status: "ok", ts: nowIso() });
+}
+
+/**
+ * POST /api/system/kill-switch
+ * Body: { enabled: boolean }
+ * Activates or deactivates the risk engine kill switch, halting all new orders.
+ */
+export function setKillSwitch(req: Request, res: Response): void {
+  const { enabled } = req.body as { enabled?: boolean };
+  if (typeof enabled !== "boolean") {
+    res.status(400).json({ error: "enabled (boolean) is required" });
+    return;
+  }
+  const { riskEngine } = req.app.locals.ctx as AppContext;
+  if (!riskEngine) {
+    res.status(503).json({ error: "Risk engine not available in this runtime mode" });
+    return;
+  }
+  riskEngine.setKillSwitch(enabled);
+  res.json({ killSwitch: enabled });
 }
 
 /**

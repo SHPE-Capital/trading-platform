@@ -42,7 +42,7 @@ SymbolState  Orchestrator
 
 - **Event-driven, synchronous dispatch** — the EventBus delivers events in the order they are published, with no async gaps. This makes backtest replay deterministic and reproducible.
 - **In-memory state first** — rolling windows, quotes, and positions live in memory. The database is only written for persistence and audit (fills, snapshots, event logs).
-- **Shared engine across modes** — the same Orchestrator, strategies, and risk checks run in live trading, backtesting, and replay. Mode differences are isolated to the entry point (`runtime/live.ts`, `runtime/backtest.ts`, `runtime/replay.ts`) and the execution sink.
+- **Shared engine across modes** — the same Orchestrator, strategies, and risk checks run in live trading, backtesting, and replay. Mode differences are isolated to the entry point (`runtime/paper-trading.ts`, `runtime/real-trading.ts`, `runtime/backtest.ts`, `runtime/replay.ts`) and the execution sink.
 - **Provider abstraction** — all Alpaca-specific logic lives in `adapters/alpaca/`. The core engine only sees normalized `TradingEvent` types.
 
 ---
@@ -73,9 +73,11 @@ trading-platform/
 │   │   │   ├── schema/          # TypeScript table type definitions
 │   │   │   └── seed/            # Instrument seed data
 │   │   ├── runtime/
-│   │   │   ├── live.ts          # Bootstraps live trading mode
-│   │   │   ├── backtest.ts      # Bootstraps backtest mode
-│   │   │   └── replay.ts        # Bootstraps replay mode
+│   │   │   ├── bootstrap.ts     # Shared engine setup (paper + real-trading)
+│   │   │   ├── paper-trading.ts # Paper trading entry point
+│   │   │   ├── real-trading.ts  # Real-money entry point (dual feature gate)
+│   │   │   ├── backtest.ts      # Backtest entry point
+│   │   │   └── replay.ts        # Replay entry point
 │   │   ├── services/
 │   │   │   ├── aggregations/    # OHLCV, returns aggregation
 │   │   │   └── indicators/      # SMA, EMA, RSI, volatility, z-score
@@ -287,7 +289,7 @@ All three modes run the same core engine; only the entry point and execution sin
 
 ```bash
 # Terminal 1 — backend (paper trading mode)
-cd backend && npm run dev:live
+cd backend && npm run dev:paper-trading
 
 # Terminal 2 — frontend
 cd frontend && npm run dev
@@ -310,7 +312,7 @@ npm run dev:replay
 
 ```bash
 # Backend
-cd backend && npm run build && npm run start:live
+cd backend && npm run build && npm run start:paper-trading
 
 # Frontend
 cd frontend && npm run build && npm run start

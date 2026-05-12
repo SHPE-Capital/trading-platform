@@ -49,7 +49,7 @@ export const env = {
   alpacaTradingMode: optional("ALPACA_TRADING_MODE", "paper") as "paper" | "live",
   alpacaPaperBaseUrl: optional("ALPACA_PAPER_BASE_URL", "https://paper-api.alpaca.markets"),
   alpacaLiveBaseUrl: optional("ALPACA_LIVE_BASE_URL", "https://api.alpaca.markets"),
-  alpacaDataStreamUrl: optional("ALPACA_DATA_STREAM_URL", "wss://stream.data.alpaca.markets/v2"),
+  alpacaDataStreamUrl: optional("ALPACA_DATA_STREAM_URL", "wss://stream.data.alpaca.markets/v2/iex"),
   alpacaPaperStreamUrl: optional("ALPACA_PAPER_STREAM_URL", "wss://paper-api.alpaca.markets/stream"),
   alpacaLiveStreamUrl: optional("ALPACA_LIVE_STREAM_URL", "wss://api.alpaca.markets/stream"),
 
@@ -73,4 +73,13 @@ export const env = {
   // Feature flags
   enableLiveTrading: optionalBool("ENABLE_LIVE_TRADING", false),
   enableWebSocketPush: optionalBool("ENABLE_WEBSOCKET_PUSH", true),
+
+  // Portfolio
+  initialCapital: optionalNumber("INITIAL_CAPITAL", 100_000),
+
+  // Optional startup strategy (standalone / debug use).
+  // When both are set, bootstrap auto-registers a pairs strategy on boot.
+  // Leave empty (the default) when the frontend manages all strategies.
+  startupLeg1: optional("STARTUP_LEG1", ""),
+  startupLeg2: optional("STARTUP_LEG2", ""),
 } as const;
