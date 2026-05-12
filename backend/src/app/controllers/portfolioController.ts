@@ -11,6 +11,7 @@ import {
   getLatestPortfolioSnapshot,
   getPortfolioEquityCurve,
   getOrdersByStrategyRun,
+  getAllOrders,
 } from "../../adapters/supabase/repositories";
 import { logger } from "../../utils/logger";
 import type { AppContext } from "../context";
@@ -47,15 +48,14 @@ export async function getEquityCurve(req: Request, res: Response): Promise<void>
   }
 }
 
-/** GET /api/portfolio/orders — required query param: ?strategyRunId=<uuid> */
+/** GET /api/portfolio/orders — optional query param: ?strategyRunId=<uuid>
+ *  Omitting strategyRunId returns all orders (newest first, up to 500). */
 export async function getOrders(req: Request, res: Response): Promise<void> {
   const strategyRunId = req.query["strategyRunId"] as string | undefined;
-  if (!strategyRunId) {
-    res.status(400).json({ error: "strategyRunId query parameter is required" });
-    return;
-  }
   try {
-    const orders = await getOrdersByStrategyRun(strategyRunId);
+    const orders = strategyRunId
+      ? await getOrdersByStrategyRun(strategyRunId)
+      : await getAllOrders();
     res.json(orders);
   } catch (err) {
     logger.error("getOrders error", { err });

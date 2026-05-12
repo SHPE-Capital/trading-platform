@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
 import {
   getAllStrategyRuns,
+  getStrategyRunById,
   getAllStrategies,
   getStrategyById,
   insertStrategy,
@@ -43,15 +44,15 @@ export async function listStrategyRuns(req: Request, res: Response): Promise<voi
  * GET /api/strategies/:id
  */
 export async function getStrategyRun(req: Request, res: Response): Promise<void> {
-  const { id } = req.params;
+  const id = String(req.params.id);
   try {
-    const runs = await getAllStrategyRuns();
-    const run = runs.find((r) => r.id === id);
+    const run = await getStrategyRunById(id);
     if (!run) {
       res.status(404).json({ error: `Strategy run ${id} not found` });
       return;
     }
-    res.json(run);
+    const { orchestrator } = req.app.locals.ctx as AppContext;
+    res.json({ ...run, isLive: orchestrator?.hasStrategy(run.id) ?? false });
   } catch (err) {
     logger.error("getStrategyRun error", { id, err });
     res.status(500).json({ error: "Failed to fetch strategy run" });
