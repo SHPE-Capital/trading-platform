@@ -18,9 +18,11 @@ import { formatDuration, formatTimestamp } from "../../utils/dates";
 
 interface Props {
   result: BacktestResult;
+  onRerun?: () => void;
+  showChart?: boolean;
 }
 
-export default function BacktestResults({ result }: Props) {
+export default function BacktestResults({ result, onRerun, showChart = true }: Props) {
   const metrics = result.metrics;
   const equityCurve = result.equity_curve ?? [];
   const isReused = !!result.reused_from_id;
@@ -37,16 +39,27 @@ export default function BacktestResults({ result }: Props) {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex items-start justify-between">
-        <div>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
           <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">{result.config.name}</h3>
           {runMeta && (
             <p className="mt-0.5 text-xs text-zinc-400 dark:text-zinc-500">{runMeta}</p>
           )}
         </div>
-        <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium capitalize ${result.status === "completed" ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>
-          {result.status}
-        </span>
+        <div className="flex shrink-0 items-center gap-2">
+          <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium capitalize ${result.status === "completed" ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>
+            {result.status}
+          </span>
+          {onRerun && (
+            <button
+              type="button"
+              onClick={onRerun}
+              className="rounded-md border border-zinc-300 px-2.5 py-0.5 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-50 dark:border-zinc-600 dark:text-zinc-400 dark:hover:bg-zinc-800"
+            >
+              Re-run
+            </button>
+          )}
+        </div>
       </div>
 
       {metrics && (
@@ -65,7 +78,7 @@ export default function BacktestResults({ result }: Props) {
         </dl>
       )}
 
-      <PnLChart data={equityCurve} height={280} />
+      {showChart && <PnLChart data={equityCurve} height={280} />}
     </div>
   );
 }
