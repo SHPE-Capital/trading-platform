@@ -75,11 +75,6 @@ export default function BacktestForm({ onSubmit, isLoading }: Props) {
     e.preventDefault();
     const selectedStrategy = strategies.find((s) => s.id === selectedId);
 
-    const riskConfigOverride: Record<string, number> = {};
-    if (gapBufferBps !== 20) riskConfigOverride.gapBufferBps = gapBufferBps;
-    if (maxIntradayDrawdownPct !== 5) riskConfigOverride.maxIntradayDrawdownPct = maxIntradayDrawdownPct / 100;
-    if (cashReservePct !== 5) riskConfigOverride.cashReservePct = cashReservePct / 100;
-
     await onSubmit({
       name: `${leg1}/${leg2} Pairs Backtest ${startDate} → ${endDate}`,
       strategyConfig: {
@@ -112,7 +107,11 @@ export default function BacktestForm({ onSubmit, isLoading }: Props) {
       commissionPerShare: 0.005,
       strategyId: selectedStrategy?.id,
       strategyVersion: selectedStrategy?.version,
-      ...(Object.keys(riskConfigOverride).length > 0 ? { riskConfig: riskConfigOverride } : {}),
+      riskConfig: {
+        gapBufferBps,
+        maxIntradayDrawdownPct: maxIntradayDrawdownPct / 100,
+        cashReservePct: cashReservePct / 100,
+      },
     });
   };
 
