@@ -12,7 +12,7 @@
 
 import { nowMs } from "../../utils/time";
 import { DEFAULT_RISK_CONFIG } from "../../config/defaults";
-import type { RiskConfig, RiskCheckResult } from "../../types/risk";
+import type { RiskConfig, RiskCheckResult, StrategyRiskBudget, PortfolioRiskViolation } from "../../types/risk";
 import type { OrderIntent } from "../../types/orders";
 import type { PortfolioSnapshot } from "../../types/portfolio";
 
@@ -21,7 +21,9 @@ export class RiskEngine {
   /** Per-strategy last order timestamp (for cooldown enforcement) */
   private lastOrderTs: Map<string, number> = new Map();
   /** Equity at the start of the current session (set on first check) */
-  private sessionStartEquity: number | null = null;
+  sessionStartEquity: number | null = null;
+  /** Per-strategy capital budgets registered at engine startup */
+  private readonly _strategyBudgets = new Map<string, StrategyRiskBudget>();
 
   /**
    * Creates the risk engine with optional custom config.
@@ -108,9 +110,128 @@ export class RiskEngine {
     this.sessionStartEquity = null;
   }
 
+  /**
+   * Registers a per-strategy capital budget. Called at engine startup for each
+   * strategy that carries a `riskBudget` in its config.
+   */
+  registerStrategyBudget(budget: StrategyRiskBudget): void {
+    this._strategyBudgets.set(budget.strategyId, budget);
+  }
+
+  /**
+   * Estimates the worst-case fill price for capital reservation purposes.
+   * Limit orders: returns `intent.limitPrice` directly (limit IS the worst case).
+   * Market orders: applies a composite buffer (gap + spread + slippage) to `mid`
+   * directionally — buys get a higher price, sells get a lower price.
+   *
+   * @param side - Order side
+   * @param intent - The order intent
+   * @param mid - Current mid price for the symbol (latestMid ?? latestBar.close)
+   * @returns Worst-case unit price, or null if no reference price is available
+   */
+  estimateWorstCasePrice(side: "buy" | "sell", intent: OrderIntent, mid: number | null): number | null {
+    if (intent.limitPrice != null && Number.isFinite(intent.limitPrice)) return intent.limitPrice;
+    if (mid == null || mid <= 0) return null;
+    const totalBps = (this.config.gapBufferBps + this.config.spreadBufferBps + this.config.slippageBps) / 10_000;
+    return side === "buy" ? mid * (1 + totalBps) : mid * (1 - totalBps);
+  }
+
+  /**
+   * Checks whether a pending order would breach the registered strategy capital budget.
+   * Returns a failure object or null if the check passes (or no budget is registered).
+   *
+   * @param intent - The order intent being submitted
+   * @param worstCaseNotional - Pre-computed worst-case notional (qty × worst-case price)
+   * @param portfolio - Current portfolio snapshot
+   * @param alreadyReservedForStrategy - Capital already reserved for this strategy
+   */
+  checkStrategyBudget(
+    intent: OrderIntent,
+    worstCaseNotional: number,
+    portfolio: PortfolioSnapshot,
+    alreadyReservedForStrategy: number,
+  ): { failedCheck: string; reason: string } | null {
+    const budget = this._strategyBudgets.get(intent.strategyId);
+    if (!budget) return null;
+    const maxCapital = budget.maxCapitalPct * portfolio.equity;
+    if (alreadyReservedForStrategy + worstCaseNotional > maxCapital) {
+      return {
+        failedCheck: "STRATEGY_BUDGET",
+        reason: `Strategy ${intent.strategyId}: projected $${(alreadyReservedForStrategy + worstCaseNotional).toFixed(2)} exceeds budget $${maxCapital.toFixed(2)}`,
+      };
+    }
+    if (budget.maxOrderNotionalPct != null) {
+      const maxOrder = budget.maxOrderNotionalPct * portfolio.equity;
+      if (worstCaseNotional > maxOrder) {
+        return {
+          failedCheck: "STRATEGY_ORDER_NOTIONAL",
+          reason: `Order notional $${worstCaseNotional.toFixed(2)} exceeds per-order limit $${maxOrder.toFixed(2)}`,
+        };
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Runs post-fill portfolio risk checks: gross/net exposure limits and intraday
+   * drawdown. Called after every fill to catch violations that slipped past the
+   * pre-submit check due to price movement.
+   *
+   * @param portfolio - Portfolio snapshot after the fill has been applied
+   * @returns PortfolioRiskViolation or null if all checks pass
+   */
+  checkPortfolio(portfolio: PortfolioSnapshot): PortfolioRiskViolation | null {
+    if (portfolio.equity <= 0) return null;
+
+    if (this.config.maxGrossExposurePct != null) {
+      const gross = portfolio.positions.reduce((s, p) => s + Math.abs(p.qty * p.currentPrice), 0);
+      const pct = gross / portfolio.equity;
+      if (pct > this.config.maxGrossExposurePct) {
+        return {
+          check: "MAX_GROSS_EXPOSURE",
+          reason: `Gross exposure ${(pct * 100).toFixed(1)}% exceeds limit ${(this.config.maxGrossExposurePct * 100).toFixed(1)}%`,
+          engageKillSwitch: false,
+          grossExposurePct: pct,
+        };
+      }
+    }
+
+    if (this.config.maxNetExposurePct != null) {
+      const net = portfolio.positions.reduce((s, p) => s + p.qty * p.currentPrice, 0);
+      const pct = Math.abs(net) / portfolio.equity;
+      if (pct > this.config.maxNetExposurePct) {
+        return {
+          check: "MAX_NET_EXPOSURE",
+          reason: `Net exposure ${(pct * 100).toFixed(1)}% exceeds limit ${(this.config.maxNetExposurePct * 100).toFixed(1)}%`,
+          engageKillSwitch: false,
+          netExposurePct: pct,
+        };
+      }
+    }
+
+    if (this.config.maxIntradayDrawdownPct != null && this.sessionStartEquity != null && this.sessionStartEquity > 0) {
+      const dd = (this.sessionStartEquity - portfolio.equity) / this.sessionStartEquity;
+      if (dd >= this.config.maxIntradayDrawdownPct) {
+        this.setKillSwitch(true);
+        return {
+          check: "INTRADAY_DRAWDOWN",
+          reason: `Post-fill drawdown ${(dd * 100).toFixed(2)}% ≥ limit — kill switch engaged`,
+          engageKillSwitch: true,
+        };
+      }
+    }
+
+    return null;
+  }
+
   // ------------------------------------------------------------------
   // Private checks — return { failedCheck, reason } on failure, null on pass
   // ------------------------------------------------------------------
+
+  private _applyFillBuffer(side: "buy" | "sell", rawPrice: number): number {
+    const bps = (this.config.gapBufferBps + this.config.spreadBufferBps + this.config.slippageBps) / 10_000;
+    return side === "buy" ? rawPrice * (1 + bps) : rawPrice * (1 - bps);
+  }
 
   private _resolveReferencePrice(
     intent: OrderIntent,
@@ -153,8 +274,9 @@ export class RiskEngine {
     referencePrice?: number,
   ): { failedCheck: string; reason: string } | null {
     const existingPosition = portfolio.positions.find((p) => p.symbol === intent.symbol);
-    const estimatedPrice = this._resolveReferencePrice(intent, portfolio, referencePrice);
-    if (estimatedPrice === null) return null;
+    const rawPrice = this._resolveReferencePrice(intent, portfolio, referencePrice);
+    if (rawPrice === null) return null;
+    const estimatedPrice = this._applyFillBuffer(intent.side, rawPrice);
 
     const qtyDelta = intent.side === "buy" ? intent.qty : -intent.qty;
     const newQty = (existingPosition?.qty ?? 0) + qtyDelta;
@@ -221,25 +343,39 @@ export class RiskEngine {
     portfolio: PortfolioSnapshot,
     referencePrice?: number,
   ): { failedCheck: string; reason: string } | null {
-    // Only buys consume cash; sells produce cash (we treat covers / short opens
-    // conservatively as not consuming cash here, matching simulation behavior).
-    if (intent.side !== "buy") return null;
-
-    const estimatedPrice = this._resolveReferencePrice(intent, portfolio, referencePrice);
-    if (estimatedPrice === null) return null;
-
-    const estimatedCost = intent.qty * estimatedPrice;
     const reservePct = this.config.cashReservePct ?? 0;
-    // Reserve floor is computed against equity, not cash, so positions held
-    // in non-cash assets are reflected. Falls back to cash if equity is zero.
     const reserveBase = portfolio.equity > 0 ? portfolio.equity : portfolio.cash;
     const reserveFloor = reserveBase * reservePct;
-    const availableCash = portfolio.cash - reserveFloor;
+
+    if (intent.side === "sell") {
+      const existing = portfolio.positions.find((p) => p.symbol === intent.symbol);
+      const heldQty = existing?.qty ?? 0;
+      // Covering an existing long position is allowed; new short opens are
+      // subject to the reserve floor because short proceeds are not treated as
+      // immediately spendable collateral in this simplified risk model.
+      if (intent.qty > heldQty && portfolio.cash <= reserveFloor) {
+        return {
+          failedCheck: "CASH_RESERVE",
+          reason: `Sell order would open a short position while cash $${portfolio.cash.toFixed(2)} is at or below reserve floor $${reserveFloor.toFixed(2)}`,
+        };
+      }
+      return null;
+    }
+
+    const rawPrice = this._resolveReferencePrice(intent, portfolio, referencePrice);
+    if (rawPrice === null) return null;
+    const estimatedPrice = this._applyFillBuffer(intent.side, rawPrice);
+
+    const estimatedCost = intent.qty * estimatedPrice;
+    // Short sale proceeds inflate portfolio.cash above portfolio.equity.
+    // Cap spendable cash at equity so those proceeds don't bypass the reserve.
+    const spendableCash = Math.min(portfolio.cash, reserveBase);
+    const availableCash = spendableCash - reserveFloor;
 
     if (estimatedCost > availableCash) {
       return {
         failedCheck: "CASH_RESERVE",
-        reason: `Order cost $${estimatedCost.toFixed(2)} exceeds available cash $${availableCash.toFixed(2)} (cash=$${portfolio.cash.toFixed(2)}, reserve floor=$${reserveFloor.toFixed(2)})`,
+        reason: `Order cost $${estimatedCost.toFixed(2)} exceeds available cash $${availableCash.toFixed(2)} (spendable=$${spendableCash.toFixed(2)}, reserve floor=$${reserveFloor.toFixed(2)})`,
       };
     }
     return null;
@@ -273,8 +409,9 @@ export class RiskEngine {
     if (limit == null || !Number.isFinite(limit)) return null;
     if (portfolio.equity <= 0) return null;
 
-    const estimatedPrice = this._resolveReferencePrice(intent, portfolio, referencePrice);
-    if (estimatedPrice === null) return null;
+    const rawPrice = this._resolveReferencePrice(intent, portfolio, referencePrice);
+    if (rawPrice === null) return null;
+    const estimatedPrice = this._applyFillBuffer(intent.side, rawPrice);
 
     const existing = portfolio.positions.find((p) => p.symbol === intent.symbol);
     const qtyDelta = intent.side === "buy" ? intent.qty : -intent.qty;
