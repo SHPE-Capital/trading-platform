@@ -55,8 +55,11 @@ export interface BacktestConfig {
   /** Risk configuration override merged with server defaults for this run */
   riskConfig?: {
     gapBufferBps?: number;
+    spreadBufferBps?: number;
     maxIntradayDrawdownPct?: number;
     cashReservePct?: number;
+    maxGrossExposurePct?: number;
+    maxNetExposurePct?: number;
   };
 }
 
