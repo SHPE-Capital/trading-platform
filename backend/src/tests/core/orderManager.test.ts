@@ -28,9 +28,10 @@ import { SymbolStateManager } from '../../core/state/symbolState';
 import { OrderStateManager } from '../../core/state/orderState';
 import { EventBus } from '../../core/engine/eventBus';
 import { Orchestrator } from '../../core/engine/orchestrator';
+import { ParentChildOrderTracker } from '../../core/oms/parentChildOrder';
 import { getSignalPriority, getStrategyPriority } from '../../core/oms/priorityConfig';
-import type { OrderIntent } from '../../types/orders';
-import type { SignalGroup } from '../../types/oms';
+import type { OrderIntent, Fill } from '../../types/orders';
+import type { SignalGroup, TwapParams, VwapParams } from '../../types/oms';
 import type { TradingEvent } from '../../types/events';
 
 // ---------------------------------------------------------------------------
@@ -503,5 +504,398 @@ describe('Orchestrator OMS integration', () => {
     orch.stop();
     expect(orch.orderManager.queueDepth).toBe(0);
     expect(orch.orderManager.reservedCapital).toBe(0);
+  });
+
+  it('full signal → OMS → fill pipeline produces correct event sequence', () => {
+    const eventBus = new EventBus();
+    const symbolState = new SymbolStateManager();
+    const portfolioState = new PortfolioStateManager(100_000);
+    const orderState = new OrderStateManager();
+    const riskEngine = new RiskEngine({ orderCooldownMs: 0 });
+    const sink = new SimulatedExecutionSink(eventBus, symbolState, 'paper', 0, 0);
+    const executionEngine = new ExecutionEngine(sink);
+
+    const orch = new Orchestrator(
+      eventBus, symbolState, portfolioState, orderState,
+      riskEngine, executionEngine, 'paper',
+    );
+
+    symbolState.onBar({
+      symbol: 'AAPL', open: 150, high: 150, low: 150, close: 150,
+      volume: 1000, ts: Date.now(), isoTs: new Date().toISOString(),
+      timeframe: '1m', vwap: 150,
+    });
+
+    const events: TradingEvent[] = [];
+    eventBus.onAll((e) => { events.push(e); });
+    orch.start();
+
+    // Simulate a strategy signal event through the bus
+    eventBus.publish({
+      id: uid(), type: 'STRATEGY_SIGNAL_CREATED', ts: Date.now(), mode: 'paper',
+      strategyId: 'test-strat',
+      payload: {
+        strategyId: 'test-strat', symbol: 'AAPL', direction: 'long',
+        qty: 5, triggerLabel: 'e2e-test', confidence: 0.8,
+        strategyType: 'momentum',
+      },
+    } as any);
+
+    const types = events.map(e => e.type);
+    expect(types).toContain('CAPITAL_RESERVED');
+    expect(types).toContain('ORDER_QUEUED');
+    expect(types).toContain('ORDER_INTENT_CREATED');
+    expect(types).toContain('ORDER_FILLED');
+
+    // Capital reservation should be released after fill
+    expect(orch.orderManager.reservedCapital).toBe(0);
+    orch.stop();
+  });
+});
+
+// ===========================================================================
+// ParentChildOrderTracker
+// ===========================================================================
+
+describe('ParentChildOrderTracker', () => {
+  const twapParams: TwapParams = {
+    totalQty: 100, startTime: 1000, endTime: 2000,
+    numSlices: 5, sliceOrderType: 'limit', limitPriceTolerancePct: 0.001,
+  };
+
+  const vwapParams: VwapParams = {
+    totalQty: 100, startTime: 1000, endTime: 2000,
+    participationRate: 0.1, maxSlippage: 0.005,
+  };
+
+  function makeFill(overrides: Partial<Fill> = {}): Fill {
+    return {
+      id: uid(), orderId: uid(), symbol: 'SPY', side: 'buy',
+      qty: 20, price: 100, notional: 2000, commission: 0,
+      ts: Date.now(), isoTs: new Date().toISOString(), ...overrides,
+    };
+  }
+
+  // --- Creation ---
+  it('createParent creates a parent with correct fields', () => {
+    const tracker = new ParentChildOrderTracker();
+    const intent = makeIntent({ qty: 100 });
+    const parent = tracker.createParent(intent, 'twap', twapParams);
+
+    expect(parent.intentId).toBe(intent.id);
+    expect(parent.symbol).toBe('SPY');
+    expect(parent.totalQty).toBe(100);
+    expect(parent.filledQty).toBe(0);
+    expect(parent.childIds).toEqual([]);
+    expect(parent.algoType).toBe('twap');
+    expect(parent.completedAt).toBeUndefined();
+  });
+
+  it('createParent stores parent retrievable via getParent', () => {
+    const tracker = new ParentChildOrderTracker();
+    const parent = tracker.createParent(makeIntent(), 'vwap', vwapParams);
+    expect(tracker.getParent(parent.parentId)).toBe(parent);
+  });
+
+  // --- Adding Children ---
+  it('addChild adds child to parent.childIds', () => {
+    const tracker = new ParentChildOrderTracker();
+    const parent = tracker.createParent(makeIntent({ qty: 100 }), 'twap', twapParams);
+    const child = tracker.addChild(parent.parentId, makeIntent({ qty: 20 }));
+
+    expect(parent.childIds).toContain(child.childId);
+    expect(child.parentId).toBe(parent.parentId);
+    expect(child.qty).toBe(20);
+  });
+
+  it('addChild sets sliceIndex incrementally', () => {
+    const tracker = new ParentChildOrderTracker();
+    const parent = tracker.createParent(makeIntent({ qty: 100 }), 'twap', twapParams);
+
+    const c0 = tracker.addChild(parent.parentId, makeIntent({ qty: 20 }));
+    const c1 = tracker.addChild(parent.parentId, makeIntent({ qty: 20 }));
+    const c2 = tracker.addChild(parent.parentId, makeIntent({ qty: 20 }));
+
+    expect(c0.sliceIndex).toBe(0);
+    expect(c1.sliceIndex).toBe(1);
+    expect(c2.sliceIndex).toBe(2);
+  });
+
+  it('addChild reads numSlices from TwapParams', () => {
+    const tracker = new ParentChildOrderTracker();
+    const parent = tracker.createParent(makeIntent({ qty: 100 }), 'twap', twapParams);
+    const child = tracker.addChild(parent.parentId, makeIntent({ qty: 20 }));
+    expect(child.totalSlices).toBe(5);
+  });
+
+  it('addChild sets totalSlices to 0 for VwapParams (no numSlices)', () => {
+    const tracker = new ParentChildOrderTracker();
+    const parent = tracker.createParent(makeIntent({ qty: 100 }), 'vwap', vwapParams);
+    const child = tracker.addChild(parent.parentId, makeIntent({ qty: 20 }));
+    expect(child.totalSlices).toBe(0);
+  });
+
+  it('addChild throws if parentId does not exist', () => {
+    const tracker = new ParentChildOrderTracker();
+    expect(() => tracker.addChild('nonexistent', makeIntent())).toThrow();
+  });
+
+  // --- Fill Tracking ---
+  it('onChildFill accumulates fillQty into child and parent', () => {
+    const tracker = new ParentChildOrderTracker();
+    const parent = tracker.createParent(makeIntent({ qty: 100 }), 'twap', twapParams);
+    const child = tracker.addChild(parent.parentId, makeIntent({ qty: 20 }));
+
+    tracker.onChildFill(child.childId, makeFill({ qty: 10 }));
+    expect(child.filledQty).toBe(10);
+    expect(parent.filledQty).toBe(10);
+
+    tracker.onChildFill(child.childId, makeFill({ qty: 10 }));
+    expect(child.filledQty).toBe(20);
+    expect(parent.filledQty).toBe(20);
+  });
+
+  it('onChildFill marks child.filledAt when child is fully filled', () => {
+    const tracker = new ParentChildOrderTracker();
+    const parent = tracker.createParent(makeIntent({ qty: 100 }), 'twap', twapParams);
+    const child = tracker.addChild(parent.parentId, makeIntent({ qty: 20 }));
+
+    tracker.onChildFill(child.childId, makeFill({ qty: 20, ts: 9999 }));
+    expect(child.filledAt).toBe(9999);
+  });
+
+  it('onChildFill marks parent.completedAt when fully filled', () => {
+    const tracker = new ParentChildOrderTracker();
+    const parent = tracker.createParent(makeIntent({ qty: 40 }), 'twap', twapParams);
+    const c1 = tracker.addChild(parent.parentId, makeIntent({ qty: 20 }));
+    const c2 = tracker.addChild(parent.parentId, makeIntent({ qty: 20 }));
+
+    tracker.onChildFill(c1.childId, makeFill({ qty: 20 }));
+    expect(parent.completedAt).toBeUndefined();
+
+    tracker.onChildFill(c2.childId, makeFill({ qty: 20, ts: 5555 }));
+    expect(parent.completedAt).toBe(5555);
+  });
+
+  it('onChildFill no-ops for unknown childId', () => {
+    const tracker = new ParentChildOrderTracker();
+    expect(() => tracker.onChildFill('nonexistent', makeFill())).not.toThrow();
+  });
+
+  // --- Queries ---
+  it('getParent returns null for unknown parentId', () => {
+    const tracker = new ParentChildOrderTracker();
+    expect(tracker.getParent('nonexistent')).toBeNull();
+  });
+
+  it('getChild returns null for unknown childId', () => {
+    const tracker = new ParentChildOrderTracker();
+    expect(tracker.getChild('nonexistent')).toBeNull();
+  });
+
+  it('getChild returns child by ID', () => {
+    const tracker = new ParentChildOrderTracker();
+    const parent = tracker.createParent(makeIntent({ qty: 100 }), 'twap', twapParams);
+    const child = tracker.addChild(parent.parentId, makeIntent({ qty: 20 }));
+    expect(tracker.getChild(child.childId)).toBe(child);
+  });
+
+  it('isComplete returns true when filledQty >= totalQty', () => {
+    const tracker = new ParentChildOrderTracker();
+    const parent = tracker.createParent(makeIntent({ qty: 20 }), 'twap', twapParams);
+    const child = tracker.addChild(parent.parentId, makeIntent({ qty: 20 }));
+
+    expect(tracker.isComplete(parent.parentId)).toBe(false);
+    tracker.onChildFill(child.childId, makeFill({ qty: 20 }));
+    expect(tracker.isComplete(parent.parentId)).toBe(true);
+  });
+
+  it('isComplete returns false for unknown parentId', () => {
+    const tracker = new ParentChildOrderTracker();
+    expect(tracker.isComplete('nonexistent')).toBe(false);
+  });
+
+  it('getPendingParents excludes completed parents', () => {
+    const tracker = new ParentChildOrderTracker();
+    const p1 = tracker.createParent(makeIntent({ qty: 20 }), 'twap', twapParams);
+    const p2 = tracker.createParent(makeIntent({ qty: 20 }), 'twap', twapParams);
+
+    const c1 = tracker.addChild(p1.parentId, makeIntent({ qty: 20 }));
+    tracker.onChildFill(c1.childId, makeFill({ qty: 20 }));
+
+    const pending = tracker.getPendingParents();
+    expect(pending.length).toBe(1);
+    expect(pending[0].parentId).toBe(p2.parentId);
+  });
+
+  // --- Cleanup ---
+  it('clear empties all state', () => {
+    const tracker = new ParentChildOrderTracker();
+    const parent = tracker.createParent(makeIntent({ qty: 100 }), 'twap', twapParams);
+    tracker.addChild(parent.parentId, makeIntent({ qty: 20 }));
+
+    tracker.clear();
+    expect(tracker.getParent(parent.parentId)).toBeNull();
+    expect(tracker.getPendingParents()).toEqual([]);
+  });
+});
+
+// ===========================================================================
+// CapitalReservationManager — single reserve path
+// ===========================================================================
+
+describe('CapitalReservationManager — single reserve', () => {
+  it('reserve creates reservation for buy with limitPrice', () => {
+    const mgr = new CapitalReservationManager();
+    const intent = makeIntent({ side: 'buy', qty: 10, limitPrice: 100 });
+    const result = mgr.reserve(intent, 5_000);
+
+    expect(result).not.toBeNull();
+    expect(result!.amount).toBe(1_000);
+    expect(mgr.getReservedTotal()).toBe(1_000);
+  });
+
+  it('reserve creates zero-cost tracking reservation for sell orders', () => {
+    const mgr = new CapitalReservationManager();
+    const intent = makeIntent({ side: 'sell', qty: 10, limitPrice: 100 });
+    const result = mgr.reserve(intent, 5_000);
+
+    expect(result).not.toBeNull();
+    expect(result!.amount).toBe(0);
+  });
+
+  it('reserve returns null when amount exceeds available cash', () => {
+    const mgr = new CapitalReservationManager();
+    const intent = makeIntent({ side: 'buy', qty: 100, limitPrice: 100 }); // $10,000
+    const result = mgr.reserve(intent, 5_000);
+    expect(result).toBeNull();
+    expect(mgr.getReservedTotal()).toBe(0);
+  });
+
+  it('reserve returns null for buy with zero cost (no price info)', () => {
+    const mgr = new CapitalReservationManager();
+    const intent = makeIntent({ side: 'buy', qty: 10 }); // no limitPrice, no estimator
+    const result = mgr.reserve(intent, 5_000);
+    expect(result).toBeNull();
+  });
+
+  it('release deletes reservation and frees capital', () => {
+    const mgr = new CapitalReservationManager();
+    const intent = makeIntent({ side: 'buy', qty: 10, limitPrice: 100 });
+    const result = mgr.reserve(intent, 5_000)!;
+
+    expect(mgr.getReservedTotal()).toBe(1_000);
+    mgr.release(result.reservationId);
+    expect(mgr.getReservedTotal()).toBe(0);
+    expect(mgr.reservationCount).toBe(0);
+  });
+
+  it('release warns on unknown reservationId (no-op)', () => {
+    const mgr = new CapitalReservationManager();
+    expect(() => mgr.release('nonexistent')).not.toThrow();
+    expect(mgr.getReservedTotal()).toBe(0);
+  });
+
+  it('getReservation returns reservation or null', () => {
+    const mgr = new CapitalReservationManager();
+    expect(mgr.getReservation('nonexistent')).toBeNull();
+
+    const intent = makeIntent({ side: 'buy', qty: 5, limitPrice: 50 });
+    const result = mgr.reserve(intent, 5_000)!;
+    expect(mgr.getReservation(result.reservationId)).not.toBeNull();
+  });
+
+  it('getAvailableCash reflects active reservations', () => {
+    const mgr = new CapitalReservationManager();
+    expect(mgr.getAvailableCash(10_000)).toBe(10_000);
+
+    mgr.reserve(makeIntent({ side: 'buy', qty: 10, limitPrice: 100 }), 10_000);
+    expect(mgr.getAvailableCash(10_000)).toBe(9_000);
+  });
+
+  it('clear removes all reservations', () => {
+    const mgr = new CapitalReservationManager();
+    mgr.reserve(makeIntent({ side: 'buy', qty: 10, limitPrice: 100 }), 10_000);
+    mgr.reserve(makeIntent({ side: 'buy', qty: 5, limitPrice: 200 }), 10_000);
+
+    mgr.clear();
+    expect(mgr.reservationCount).toBe(0);
+    expect(mgr.getReservedTotal()).toBe(0);
+  });
+});
+
+// ===========================================================================
+// OrderIntentQueue — peek
+// ===========================================================================
+
+describe('OrderIntentQueue — peek', () => {
+  it('peek returns next item without removing', () => {
+    const q = new OrderIntentQueue();
+    q.enqueue(makeIntent({ id: 'peek-me' }), 100);
+
+    expect(q.peek()?.intent.id).toBe('peek-me');
+    expect(q.size()).toBe(1);
+  });
+
+  it('peek returns null when empty', () => {
+    const q = new OrderIntentQueue();
+    expect(q.peek()).toBeNull();
+  });
+});
+
+// ===========================================================================
+// OrderManagerService — missed branches
+// ===========================================================================
+
+describe('OrderManagerService — edge cases', () => {
+  it('releases reservation when execution engine rejects', async () => {
+    const { capitalMgr, queue, riskEngine, portfolioState, symbolState, eventBus } = createTestEnv(100_000);
+
+    const faultyEngine = { submit: jest.fn().mockRejectedValue(new Error('broker timeout')) } as any;
+    const oms = new OrderManagerService(
+      capitalMgr, queue, riskEngine, faultyEngine,
+      portfolioState, symbolState, eventBus, 'paper',
+    );
+
+    oms.submitIntent(makeIntent({ qty: 10 }), 'momentum');
+    await new Promise(r => setTimeout(r, 50));
+
+    expect(capitalMgr.getReservedTotal()).toBe(0);
+  });
+
+  it('onOrderCanceled releases reservation', () => {
+    const capitalMgr = new CapitalReservationManager();
+    const queue = new OrderIntentQueue();
+    const eventBus = new EventBus();
+    const symbolState = new SymbolStateManager();
+    const portfolioState = new PortfolioStateManager(100_000);
+    const riskEngine = new RiskEngine({ orderCooldownMs: 0 });
+
+    // Use a mock exec engine that resolves but doesn't fill
+    const mockEngine = { submit: jest.fn().mockResolvedValue({}) } as any;
+    const oms = new OrderManagerService(
+      capitalMgr, queue, riskEngine, mockEngine,
+      portfolioState, symbolState, eventBus, 'paper',
+    );
+
+    symbolState.onBar({
+      symbol: 'SPY', open: 100, high: 100, low: 100, close: 100,
+      volume: 1000, ts: Date.now(), isoTs: new Date().toISOString(),
+      timeframe: '1m', vwap: 100,
+    });
+
+    const intent = makeIntent({ qty: 10 });
+    oms.submitIntent(intent, 'momentum');
+
+    // Reservation exists since mock engine doesn't trigger fill event
+    expect(capitalMgr.getReservedTotal()).toBeGreaterThan(0);
+
+    oms.onOrderCanceled(intent.id);
+    expect(capitalMgr.getReservedTotal()).toBe(0);
+  });
+
+  it('onOrderCanceled no-ops when intent has no reservation', () => {
+    const { oms } = createTestEnv(100_000);
+    expect(() => oms.onOrderCanceled('nonexistent')).not.toThrow();
   });
 });
