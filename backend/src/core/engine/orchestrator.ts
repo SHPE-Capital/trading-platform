@@ -19,11 +19,13 @@ import { PortfolioStateManager } from "../state/portfolioState";
 import { OrderStateManager } from "../state/orderState";
 import { RiskEngine } from "../risk/riskEngine";
 import { ExecutionEngine } from "../execution/executionEngine";
+import { CapitalReservationManager } from "../oms/capitalReservation";
 import { logger } from "../../utils/logger";
 import { nowMs } from "../../utils/time";
 import { newId } from "../../utils/ids";
 import type { IStrategy } from "../../strategies/base/strategy";
-import type { ExecutionMode } from "../../types/common";
+import type { ExecutionMode, UUID } from "../../types/common";
+import type { BaseStrategyConfig } from "../../types/strategy";
 import type {
   QuoteReceivedEvent,
   TradeReceivedEvent,
@@ -39,6 +41,9 @@ import type {
 export class Orchestrator {
   private strategies: Map<string, IStrategy> = new Map();
   private running = false;
+  private readonly capitalReservation = new CapitalReservationManager();
+  /** intentId → reservationId, for releasing on any terminal order event */
+  private readonly _reservationByIntent = new Map<UUID, UUID>();
 
   constructor(
     public readonly eventBus: EventBus,
@@ -57,6 +62,12 @@ export class Orchestrator {
    */
   registerStrategy(strategy: IStrategy): void {
     this.strategies.set(strategy.id, strategy);
+
+    const cfg = strategy.config as BaseStrategyConfig;
+    if (cfg.riskBudget) {
+      this.riskEngine.registerStrategyBudget({ ...cfg.riskBudget, strategyId: strategy.id });
+    }
+
     logger.info("Orchestrator: strategy registered", {
       strategyId: strategy.id,
       type: strategy.type,
@@ -170,6 +181,9 @@ export class Orchestrator {
         strategyId: strategy.id,
       });
     }
+
+    this.capitalReservation.clear();
+    this._reservationByIntent.clear();
 
     this.eventBus.publish({
       id: newId(),
@@ -394,51 +408,84 @@ export class Orchestrator {
   }
 
   private _onOrderIntent(event: OrderIntentCreatedEvent): void {
-    // TODO: Route through CapitalReservationManager.reserve() before risk check.
-    // Compute estimatedCost = intent.qty * (intent.limitPrice ?? symbolState midprice).
-    // If insufficient available cash: publish CAPITAL_UNAVAILABLE and return early.
-    // Store reservationId on intent.meta for release on ORDER_FILLED or RISK_REJECTED.
-    // See core/oms/capitalReservation.ts.
+    const intent = event.payload;
+    const symState = this.symbolState.get(intent.symbol);
+    const mid = symState?.latestMid ?? symState?.latestBar?.close ?? null;
+    const portfolio = this.portfolioState.getSnapshot();
 
-    // TODO: After risk passes, enqueue in OrderIntentQueue (core/oms/orderQueue.ts) rather
-    // than submitting directly. A dequeue loop driven by a timer or drain event should pop
-    // intents in priority order and call executionEngine.submit(), enabling rate-limiting
-    // and priority-based conflict resolution without blocking the event handler.
-
-    // MODELING LIMITATION (backtest): the reference price below is the latest
-    // observed close/mid/trade — but for IOC market orders under
-    // SimulatedExecutionSink fills land at the NEXT bar's open price, which
-    // can diverge from the reference. We deliberately do not peek at the next
-    // bar (that would be lookahead) nor inflate by a slippage buffer (that
-    // would silently tighten risk vs configured limits). For liquid names the
-    // divergence is bounded by the bar duration and the configured slippageBps;
-    // tighten maxPositionSizeUsd / maxNotionalExposureUsd if you want a harder
-    // margin against gap risk. Limit orders are exempt because limitPrice
-    // itself bounds the fill (see RiskEngine._resolveReferencePrice).
-    const symState = this.symbolState.get(event.payload.symbol);
-    const referencePrice =
-      symState?.latestMid ??
-      symState?.latestTrade?.price ??
-      symState?.latestBar?.close ??
-      undefined;
-    const riskResult = this.riskEngine.check(
-      event.payload,
-      this.portfolioState.getSnapshot(),
-      referencePrice ?? undefined,
-    );
+    // Stage 1: signal-time risk checks (kill switch, cooldown, position/cash/concentration)
+    const riskResult = this.riskEngine.check(intent, portfolio, mid ?? undefined);
     if (!riskResult.passed) {
       this.eventBus.publish({
-        id: newId(),
-        type: "RISK_REJECTED",
-        ts: nowMs(),
-        mode: this.mode,
+        id: newId(), type: "RISK_REJECTED", ts: nowMs(), mode: this.mode,
         strategyId: event.strategyId,
         reason: riskResult.reason ?? "Risk check failed",
-        rejectedIntent: event.payload,
+        rejectedIntent: intent,
       });
       return;
     }
-    this.executionEngine.submit(event.payload);
+
+    // Worst-case fill price: limit orders use limitPrice; market orders apply gap+spread+slippage buffer
+    const worstCasePrice = this.riskEngine.estimateWorstCasePrice(intent.side, intent, mid);
+    if (worstCasePrice === null) {
+      this.eventBus.publish({
+        id: newId(), type: "RISK_REJECTED", ts: nowMs(), mode: this.mode,
+        strategyId: event.strategyId,
+        reason: "No reference price available for worst-case estimate",
+        rejectedIntent: intent,
+      });
+      return;
+    }
+    const worstCaseNotional = intent.qty * worstCasePrice;
+
+    // Per-strategy budget check (skipped when no budget is registered for this strategy)
+    const alreadyReserved = this.capitalReservation.getStrategyReservedAmount(intent.strategyId);
+    const budgetFail = this.riskEngine.checkStrategyBudget(intent, worstCaseNotional, portfolio, alreadyReserved);
+    if (budgetFail) {
+      this.eventBus.publish({
+        id: newId(), type: "RISK_REJECTED", ts: nowMs(), mode: this.mode,
+        strategyId: event.strategyId,
+        reason: budgetFail.reason,
+        rejectedIntent: intent,
+      });
+      return;
+    }
+
+    // Capital reservation — prevents double-spending across concurrent pending orders
+    const reservation = this.capitalReservation.reserve(intent, worstCaseNotional, portfolio.cash);
+    if (!reservation) {
+      this.eventBus.publish({
+        id: newId(), type: "CAPITAL_UNAVAILABLE", ts: nowMs(), mode: this.mode,
+        intentId: intent.id,
+        strategyId: intent.strategyId,
+        required: worstCaseNotional,
+        available: this.capitalReservation.getAvailableCash(portfolio.cash),
+      });
+      return;
+    }
+
+    this._reservationByIntent.set(intent.id, reservation.reservationId);
+    this.eventBus.publish({
+      id: newId(), type: "CAPITAL_RESERVED", ts: nowMs(), mode: this.mode,
+      reservationId: reservation.reservationId,
+      amount: reservation.amount,
+      intentId: intent.id,
+      strategyId: intent.strategyId,
+    });
+
+    this.executionEngine.submit(intent);
+  }
+
+  private _releaseReservation(intentId: UUID, reason: "filled" | "canceled" | "rejected"): void {
+    const reservationId = this._reservationByIntent.get(intentId);
+    if (!reservationId) return;
+    this._reservationByIntent.delete(intentId);
+    this.capitalReservation.release(reservationId);
+    this.eventBus.publish({
+      id: newId(), type: "CAPITAL_RELEASED", ts: nowMs(), mode: this.mode,
+      reservationId,
+      reason,
+    });
   }
 
   private _onOrderSubmitted(event: any): void {
@@ -474,15 +521,33 @@ export class Orchestrator {
     if (order && order.status === "filled" && order.filledQty >= order.qty) {
       return;
     }
+
+    this._releaseReservation(event.orderId, "filled");
     this.orderState.applyFill(event.orderId, event.fill);
     this.portfolioState.applyFill(event.fill);
+
+    const snapshot = this.portfolioState.getSnapshot();
     this.eventBus.publish({
       id: newId(), type: "PORTFOLIO_UPDATED", ts: nowMs(), mode: this.mode,
-      payload: this.portfolioState.getSnapshot(),
+      payload: snapshot,
     });
+
+    const violation = this.riskEngine.checkPortfolio(snapshot);
+    if (violation) {
+      if (violation.engageKillSwitch) this.riskEngine.setKillSwitch(true);
+      this.eventBus.publish({
+        id: newId(), type: "PORTFOLIO_RISK_VIOLATION", ts: nowMs(), mode: this.mode,
+        check: violation.check,
+        reason: violation.reason,
+        engageKillSwitch: violation.engageKillSwitch,
+        grossExposurePct: violation.grossExposurePct,
+        netExposurePct: violation.netExposurePct,
+      });
+    }
   }
 
   private _onOrderCanceled(event: OrderCanceledEvent): void {
+    this._releaseReservation(event.orderId, "canceled");
     this.orderState.markCanceled(event.orderId);
   }
 
@@ -494,6 +559,7 @@ export class Orchestrator {
    * occurred.
    */
   private _onOrderRejected(event: OrderRejectedEvent): void {
+    this._releaseReservation(event.orderId, "rejected");
     this.orderState.markRejected(event.orderId);
   }
 
@@ -503,6 +569,7 @@ export class Orchestrator {
    * perspective — no portfolio change.
    */
   private _onOrderExpired(event: OrderExpiredEvent): void {
+    this._releaseReservation(event.orderId, "canceled");
     this.orderState.markCanceled(event.orderId);
   }
 }
