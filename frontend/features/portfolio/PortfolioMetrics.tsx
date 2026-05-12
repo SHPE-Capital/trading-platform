@@ -4,19 +4,21 @@
  * Detailed portfolio metrics panel combining summary card, positions table,
  * orders table, fills table, and equity curve chart in a tabbed layout.
  *
- * Inputs:  PortfolioSnapshot, equity curve, and orders from hooks.
+ * Inputs:  PortfolioSnapshot, equity curve, and orders from hooks/API.
  * Outputs: Full portfolio metrics view with tabs for different data.
  */
 
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import PortfolioSummaryCard from "../../components/cards/PortfolioSummaryCard";
 import PositionsTable from "../../components/tables/PositionsTable";
 import OrdersTable from "../../components/tables/OrdersTable";
 import FillsTable from "../../components/tables/FillsTable";
 import PnLChart from "../../components/charts/PnLChart";
 import { usePortfolio } from "../../hooks/usePortfolio";
+import { fetchOrders } from "../../services/portfolioService";
+import type { Order, Fill } from "../../types/portfolio";
 
 const TABS = ["Overview", "Positions", "Orders", "Fills"] as const;
 type Tab = (typeof TABS)[number];
@@ -24,12 +26,21 @@ type Tab = (typeof TABS)[number];
 export default function PortfolioMetrics() {
   const { snapshot, equityCurve, isLoading, error } = usePortfolio();
   const [activeTab, setActiveTab] = useState<Tab>("Overview");
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [fills, setFills] = useState<Fill[]>([]);
+
+  useEffect(() => {
+    fetchOrders()
+      .then((fetched) => {
+        setOrders(fetched);
+        setFills(fetched.flatMap((o) => o.fills ?? []));
+      })
+      .catch(() => {});
+  }, []);
 
   if (isLoading) return <p className="text-sm text-zinc-400">Loading portfolio…</p>;
   if (error) return <p className="text-sm text-red-500">{error}</p>;
   if (!snapshot) return <p className="text-sm text-zinc-400">No portfolio data available.</p>;
-
-  const allFills = snapshot.positions.flatMap(() => []);
 
   return (
     <div className="flex flex-col gap-6">
@@ -55,8 +66,8 @@ export default function PortfolioMetrics() {
 
       {activeTab === "Overview"   && <PnLChart data={equityCurve} height={300} />}
       {activeTab === "Positions"  && <PositionsTable positions={snapshot.positions} />}
-      {activeTab === "Orders"     && <OrdersTable orders={[]} />}
-      {activeTab === "Fills"      && <FillsTable fills={allFills} />}
+      {activeTab === "Orders"     && <OrdersTable orders={orders} />}
+      {activeTab === "Fills"      && <FillsTable fills={fills} />}
     </div>
   );
 }

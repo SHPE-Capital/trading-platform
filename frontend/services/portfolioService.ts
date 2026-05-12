@@ -29,10 +29,10 @@ export async function fetchEquityCurve(limit = 500): Promise<PortfolioSnapshot[]
 }
 
 /**
- * Fetches order history for a specific strategy run.
- * @param strategyRunId - Strategy run UUID
- * @returns Array of Order objects
+ * Fetches order history. Pass a strategyRunId to filter by run,
+ * or omit it to fetch all orders (newest first, up to 500).
  */
-export async function fetchOrders(strategyRunId: string): Promise<Order[]> {
-  return apiGet<Order[]>(`/portfolio/orders?strategyRunId=${strategyRunId}`);
+export async function fetchOrders(strategyRunId?: string): Promise<Order[]> {
+  const qs = strategyRunId ? `?strategyRunId=${strategyRunId}` : "";
+  return apiGet<Order[]>(`/portfolio/orders${qs}`);
 }
