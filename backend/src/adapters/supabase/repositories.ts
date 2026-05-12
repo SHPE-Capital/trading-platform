@@ -73,7 +73,22 @@ export async function getOrdersByStrategyRun(strategyRunId: UUID): Promise<Order
     logger.error("getOrdersByStrategyRun failed", { error: error.message });
     return [];
   }
-  return (data ?? []) as Order[];
+  return (data ?? []).map((row) => mapOrder(row as Record<string, unknown>));
+}
+
+/** Fetches all orders, newest first, optionally limited. */
+export async function getAllOrders(limit = 500): Promise<Order[]> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase
+    .from("orders")
+    .select("*")
+    .order("submitted_at", { ascending: false })
+    .limit(limit);
+  if (error) {
+    logger.error("getAllOrders failed", { error: error.message });
+    return [];
+  }
+  return (data ?? []).map((row) => mapOrder(row as Record<string, unknown>));
 }
 
 // ------------------------------------------------------------------
@@ -124,6 +139,31 @@ export async function insertPortfolioSnapshot(snapshot: PortfolioSnapshot): Prom
     // strategy_run_id is not populated here (no run context at snapshot time)
   });
   if (error) logger.error("insertPortfolioSnapshot failed", { error: error.message });
+}
+
+// Maps a raw Supabase orders row (snake_case) to the camelCase Order type.
+function mapOrder(row: Record<string, unknown>): Order {
+  return {
+    id:            row.id as string,
+    brokerOrderId: row.broker_order_id as string | undefined,
+    intentId:      row.intent_id as string,
+    strategyId:    row.strategy_id as string,
+    symbol:        row.symbol as string,
+    side:          row.side as Order["side"],
+    qty:           row.qty as number,
+    filledQty:     (row.filled_qty as number) ?? 0,
+    avgFillPrice:  row.avg_fill_price as number | undefined,
+    orderType:     row.order_type as Order["orderType"],
+    limitPrice:    row.limit_price as number | undefined,
+    stopPrice:     row.stop_price as number | undefined,
+    timeInForce:   row.time_in_force as Order["timeInForce"],
+    status:        row.status as Order["status"],
+    submittedAt:   new Date(row.submitted_at as string).getTime(),
+    updatedAt:     new Date(row.updated_at as string).getTime(),
+    closedAt:      row.closed_at ? new Date(row.closed_at as string).getTime() : undefined,
+    fills:         [],
+    meta:          row.meta as Order["meta"],
+  };
 }
 
 // Maps a raw Supabase portfolio_snapshots row (snake_case, ts as ISO string)
@@ -194,7 +234,7 @@ function mapStrategyRun(row: Record<string, unknown>): StrategyRun {
     config: row.config as StrategyRun["config"],
     status: row.status as StrategyRun["status"],
     executionMode: row.execution_mode as string,
-    startedAt: row.started_at ? new Date(row.started_at as string).getTime() : Date.now(),
+    startedAt: row.started_at ? new Date(row.started_at as string).getTime() : undefined,
     stoppedAt: row.stopped_at ? new Date(row.stopped_at as string).getTime() : undefined,
     totalSignals: (row.total_signals as number) ?? 0,
     totalOrders: (row.total_orders as number) ?? 0,
@@ -265,6 +305,22 @@ export async function getAllStrategyRuns(): Promise<StrategyRun[]> {
   return (data ?? []).map((row) => mapStrategyRun(row as Record<string, unknown>));
 }
 
+
+/** Retrieves a single strategy run by ID. */
+export async function getStrategyRunById(id: UUID): Promise<StrategyRun | null> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase
+    .from("strategy_runs")
+    .select("*")
+    .eq("id", id)
+    .single();
+  if (error) {
+    if (error.code === "PGRST116") return null;
+    logger.error("getStrategyRunById failed", { error: error.message, id });
+    return null;
+  }
+  return mapStrategyRun(data as Record<string, unknown>);
+}
 
 /**
  * Finds an existing running startup strategy run by its stable startup key

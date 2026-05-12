@@ -150,7 +150,7 @@ export interface StrategyRun {
   config: BaseStrategyConfig;
   status: StrategyRunStatus;
   executionMode: string;
-  startedAt: EpochMs;
+  startedAt?: EpochMs;
   stoppedAt?: EpochMs;
   totalSignals: number;
   totalOrders: number;
