@@ -41,6 +41,7 @@ import { newId } from "../../utils/ids";
 import type { BacktestConfig, BacktestResult } from "../../types/backtest";
 import type { PortfolioSnapshot } from "../../types/portfolio";
 import type { IStrategy } from "../../strategies/base/strategy";
+import type { BaseStrategyConfig } from "../../types/strategy";
 import type { Fill } from "../../types/orders";
 import type { Bar } from "../../types/market";
 import type { BacktestProgressPoint } from "./backtestStreamManager";
@@ -77,7 +78,7 @@ export class BacktestEngine {
     const symbolState = new SymbolStateManager();
     const portfolioState = new PortfolioStateManager(config.initialCapital);
     const orderState = new OrderStateManager();
-    const riskEngine = new RiskEngine(BACKTEST_RISK_CONFIG);
+    const riskEngine = new RiskEngine({ ...BACKTEST_RISK_CONFIG, ...(config.riskConfig ?? {}) });
     const simulatedSink = new SimulatedExecutionSink(
       eventBus,
       symbolState,
@@ -98,9 +99,11 @@ export class BacktestEngine {
       "backtest",
     );
 
-    // Register strategies
+    // Register strategies and any per-strategy capital budgets
     const strategies = strategyFactory({ symbolState, portfolioState, orderState, eventBus });
     for (const strategy of strategies) {
+      const budget = (strategy.config as BaseStrategyConfig).riskBudget;
+      if (budget) riskEngine.registerStrategyBudget({ ...budget, strategyId: strategy.id });
       orchestrator.registerStrategy(strategy);
     }
 

@@ -461,6 +461,7 @@ function backtestConfigKey(config: BacktestConfig): string {
     dataGranularity: config.dataGranularity,
     strategyVersion: config.strategyVersion ?? null,
     strategyConfig: config.strategyConfig,
+    riskConfig: config.riskConfig ?? null,
   });
 }
 
