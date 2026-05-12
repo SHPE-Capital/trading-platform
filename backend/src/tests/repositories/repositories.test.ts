@@ -32,6 +32,7 @@ import {
   insertOrder,
   updateOrder,
   getOrdersByStrategyRun,
+  getAllOrders,
   insertFill,
   insertPortfolioSnapshot,
   getLatestPortfolioSnapshot,
@@ -39,6 +40,7 @@ import {
   insertStrategyRun,
   updateStrategyRun,
   getAllStrategyRuns,
+  getStrategyRunById,
   insertBacktestResult,
   insertBacktestOrders,
   insertBacktestFills,
@@ -141,6 +143,27 @@ describe('updateOrder', () => {
 // ---------------------------------------------------------------------------
 // getOrdersByStrategyRun
 // ---------------------------------------------------------------------------
+const dbOrderRow = {
+  id: 'o1',
+  broker_order_id: 'broker-123',
+  intent_id: 'intent-1',
+  strategy_id: 'run-1',
+  symbol: 'SPY',
+  side: 'buy',
+  qty: 10,
+  filled_qty: 10,
+  avg_fill_price: 500,
+  order_type: 'market',
+  limit_price: null,
+  stop_price: null,
+  time_in_force: 'day',
+  status: 'filled',
+  submitted_at: '1970-01-01T00:16:40.000Z',
+  updated_at: '1970-01-01T00:16:40.000Z',
+  closed_at: null,
+  meta: null,
+};
+
 describe('getOrdersByStrategyRun', () => {
   it('returns empty array on error', async () => {
     const chain = buildChain({
@@ -153,16 +176,62 @@ describe('getOrdersByStrategyRun', () => {
     expect(result).toEqual([]);
   });
 
-  it('returns data array on success', async () => {
-    const orders = [{ id: 'o1' }, { id: 'o2' }];
+  it('maps snake_case DB columns to camelCase Order fields', async () => {
     const chain = buildChain({
-      order: jest.fn().mockResolvedValue({ data: orders, error: null }),
+      order: jest.fn().mockResolvedValue({ data: [dbOrderRow], error: null }),
     });
     chain.select.mockReturnValue(chain);
     chain.eq.mockReturnValue(chain);
     mockFrom.mockReturnValue(chain);
     const result = await getOrdersByStrategyRun('run-1');
-    expect(result).toEqual(orders);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      id: 'o1',
+      brokerOrderId: 'broker-123',
+      intentId: 'intent-1',
+      strategyId: 'run-1',
+      symbol: 'SPY',
+      side: 'buy',
+      qty: 10,
+      filledQty: 10,
+      avgFillPrice: 500,
+      orderType: 'market',
+      timeInForce: 'day',
+      status: 'filled',
+      submittedAt: 1_000_000,
+    });
+    // No raw snake_case keys leak through
+    const raw = result[0] as unknown as Record<string, unknown>;
+    expect(raw['broker_order_id']).toBeUndefined();
+    expect(raw['strategy_id']).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getAllOrders
+// ---------------------------------------------------------------------------
+describe('getAllOrders', () => {
+  it('returns empty array on error', async () => {
+    const chain = buildChain({
+      limit: jest.fn().mockResolvedValue({ data: null, error: { message: 'err' } }),
+    });
+    chain.select.mockReturnValue(chain);
+    chain.order.mockReturnValue(chain);
+    mockFrom.mockReturnValue(chain);
+    const result = await getAllOrders();
+    expect(result).toEqual([]);
+  });
+
+  it('maps rows and passes the limit argument', async () => {
+    const limitFn = jest.fn().mockResolvedValue({ data: [dbOrderRow], error: null });
+    const chain = buildChain({ limit: limitFn });
+    chain.select.mockReturnValue(chain);
+    chain.order.mockReturnValue(chain);
+    mockFrom.mockReturnValue(chain);
+    const result = await getAllOrders(100);
+    expect(limitFn).toHaveBeenCalledWith(100);
+    expect(result).toHaveLength(1);
+    expect(result[0].brokerOrderId).toBe('broker-123');
   });
 });
 
@@ -350,6 +419,62 @@ describe('getAllStrategyRuns', () => {
       strategyType: 'pairs_trading',
       status: 'running',
     }));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getStrategyRunById
+// ---------------------------------------------------------------------------
+describe('getStrategyRunById', () => {
+  it('returns null when the row is not found (PGRST116)', async () => {
+    const chain = buildChain({
+      single: jest.fn().mockResolvedValue({ data: null, error: { code: 'PGRST116', message: 'not found' } }),
+    });
+    chain.select.mockReturnValue(chain);
+    chain.eq.mockReturnValue(chain);
+    mockFrom.mockReturnValue(chain);
+    const result = await getStrategyRunById('missing-id');
+    expect(result).toBeNull();
+  });
+
+  it('returns a mapped StrategyRun on success', async () => {
+    const dbRow = {
+      id: 'run-1', strategy_id: 'strat-1', strategy_type: 'pairs_trading',
+      name: 'test', config: {}, status: 'running', execution_mode: 'paper',
+      started_at: '1970-01-01T00:16:40.000Z',
+      total_signals: 5, total_orders: 2, realized_pnl: 100,
+    };
+    const chain = buildChain({
+      single: jest.fn().mockResolvedValue({ data: dbRow, error: null }),
+    });
+    chain.select.mockReturnValue(chain);
+    chain.eq.mockReturnValue(chain);
+    mockFrom.mockReturnValue(chain);
+    const result = await getStrategyRunById('run-1');
+    expect(result).toMatchObject({
+      id: 'run-1',
+      strategyId: 'strat-1',
+      startedAt: 1_000_000,
+      totalSignals: 5,
+    });
+  });
+
+  it('returns undefined startedAt when started_at is null', async () => {
+    const dbRow = {
+      id: 'run-2', strategy_id: 'strat-1', strategy_type: 'pairs_trading',
+      name: 'test', config: {}, status: 'running', execution_mode: 'paper',
+      started_at: null,
+      total_signals: 0, total_orders: 0, realized_pnl: 0,
+    };
+    const chain = buildChain({
+      single: jest.fn().mockResolvedValue({ data: dbRow, error: null }),
+    });
+    chain.select.mockReturnValue(chain);
+    chain.eq.mockReturnValue(chain);
+    mockFrom.mockReturnValue(chain);
+    const result = await getStrategyRunById('run-2');
+    expect(result).not.toBeNull();
+    expect(result!.startedAt).toBeUndefined();
   });
 });
 
