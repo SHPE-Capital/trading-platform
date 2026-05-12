@@ -12,7 +12,6 @@
 "use client";
 
 import ReplayPlayer from "../../features/replay/ReplayPlayer";
-import { useReplay } from "../../hooks/useReplay";
 
 export default function ReplayPage() {
   return (

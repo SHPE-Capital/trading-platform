@@ -16,13 +16,13 @@ import PositionsTable from "../../components/tables/PositionsTable";
 import OrdersTable from "../../components/tables/OrdersTable";
 import FillsTable from "../../components/tables/FillsTable";
 import PnLChart from "../../components/charts/PnLChart";
-import { usePortfolio } from "../../hooks/usePortfolio";
+import { usePortfolioData } from "../../context/DataContext";
 
 const TABS = ["Overview", "Positions", "Orders", "Fills"] as const;
 type Tab = (typeof TABS)[number];
 
 export default function PortfolioMetrics() {
-  const { snapshot, equityCurve, isLoading, error } = usePortfolio();
+  const { snapshot, equityCurve, isLoading, error } = usePortfolioData();
   const [activeTab, setActiveTab] = useState<Tab>("Overview");
 
   if (isLoading) return <p className="text-sm text-zinc-400">Loading portfolio…</p>;

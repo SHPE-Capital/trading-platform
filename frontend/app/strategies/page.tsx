@@ -12,10 +12,10 @@
 
 import StrategyForm from "../../features/strategy/StrategyForm";
 import StrategyList from "../../features/strategy/StrategyList";
-import { useStrategies } from "../../hooks/useStrategies";
+import { useStrategiesData } from "../../context/DataContext";
 
 export default function StrategiesPage() {
-  const { runs, isLoading, launchStrategy, stopStrategy } = useStrategies();
+  const { runs, isLoading, startStrategy, stopStrategy } = useStrategiesData();
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
@@ -27,7 +27,7 @@ export default function StrategiesPage() {
           <h2 className="mb-3 text-sm font-semibold text-zinc-500 uppercase tracking-wide">
             Launch Strategy
           </h2>
-          <StrategyForm onSubmit={launchStrategy} />
+          <StrategyForm onSubmit={startStrategy} />
         </div>
 
         {/* Strategy list */}

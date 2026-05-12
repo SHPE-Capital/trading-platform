@@ -16,9 +16,7 @@ import SystemHealthCard from "../../components/cards/SystemHealthCard";
 import PortfolioSummaryCard from "../../components/cards/PortfolioSummaryCard";
 import StrategyStatusCard from "../../components/cards/StrategyStatusCard";
 import PnLChart from "../../components/charts/PnLChart";
-import { usePortfolio } from "../../hooks/usePortfolio";
-import { useStrategies } from "../../hooks/useStrategies";
-import { useSystemHealth } from "../../hooks/useSystemHealth";
+import { usePortfolioData, useStrategiesData, useSystemHealthData } from "../../context/DataContext";
 import { useWebSocket } from "../../hooks/useWebSocket";
 
 interface StrategyErrorMsg {
@@ -30,9 +28,9 @@ interface StrategyErrorMsg {
 }
 
 export default function DashboardPage() {
-  const { snapshot, equityCurve, isLoading: portfolioLoading } = usePortfolio();
-  const { runs, stopStrategy } = useStrategies();
-  const { status: systemStatus, isLoading: systemLoading } = useSystemHealth();
+  const { snapshot, equityCurve, isLoading: portfolioLoading } = usePortfolioData();
+  const { runs, stopStrategy } = useStrategiesData();
+  const { status: systemStatus, isLoading: systemLoading } = useSystemHealthData();
 
   const [strategyErrors, setStrategyErrors] = useState<StrategyErrorMsg[]>([]);
   const { lastMessage: wsMsg } = useWebSocket<StrategyErrorMsg>("/ws/events");

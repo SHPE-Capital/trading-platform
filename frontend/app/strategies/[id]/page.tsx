@@ -17,7 +17,7 @@ import SpreadChart from "../../../components/charts/SpreadChart";
 import OrdersTable from "../../../components/tables/OrdersTable";
 import FillsTable from "../../../components/tables/FillsTable";
 import StrategyControls from "../../../components/controls/StrategyControls";
-import { useStrategies } from "../../../hooks/useStrategies";
+import { useStrategiesData } from "../../../context/DataContext";
 
 interface Props {
   params: Promise<{ id: string }>;
@@ -25,7 +25,7 @@ interface Props {
 
 export default function StrategyDetailPage({ params }: Props) {
   const { id } = use(params);
-  const { runs, stopStrategy } = useStrategies();
+  const { runs, stopStrategy } = useStrategiesData();
 
   const run = runs.find((r) => r.id === id) ?? null;
 
