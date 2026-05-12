@@ -22,16 +22,39 @@ export class CapitalReservationManager {
 
   /**
    * Attempts to reserve capital for a pending order intent.
-   * Returns null if estimated cost is zero or exceeds available cash.
+   * `worstCaseNotional` must be pre-computed by `riskEngine.estimateWorstCasePrice()`
+   * so market orders (which have no limitPrice) are correctly reserved.
    * @param intent - OrderIntent to reserve capital for
+   * @param worstCaseNotional - Pre-computed worst-case notional (qty × worst-case price)
    * @param totalCash - Current total cash balance (before reservations)
    * @returns Reservation receipt, or null if insufficient capital
    */
   reserve(
     intent: OrderIntent,
+    worstCaseNotional: number,
     totalCash: number,
   ): { reservationId: UUID; amount: number } | null {
-    const amount = intent.qty * (intent.limitPrice ?? 0);
+    // Sell orders generate cash rather than consuming it; reserve amount=0 so
+    // reservation bookkeeping tracks the pending order without reducing available cash.
+    if (intent.side === "sell") {
+      const reservationId = newId();
+      const reservation: CapitalReservation = {
+        reservationId,
+        amount: 0,
+        strategyId: intent.strategyId,
+        intentId: intent.id,
+        ts: nowMs(),
+      };
+      this._reservations.set(reservationId, reservation);
+      logger.info("CapitalReservationManager: sell intent does not require cash reservation", {
+        reservationId,
+        intentId: intent.id,
+        strategyId: intent.strategyId,
+      });
+      return { reservationId, amount: 0 };
+    }
+
+    const amount = worstCaseNotional;
 
     if (amount <= 0) {
       logger.warn("CapitalReservationManager: cannot reserve — amount is zero or negative", {
@@ -114,6 +137,19 @@ export class CapitalReservationManager {
    */
   getAvailableCash(totalCash: number): number {
     return totalCash - this.getReservedTotal();
+  }
+
+  /**
+   * Returns the total USD amount currently reserved for a specific strategy.
+   * @param strategyId - Strategy to query
+   * @returns Sum of all active reservation amounts for that strategy
+   */
+  getStrategyReservedAmount(strategyId: string): number {
+    let total = 0;
+    for (const r of this._reservations.values()) {
+      if (r.strategyId === strategyId) total += r.amount;
+    }
+    return total;
   }
 
   /**
