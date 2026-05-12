@@ -18,6 +18,7 @@ import type {
   TimeInForce,
   OrderStatus,
   Metadata,
+  ExecutionAlgoType,
 } from "./common";
 
 // ------------------------------------------------------------------
@@ -53,6 +54,10 @@ export interface OrderIntent {
   ts: EpochMs;
   /** Optional metadata passthrough */
   meta?: Metadata;
+  /** Execution algorithm that should route this intent */
+  executionAlgo?: ExecutionAlgoType;
+  /** Algo-specific parameters (e.g. TwapParams | VwapParams serialized as plain object) */
+  executionAlgoParams?: Record<string, unknown>;
 }
 
 // ------------------------------------------------------------------

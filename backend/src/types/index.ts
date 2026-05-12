@@ -14,3 +14,4 @@ export * from "./strategy";
 export * from "./risk";
 export * from "./backtest";
 export * from "./replay";
+export * from "./oms";

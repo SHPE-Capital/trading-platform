@@ -260,6 +260,12 @@ export class Orchestrator {
     else if (signal.direction === "short" || signal.direction === "close_long") side = "sell";
     else return;
 
+    // TODO: Call positionSizer.computeQty() here when signal.qty should be overridden by
+    // the sizing layer. Inject a Map<SizerType, IPositionSizer> into the Orchestrator
+    // constructor alongside riskEngine and executionEngine. Use signal.meta or strategy
+    // config's sizerType to select the sizer. estimatedPrice = symbolState mid ?? 0.
+    // See core/sizing/IPositionSizer.ts and core/sizing/fixedNotionalSizer.ts.
+
     const intent = {
       id: newId(),
       strategyId: signal.strategyId,
@@ -315,6 +321,17 @@ export class Orchestrator {
   }
 
   private _onOrderIntent(event: OrderIntentCreatedEvent): void {
+    // TODO: Route through CapitalReservationManager.reserve() before risk check.
+    // Compute estimatedCost = intent.qty * (intent.limitPrice ?? symbolState midprice).
+    // If insufficient available cash: publish CAPITAL_UNAVAILABLE and return early.
+    // Store reservationId on intent.meta for release on ORDER_FILLED or RISK_REJECTED.
+    // See core/oms/capitalReservation.ts.
+
+    // TODO: After risk passes, enqueue in OrderIntentQueue (core/oms/orderQueue.ts) rather
+    // than submitting directly. A dequeue loop driven by a timer or drain event should pop
+    // intents in priority order and call executionEngine.submit(), enabling rate-limiting
+    // and priority-based conflict resolution without blocking the event handler.
+
     const riskResult = this.riskEngine.check(event.payload, this.portfolioState.getSnapshot());
     if (!riskResult.passed) {
       this.eventBus.publish({

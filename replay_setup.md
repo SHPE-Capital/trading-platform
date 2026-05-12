@@ -431,8 +431,241 @@ Expected: `cursor` should be advancing; `status` should be `"playing"` and event
 
 ---
 
+## Part 8 — Deterministic Clock
+
+**Status: DONE** — `backend/src/utils/time.ts`
+
+By default every call to `nowMs()` returns `Date.now()`. During replay this is wrong:
+strategy signals, portfolio snapshots, and orchestrator events would all carry wall-clock
+timestamps instead of the simulated time of the event being replayed.
+
+The fix is a module-level clock override that the `ReplayEngine` activates before each
+event emission:
+
+```typescript
+// utils/time.ts (already implemented)
+let _clockOverride: (() => EpochMs) | null = null;
+
+export function setClockOverride(fn: (() => EpochMs) | null): void {
+  _clockOverride = fn;
+}
+
+export function nowMs(): EpochMs {
+  return _clockOverride ? _clockOverride() : Date.now();
+}
+```
+
+`nowIso()` and `isStale()` now route through `nowMs()` as well, so the override
+propagates everywhere without any changes to strategies, orchestrator, or portfolio state.
+
+### Wiring the override into `ReplayEngine`
+
+**File:** `backend/src/core/replay/replayEngine.ts`
+
+Import `setClockOverride` and call it in `_emitNext()` and `stop()`:
+
+```typescript
+import { setClockOverride } from "../../utils/time";
+
+// In _emitNext(), immediately before eventBus.publish(event):
+this.session.simulatedNow = event.ts;
+setClockOverride(() => this.session!.simulatedNow);
+this.eventBus.publish(event);                // all nowMs() calls here return simulated time
+this.session.cursor++;
+
+if (this.session.cursor >= this.session.totalEvents) {
+  this.session.status = "completed";
+  setClockOverride(null);                    // restore wall clock
+}
+
+// In stop():
+setClockOverride(null);
+```
+
+> **Why `ts` on `REPLAY_TICK` uses `Date.now()` directly (not `nowMs()`):**
+> At the point the tick is published, `nowMs()` returns simulated time. The tick's
+> envelope needs a real delivery timestamp so the WebSocket message is correctly
+> time-ordered on the client. Use `Date.now()` explicitly for that one field only.
+
+### Why no other files need changing
+
+Every wall-clock reference in strategies, orchestrator, and portfolio state already
+calls `nowMs()`. The override is the single injection point. This replaces the
+process-global `Date.now = () => bar.ts` monkey-patch used by the backtest engine —
+that patch can be migrated to `setClockOverride` in a separate cleanup.
+
+---
+
+## Part 9 — WebSocket Status Streaming
+
+The replay runtime currently starts an Express server via `app.listen()`, which does not
+support WebSocket upgrades. The frontend's `useReplay` hook polls for status updates
+instead of receiving them in real time.
+
+This part wires up the existing `attachWebSocketServer` infrastructure and adds a
+`REPLAY_TICK` event so the frontend receives live progress without polling.
+
+### 9a — `REPLAY_TICK` event type
+
+**Status: DONE** — `backend/src/types/events.ts`
+
+`REPLAY_TICK` is added to `EventType`, defined as `ReplayTickEvent`, and included in the
+`TradingEvent` discriminated union. The `ReplayEngine` publishes one tick after every
+event emission carrying `{ sessionId, cursor, totalEvents, status, speed, simulatedNow }`.
+
+### 9b — Add `REPLAY_TICK` to the broadcast set
+
+**File:** `backend/src/app/websocket.ts`
+
+```typescript
+const BROADCAST_EVENT_TYPES = new Set([
+  // ... existing types ...
+  "REPLAY_TICK",   // ← add this line
+]);
+```
+
+### 9c — Attach WebSocket server in replay runtime
+
+**File:** `backend/src/runtime/replay.ts`
+
+Replace `app.listen()` with the same `http.createServer` pattern used in `runtime/live.ts`:
+
+```typescript
+import http from "http";
+import { attachWebSocketServer } from "../app/websocket";
+
+// Replace:
+//   app.listen(env.port, () => { ... });
+// With:
+const server = http.createServer(app);
+attachWebSocketServer(server, eventBus);
+server.listen(env.port, () => {
+  logger.info(`Replay server listening on port ${env.port}`);
+});
+
+// In the shutdown handler, replace process.exit(0) with:
+server.close(() => process.exit(0));
+```
+
+### 9d — Publish `REPLAY_TICK` from `ReplayEngine`
+
+**File:** `backend/src/core/replay/replayEngine.ts`
+
+After advancing the cursor in `_emitNext()`, publish a tick. Note the `ts` field uses
+`Date.now()` directly — see Part 8 for why:
+
+```typescript
+import { newId } from "../../utils/ids";
+
+// After this.session.cursor++ in _emitNext():
+this.eventBus.publish({
+  id: newId(),
+  type: "REPLAY_TICK",
+  ts: Date.now(),            // wall-clock delivery time, not simulated
+  mode: "replay",
+  sessionId: this.session.id,
+  cursor: this.session.cursor,
+  totalEvents: this.session.totalEvents,
+  status: this.session.status,
+  speed: this.session.speed,
+  simulatedNow: this.session.simulatedNow,
+});
+```
+
+### 9e — Update `useReplay` to consume `REPLAY_TICK` over WebSocket
+
+**File:** `frontend/hooks/useReplay.ts`
+
+Follow the same pattern used in `usePortfolio.ts` and `SystemHealthCard.tsx` — subscribe
+to the shared `/ws/events` stream and filter for `REPLAY_TICK`:
+
+```typescript
+import { useWebSocket } from "./useWebSocket";
+import type { TradingEvent } from "../types/api";
+
+// Inside useReplay():
+const { lastMessage } = useWebSocket<TradingEvent>("/ws/events");
+
+useEffect(() => {
+  if (!lastMessage || lastMessage.type !== "REPLAY_TICK") return;
+  const tick = lastMessage as ReplayTickEvent;
+  setSession((prev) =>
+    prev && prev.id === tick.sessionId
+      ? { ...prev, cursor: tick.cursor, status: tick.status, speed: tick.speed, simulatedNow: tick.simulatedNow }
+      : prev
+  );
+}, [lastMessage]);
+```
+
+Remove the `fetchReplayStatus()` call inside `control()` — the WS tick now delivers the
+updated state automatically after each command takes effect.
+
+---
+
+## Part 10 — Event Filtering
+
+**Status: SCAFFOLDED** — `backend/src/core/replay/replayFilter.ts`, `backend/src/types/replay.ts`
+
+The `ReplayFilter` type and `applyFilter()` stub are in place. See the plan file for the
+full implementation spec.
+
+Filter fields (all optional, ANDed):
+- `eventTypes?: EventType[]` — only include these event types
+- `symbols?: string[]` — only include events whose `payload.symbol` is in this set;
+  events with no symbol field (system/portfolio events) always pass through
+- `startTs?: EpochMs` — lower bound on `event.ts`
+- `endTs?: EpochMs` — upper bound on `event.ts`
+
+Applied in `replayController.loadReplaySession()` after fetching events from DB:
+
+```typescript
+const filteredEvents = filter ? applyFilter(log.events, filter) : log.events;
+```
+
+Request body expands to `{ sessionId: string; filter?: ReplayFilter }`.
+
+**Frontend:** Add a `ReplayFilterPanel` component (new file) with checkboxes for event
+types (grouped by category), a symbol input, and a time window range picker. The Apply
+button is disabled until at least one filter field is non-empty. When a symbol or time
+filter is active, all strategies that touch those events appear in the filtered stream —
+the filter does not collapse to a single strategy view.
+
+Also wire `seek_ts` command (defined in `ReplayCommand`): binary-search `session.events`
+for the first event with `ts >= targetTs`, set cursor to that index. Add a
+`datetime-local` input to `ReplayControls` that sends this command on change.
+
+---
+
+## Part 11 — Performance Attribution
+
+**Status: SCAFFOLDED** — `backend/src/core/replay/attributionCollector.ts`, `backend/src/types/replay.ts`
+
+The `AttributionCollector` class and all attribution types (`SignalAttribution`,
+`ReplayAttribution`, `StrategyAttributionSummary`) are scaffolded. See the plan file for
+the full implementation spec.
+
+Only meaningful when `replayStrategies: true` so the execution sink produces real fills.
+
+New endpoint: `GET /api/replay/attribution` → `getReplayAttribution()` controller handler.
+
+**Frontend:** Add a `ReplayAttribution` component (new file) rendered below `ReplayPlayer`
+when `session.status === "completed"`. Sections:
+
+1. **Summary bar** — fill rate, win rate, total realized P&L, avg slippage (bps),
+   avg holding time, max drawdown
+2. **Strategy breakdown** — one row per strategy ID (populated when multiple strategies ran)
+3. **Signal table** — sortable: symbol, direction, signal time, mid price, fill price,
+   slippage, holding time, P&L, outcome badge
+4. **Equity curve** — SVG/chart: X = simulated time, Y = equity; one line per strategy
+
+Auto-fetch attribution when `session.status` flips to `"completed"` inside the
+`REPLAY_TICK` effect in `useReplay`.
+
+---
+
 ## Checklist
 
+**Parts 1–7 (core wiring)**
 - [ ] `event_logs` table created in Supabase
 - [ ] Repository functions (`insertEventLog`, `getAllEventLogs`, `getEventLogById`) added
 - [ ] `createApp()` accepts and stores `ReplayEngine` on `app.locals`
@@ -444,3 +677,36 @@ Expected: `cursor` should be advancing; `status` should be `"playing"` and event
 - [ ] `POST /api/replay/load` loads a session without error
 - [ ] `POST /api/replay/control` with `{"action": "play"}` starts playback
 - [ ] `GET /api/replay/status` shows `cursor` advancing during playback
+
+**Part 8 (deterministic clock)**
+- [x] `setClockOverride` added to `utils/time.ts`
+- [x] `nowIso()` and `isStale()` route through `nowMs()`
+- [ ] `ReplayEngine._emitNext()` calls `setClockOverride` before `eventBus.publish`
+- [ ] `ReplayEngine.stop()` calls `setClockOverride(null)`
+
+**Part 9 (WebSocket streaming)**
+- [x] `REPLAY_TICK` added to `EventType`, `ReplayTickEvent` defined, added to `TradingEvent` union
+- [ ] `"REPLAY_TICK"` added to `BROADCAST_EVENT_TYPES` in `websocket.ts`
+- [ ] `runtime/replay.ts` uses `http.createServer` + `attachWebSocketServer`
+- [ ] `ReplayEngine._emitNext()` publishes `REPLAY_TICK` after each event
+- [ ] `useReplay` subscribes to `/ws/events` and patches session on `REPLAY_TICK`
+- [ ] `control()` in `useReplay` no longer calls `fetchReplayStatus()` after each command
+
+**Part 10 (event filtering)**
+- [x] `ReplayFilter` type defined in `replay.ts`
+- [x] `seek_ts` command added to `ReplayCommand`
+- [x] `applyFilter()` scaffolded in `replayFilter.ts`
+- [ ] `applyFilter()` fully implemented
+- [ ] `replayController.loadReplaySession` accepts and applies `filter`
+- [ ] `ReplayFilterPanel` component built and integrated into `ReplayPlayer`
+- [ ] `ReplayControls` timestamp seek input added
+- [ ] `useReplay.loadSession` accepts optional `ReplayFilter`
+
+**Part 11 (performance attribution)**
+- [x] `SignalAttribution`, `ReplayAttribution`, `StrategyAttributionSummary` types defined
+- [x] `AttributionCollector` scaffolded
+- [ ] `AttributionCollector` fully implemented
+- [ ] `GET /api/replay/attribution` route and controller added
+- [ ] `ReplayEngine` wires attribution collector when `replayStrategies: true`
+- [ ] `ReplayAttribution` frontend component built
+- [ ] `useReplay` exposes `attribution` and auto-fetches on session complete
