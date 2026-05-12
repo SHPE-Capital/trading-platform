@@ -15,6 +15,7 @@ jest.mock('../../utils/time');
 
 import * as time from '../../utils/time';
 import { RiskEngine } from '../../core/risk/riskEngine';
+import { CapitalReservationManager } from '../../core/oms/capitalReservation';
 import type { OrderIntent } from '../../types/orders';
 import type { PortfolioSnapshot, Position } from '../../types/portfolio';
 
@@ -135,6 +136,67 @@ describe('RiskEngine: market order checks with reference price (fix #4)', () => 
     });
   });
 
+  describe('capital reservation for sell orders', () => {
+    it('does not consume cash for sell intents', () => {
+      const manager = new CapitalReservationManager();
+      const intent = makeIntent({ side: 'sell', qty: 100 });
+      const receipt = manager.reserve(intent, 5_000, 10_000);
+
+      expect(receipt).not.toBeNull();
+      expect(receipt?.amount).toBe(0);
+      expect(manager.getAvailableCash(10_000)).toBe(10_000);
+    });
+  });
+
+  describe('cash reserve gate for SELL orders (Copilot fix)', () => {
+    it('allows a sell that covers an existing long even when cash is at the reserve floor', () => {
+      // 100% reserve floor = $1,000; cash = $1,000 → at floor.
+      // But selling 10 shares to close an existing 10-share long is always allowed.
+      const engine = new RiskEngine({
+        cashReservePct: 1.0,
+        maxNotionalExposureUsd: 1e12, maxPositionSizeUsd: 1e12, allowShortSelling: true,
+      });
+      const position = makePosition({ symbol: 'SPY', qty: 10, currentPrice: 100 });
+      const result = engine.check(
+        makeIntent({ side: 'sell', qty: 10 }),
+        makePortfolio({ cash: 1_000, equity: 1_000, positions: [position] }),
+        100,
+      );
+      expect(result.failedCheck).not.toBe('CASH_RESERVE');
+    });
+
+    it('rejects a sell that would open a new short when cash is at or below the reserve floor', () => {
+      // No existing position → selling 10 shares opens a short.
+      // cash = reserveFloor → blocked.
+      const engine = new RiskEngine({
+        cashReservePct: 1.0,
+        maxNotionalExposureUsd: 1e12, maxPositionSizeUsd: 1e12, allowShortSelling: true,
+      });
+      const result = engine.check(
+        makeIntent({ side: 'sell', qty: 10 }),
+        makePortfolio({ cash: 1_000, equity: 1_000, positions: [] }),
+        100,
+      );
+      expect(result.passed).toBe(false);
+      expect(result.failedCheck).toBe('CASH_RESERVE');
+    });
+
+    it('allows a sell opening a short when cash is above the reserve floor', () => {
+      // cash=10,000, equity=10,000, 10% reserve → floor=$1,000.
+      // cash $10,000 > floor $1,000 → not blocked.
+      const engine = new RiskEngine({
+        cashReservePct: 0.10,
+        maxNotionalExposureUsd: 1e12, maxPositionSizeUsd: 1e12, allowShortSelling: true,
+      });
+      const result = engine.check(
+        makeIntent({ side: 'sell', qty: 10 }),
+        makePortfolio({ cash: 10_000, equity: 10_000, positions: [] }),
+        100,
+      );
+      expect(result.failedCheck).not.toBe('CASH_RESERVE');
+    });
+  });
+
   describe('intraday drawdown engages kill switch', () => {
     it('engages kill switch when drawdown breaches limit', () => {
       const engine = new RiskEngine({ maxIntradayDrawdownPct: 0.05 });
@@ -210,5 +272,61 @@ describe('RiskEngine: market order checks with reference price (fix #4)', () => 
       expect(result.passed).toBe(false);
       expect(result.failedCheck).toBe('MAX_POSITION_SIZE');
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cash reserve fix: short sale proceeds inflate portfolio.cash above equity
+// ---------------------------------------------------------------------------
+describe('RiskEngine: cash reserve fix — short proceeds must not bypass reserve', () => {
+  it('blocks a buy when cash > equity due to short proceeds with full reserve', () => {
+    // Short sale inflates cash to $200k while equity stays at $100k.
+    // A 100% reserve should leave $0 available for new buys.
+    // Before fix: spendable=cash=200k, floor=equity*1.0=100k → available=100k → BUY PASSES (bug)
+    // After fix:  spendable=min(cash,equity)=100k, floor=100k → available=0 → BUY BLOCKED (correct)
+    const engine = new RiskEngine({
+      cashReservePct: 1.0,
+      maxNotionalExposureUsd: 1e12, maxPositionSizeUsd: 1e12,
+      maxIntradayDrawdownPct: undefined, allowShortSelling: true,
+    });
+    const result = engine.check(
+      makeIntent({ side: 'buy', qty: 1 }),
+      makePortfolio({ cash: 200_000, equity: 100_000 }),
+      1, // cost = $1, would pass if available cash is wrongly inflated
+    );
+    expect(result.passed).toBe(false);
+    expect(result.failedCheck).toBe('CASH_RESERVE');
+  });
+
+  it('allows a buy when cash equals equity (no short inflation)', () => {
+    // Normal case: cash == equity, 5% reserve → available = $95k, order = $1k → passes
+    const engine = new RiskEngine({
+      cashReservePct: 0.05,
+      maxNotionalExposureUsd: 1e12, maxPositionSizeUsd: 1e12,
+      maxIntradayDrawdownPct: undefined, maxConcentrationPct: 1.0,
+    });
+    const result = engine.check(
+      makeIntent({ side: 'buy', qty: 10 }),
+      makePortfolio({ cash: 100_000, equity: 100_000 }),
+      100,
+    );
+    expect(result.passed).toBe(true);
+  });
+
+  it('blocks a buy even with moderate short inflation and partial reserve', () => {
+    // Equity=$50k, cash=$90k (short proceeds), 10% reserve → floor=$5k,
+    // spendable=min(90k,50k)=50k → available=45k; order=100*$500=$50k > $45k → blocked
+    const engine = new RiskEngine({
+      cashReservePct: 0.10,
+      maxNotionalExposureUsd: 1e12, maxPositionSizeUsd: 1e12,
+      maxIntradayDrawdownPct: undefined, allowShortSelling: true,
+    });
+    const result = engine.check(
+      makeIntent({ side: 'buy', qty: 100 }),
+      makePortfolio({ cash: 90_000, equity: 50_000 }),
+      500,
+    );
+    expect(result.passed).toBe(false);
+    expect(result.failedCheck).toBe('CASH_RESERVE');
   });
 });
