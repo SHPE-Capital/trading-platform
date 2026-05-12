@@ -21,7 +21,7 @@ export class RiskEngine {
   /** Per-strategy last order timestamp (for cooldown enforcement) */
   private lastOrderTs: Map<string, number> = new Map();
   /** Equity at the start of the current session (set on first check) */
-  sessionStartEquity: number | null = null;
+  private sessionStartEquity: number | null = null;
   /** Per-strategy capital budgets registered at engine startup */
   private readonly _strategyBudgets = new Map<string, StrategyRiskBudget>();
 
@@ -111,6 +111,14 @@ export class RiskEngine {
   }
 
   /**
+   * Returns the equity recorded at the start of the current session.
+   * Null until the first call to `check()`.
+   */
+  getSessionStartEquity(): number | null {
+    return this.sessionStartEquity;
+  }
+
+  /**
    * Registers a per-strategy capital budget. Called at engine startup for each
    * strategy that carries a `riskBudget` in its config.
    */
@@ -150,9 +158,18 @@ export class RiskEngine {
     worstCaseNotional: number,
     portfolio: PortfolioSnapshot,
     alreadyReservedForStrategy: number,
+    openOrderCount = 0,
   ): { failedCheck: string; reason: string } | null {
     const budget = this._strategyBudgets.get(intent.strategyId);
     if (!budget) return null;
+
+    if (budget.maxOpenOrders != null && openOrderCount >= budget.maxOpenOrders) {
+      return {
+        failedCheck: "MAX_OPEN_ORDERS",
+        reason: `Strategy ${intent.strategyId} already has ${openOrderCount} open order(s), limit is ${budget.maxOpenOrders}`,
+      };
+    }
+
     const maxCapital = budget.maxCapitalPct * portfolio.equity;
     if (alreadyReservedForStrategy + worstCaseNotional > maxCapital) {
       return {
@@ -160,6 +177,7 @@ export class RiskEngine {
         reason: `Strategy ${intent.strategyId}: projected $${(alreadyReservedForStrategy + worstCaseNotional).toFixed(2)} exceeds budget $${maxCapital.toFixed(2)}`,
       };
     }
+
     if (budget.maxOrderNotionalPct != null) {
       const maxOrder = budget.maxOrderNotionalPct * portfolio.equity;
       if (worstCaseNotional > maxOrder) {
@@ -296,16 +314,16 @@ export class RiskEngine {
     portfolio: PortfolioSnapshot,
     referencePrice?: number,
   ): { failedCheck: string; reason: string } | null {
-    const estimatedPrice = this._resolveReferencePrice(intent, portfolio, referencePrice);
-    if (estimatedPrice === null) return null;
+    const rawPrice = this._resolveReferencePrice(intent, portfolio, referencePrice);
+    if (rawPrice === null) return null;
+    // Apply the same directional fill buffer used by the other notional checks so
+    // this check is consistent with _checkMaxPositionSize and _checkConcentration.
+    const bufferedPrice = this._applyFillBuffer(intent.side, rawPrice);
 
     const existingPosition = portfolio.positions.find((p) => p.symbol === intent.symbol);
     const qtyDelta = intent.side === "buy" ? intent.qty : -intent.qty;
     const newSymbolQty = (existingPosition?.qty ?? 0) + qtyDelta;
-    const newSymbolPrice = existingPosition?.currentPrice && existingPosition.currentPrice > 0
-      ? existingPosition.currentPrice
-      : estimatedPrice;
-    const symbolNewNotional = Math.abs(newSymbolQty * newSymbolPrice);
+    const symbolNewNotional = Math.abs(newSymbolQty * bufferedPrice);
 
     const otherPositionsNotional = portfolio.positions
       .filter((p) => p.symbol !== intent.symbol)
