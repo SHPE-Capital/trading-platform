@@ -440,7 +440,8 @@ export class Orchestrator {
 
     // Per-strategy budget check (skipped when no budget is registered for this strategy)
     const alreadyReserved = this.capitalReservation.getStrategyReservedAmount(intent.strategyId);
-    const budgetFail = this.riskEngine.checkStrategyBudget(intent, worstCaseNotional, portfolio, alreadyReserved);
+    const openOrderCount = this.capitalReservation.getOpenOrderCount(intent.strategyId);
+    const budgetFail = this.riskEngine.checkStrategyBudget(intent, worstCaseNotional, portfolio, alreadyReserved, openOrderCount);
     if (budgetFail) {
       this.eventBus.publish({
         id: newId(), type: "RISK_REJECTED", ts: nowMs(), mode: this.mode,
@@ -504,6 +505,24 @@ export class Orchestrator {
    * cumulative filledQty and transitions to "filled" once it reaches order.qty.
    */
   private _onOrderPartialFill(event: OrderPartialFillEvent): void {
+    // Scale down the capital reservation proportionally to the remaining unfilled
+    // qty so that already-deployed capital is freed for subsequent orders.
+    // Must run before orderState.applyFill so that filledQty still reflects the
+    // pre-fill cumulative, letting us compute the correct remaining fraction.
+    const reservationId = this._reservationByIntent.get(event.orderId);
+    if (reservationId) {
+      const order = this.orderState.getOrder(event.orderId);
+      const reservation = this.capitalReservation.getReservation(reservationId);
+      if (order && reservation && reservation.amount > 0 && order.qty > 0) {
+        const currentOpenQty = order.qty - order.filledQty;
+        const remainingQty = Math.max(0, currentOpenQty - event.fill.qty);
+        const newAmount = currentOpenQty > 0
+          ? reservation.amount * remainingQty / currentOpenQty
+          : 0;
+        this.capitalReservation.adjustAmount(reservationId, newAmount);
+      }
+    }
+
     this.orderState.applyFill(event.orderId, event.fill);
     this.portfolioState.applyFill(event.fill);
     this.eventBus.publish({
