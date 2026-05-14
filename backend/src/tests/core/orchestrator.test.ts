@@ -733,3 +733,45 @@ describe("Orchestrator: ORDER_EXPIRED", () => {
     expect(orderState.getOpenOrders().map((o) => o.id)).not.toContain("o-exp");
   });
 });
+
+// Tests: hasStrategyWithConfigId
+// ------------------------------------------------------------------
+
+describe("Orchestrator: hasStrategyWithConfigId", () => {
+  it("returns false when no strategies are registered", () => {
+    const bus = new EventBus();
+    const orch = makeOrchestrator(bus);
+    expect(orch.hasStrategyWithConfigId("config-1")).toBe(false);
+  });
+
+  it("returns true when a registered strategy has a matching config ID", () => {
+    const bus = new EventBus();
+    const orch = makeOrchestrator(bus);
+    orch.registerStrategy(makeStrategy("s1")); // makeStrategy sets config.id === id
+    expect(orch.hasStrategyWithConfigId("s1")).toBe(true);
+  });
+
+  it("returns false when no registered strategy has a matching config ID", () => {
+    const bus = new EventBus();
+    const orch = makeOrchestrator(bus);
+    orch.registerStrategy(makeStrategy("s1"));
+    expect(orch.hasStrategyWithConfigId("s2")).toBe(false);
+  });
+
+  it("returns false after the matching strategy has been deregistered", () => {
+    const bus = new EventBus();
+    const orch = makeOrchestrator(bus);
+    orch.registerStrategy(makeStrategy("s1"), "run-1");
+    expect(orch.hasStrategyWithConfigId("s1")).toBe(true);
+    orch.deregisterStrategy("run-1");
+    expect(orch.hasStrategyWithConfigId("s1")).toBe(false);
+  });
+
+  it("matches by config.id regardless of the map key (runId)", () => {
+    const bus = new EventBus();
+    const orch = makeOrchestrator(bus);
+    orch.registerStrategy(makeStrategy("s1"), "run-abc");
+    expect(orch.hasStrategyWithConfigId("s1")).toBe(true);
+    expect(orch.hasStrategyWithConfigId("run-abc")).toBe(false);
+  });
+});

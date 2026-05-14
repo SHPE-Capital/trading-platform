@@ -59,9 +59,14 @@ export class Orchestrator {
    * Registers a strategy. If the orchestrator is already running, starts the
    * strategy immediately and emits STRATEGY_STARTED (or STRATEGY_ERROR on failure).
    * @param strategy - Any IStrategy implementation
+   * @param runId - Optional run ID to use as the map key instead of strategy.id.
+   *   Pass the strategy_runs.id when registering via the HTTP API so that
+   *   hasStrategy/deregisterStrategy can be called with the run ID from the URL.
+   *   Startup-registered strategies (no runId) continue keying on strategy.id.
    */
-  registerStrategy(strategy: IStrategy): void {
-    this.strategies.set(strategy.id, strategy);
+  registerStrategy(strategy: IStrategy, runId?: string): void {
+    const key = runId ?? strategy.id;
+    this.strategies.set(key, strategy);
 
     const cfg = strategy.config as BaseStrategyConfig;
     if (cfg.riskBudget) {
@@ -70,6 +75,7 @@ export class Orchestrator {
 
     logger.info("Orchestrator: strategy registered", {
       strategyId: strategy.id,
+      key,
       type: strategy.type,
     });
 
@@ -110,6 +116,14 @@ export class Orchestrator {
   /** Returns true if a strategy with the given ID is currently registered. */
   hasStrategy(strategyId: string): boolean {
     return this.strategies.has(strategyId);
+  }
+
+  /** Returns true if any registered strategy was launched from the given config ID. */
+  hasStrategyWithConfigId(configId: string): boolean {
+    for (const strategy of this.strategies.values()) {
+      if (strategy.config.id === configId) return true;
+    }
+    return false;
   }
 
   /**

@@ -39,6 +39,7 @@ import type { Order } from '../../types/orders';
 const mockGetSnapshot = repos.getLatestPortfolioSnapshot as jest.Mock;
 const mockGetCurve = repos.getPortfolioEquityCurve as jest.Mock;
 const mockGetOrders = repos.getOrdersByStrategyRun as jest.Mock;
+const mockGetAllOrders = repos.getAllOrders as jest.Mock;
 
 function mockReq(overrides: Partial<Request> = {}): Request {
   return {
@@ -107,25 +108,30 @@ describe('getEquityCurve', () => {
 });
 
 describe('getOrders', () => {
-  it('returns 400 when strategyRunId is missing', async () => {
+  it('calls getAllOrders when strategyRunId is absent', async () => {
+    const orders = [{ id: 'o1' } as Order];
+    mockGetAllOrders.mockResolvedValue(orders);
     const res = mockRes();
     await getOrders(mockReq(), res);
-    expect(res.status).toHaveBeenCalledWith(400);
+    expect(mockGetAllOrders).toHaveBeenCalled();
+    expect(mockGetOrders).not.toHaveBeenCalled();
+    expect(res.json).toHaveBeenCalledWith(orders);
   });
 
-  it('calls getOrdersByStrategyRun with the provided ID', async () => {
+  it('calls getOrdersByStrategyRun when strategyRunId is provided', async () => {
     const orders = [{ id: 'o1' } as Order];
     mockGetOrders.mockResolvedValue(orders);
     const res = mockRes();
     await getOrders(mockReq({ query: { strategyRunId: 'run-1' } as never }), res);
     expect(mockGetOrders).toHaveBeenCalledWith('run-1');
+    expect(mockGetAllOrders).not.toHaveBeenCalled();
     expect(res.json).toHaveBeenCalledWith(orders);
   });
 
   it('returns 500 on repository error', async () => {
-    mockGetOrders.mockRejectedValue(new Error('fail'));
+    mockGetAllOrders.mockRejectedValue(new Error('fail'));
     const res = mockRes();
-    await getOrders(mockReq({ query: { strategyRunId: 'run-1' } as never }), res);
+    await getOrders(mockReq(), res);
     expect(res.status).toHaveBeenCalledWith(500);
   });
 });

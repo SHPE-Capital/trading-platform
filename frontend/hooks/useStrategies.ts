@@ -2,9 +2,6 @@
  * hooks/useStrategies.ts
  *
  * Custom React hook for fetching and managing strategy run state.
- *
- * Inputs:  Optional poll interval.
- * Outputs: { runs, isLoading, error, refetch, startStrategy, stopStrategy }
  */
 
 "use client";
@@ -22,11 +19,6 @@ interface UseStrategiesResult {
   stopStrategy: (id: string) => Promise<void>;
 }
 
-/**
- * Fetches strategy runs and provides start/stop actions.
- * @param pollIntervalMs - Poll interval in ms (0 = no polling)
- * @returns UseStrategiesResult
- */
 export function useStrategies(pollIntervalMs = 15_000): UseStrategiesResult {
   const [runs, setRuns] = useState<StrategyRun[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -57,8 +49,12 @@ export function useStrategies(pollIntervalMs = 15_000): UseStrategiesResult {
   }, [fetchData]);
 
   const stopStrategy = useCallback(async (id: string) => {
-    await stopStrategyRun(id);
-    await fetchData();
+    try {
+      await stopStrategyRun(id);
+      await fetchData();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to stop strategy");
+    }
   }, [fetchData]);
 
   return { runs, isLoading, error, refetch: fetchData, startStrategy, stopStrategy };

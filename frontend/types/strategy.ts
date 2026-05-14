@@ -20,6 +20,10 @@ export interface StrategyRun {
   name: string;
   config: Record<string, unknown>;
   status: StrategyRunStatus;
+  /** True when the strategy is actively registered in the engine orchestrator.
+   *  A run can have status "running" in the DB but isLive=false after a server
+   *  restart — treat those as stale and allow cleanup. */
+  isLive?: boolean;
   executionMode: string;
   startedAt?: number;
   stoppedAt?: number;

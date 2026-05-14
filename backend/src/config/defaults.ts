@@ -3,9 +3,6 @@
  *
  * Default runtime configuration values used when strategy or engine
  * configs are not explicitly overridden. These are safe starting values.
- *
- * Inputs:  env module values.
- * Outputs: Default config objects consumed by core engine and strategies.
  */
 
 import { env } from "./env";
@@ -48,7 +45,7 @@ export const BACKTEST_RISK_CONFIG: RiskConfig = {
 export const DEFAULT_HEARTBEAT_INTERVAL_MS = 5_000;
 
 /** Default portfolio snapshot interval (ms) */
-export const DEFAULT_SNAPSHOT_INTERVAL_MS = 30_000;
+export const DEFAULT_SNAPSHOT_INTERVAL_MS = 60_000;
 
 /** Default simulated fill delay for backtest/paper modes (ms) */
 export const DEFAULT_SIMULATED_FILL_DELAY_MS = 100;

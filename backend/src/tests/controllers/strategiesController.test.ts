@@ -38,8 +38,8 @@ import type { StrategyRun } from '../../types/strategy';
 
 const mockInsertRun = repos.insertStrategyRun as jest.Mock;
 const mockUpdateRun = repos.updateStrategyRun as jest.Mock;
-
 const mockGetAll = repos.getAllStrategyRuns as jest.Mock;
+const mockGetById = repos.getStrategyRunById as jest.Mock;
 
 function mockReq(overrides: Partial<Request> = {}): Request {
   return {
@@ -78,7 +78,7 @@ describe('listStrategyRuns', () => {
     mockGetAll.mockResolvedValue(runs);
     const res = mockRes();
     await listStrategyRuns(mockReq(), res);
-    expect(res.json).toHaveBeenCalledWith(runs);
+    expect(res.json).toHaveBeenCalledWith([{ id: 'run-1', isLive: false }]);
   });
 
   it('returns 500 on error', async () => {
@@ -90,19 +90,37 @@ describe('listStrategyRuns', () => {
 });
 
 describe('getStrategyRun', () => {
-  it('returns the matching run by id', async () => {
-    const runs = [{ id: 'run-1' }, { id: 'run-2' }] as StrategyRun[];
-    mockGetAll.mockResolvedValue(runs);
-    const res = mockRes();
-    await getStrategyRun(mockReq({ params: { id: 'run-2' } as never }), res);
-    expect(res.json).toHaveBeenCalledWith(runs[1]);
-  });
-
   it('returns 404 when run not found', async () => {
-    mockGetAll.mockResolvedValue([]);
+    mockGetById.mockResolvedValue(null);
     const res = mockRes();
     await getStrategyRun(mockReq({ params: { id: 'missing' } as never }), res);
     expect(res.status).toHaveBeenCalledWith(404);
+  });
+
+  it('returns run with isLive=false when orchestrator does not have it', async () => {
+    const run = { id: 'run-1', status: 'running' } as StrategyRun;
+    mockGetById.mockResolvedValue(run);
+    const orchestrator = { hasStrategy: jest.fn().mockReturnValue(false) };
+    const res = mockRes();
+    await getStrategyRun(ctxReq({ orchestrator }, { params: { id: 'run-1' } as never }), res);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ id: 'run-1', isLive: false }));
+  });
+
+  it('returns run with isLive=true when orchestrator has it', async () => {
+    const run = { id: 'run-1', status: 'running' } as StrategyRun;
+    mockGetById.mockResolvedValue(run);
+    const orchestrator = { hasStrategy: jest.fn().mockReturnValue(true) };
+    const res = mockRes();
+    await getStrategyRun(ctxReq({ orchestrator }, { params: { id: 'run-1' } as never }), res);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ id: 'run-1', isLive: true }));
+  });
+
+  it('returns isLive=false when no orchestrator in context', async () => {
+    const run = { id: 'run-1', status: 'stopped' } as StrategyRun;
+    mockGetById.mockResolvedValue(run);
+    const res = mockRes();
+    await getStrategyRun(mockReq({ params: { id: 'run-1' } as never }), res);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ id: 'run-1', isLive: false }));
   });
 });
 
@@ -132,6 +150,23 @@ describe('startStrategyRun: with orchestrator', () => {
       res,
     );
     expect(res.status).toHaveBeenCalledWith(400);
+  });
+
+  it('returns 409 when a strategy with the same config ID is already running', async () => {
+    const orchestrator = {
+      registerStrategy: jest.fn(),
+      hasStrategyWithConfigId: jest.fn().mockReturnValue(true),
+    };
+    const res = mockRes();
+    await startStrategyRun(
+      ctxReq(
+        { orchestrator },
+        { body: { strategyType: 'pairs_trading', config: { id: 'config-uuid-1', name: 'Test Pairs', symbols: ['SPY', 'QQQ'], leg1Symbol: 'SPY', leg2Symbol: 'QQQ' } } },
+      ),
+      res,
+    );
+    expect(res.status).toHaveBeenCalledWith(409);
+    expect(orchestrator.registerStrategy).not.toHaveBeenCalled();
   });
 
   it('returns 201 with run record for a valid pairs_trading start', async () => {
@@ -166,18 +201,24 @@ describe('stopStrategyRun', () => {
     expect(res.status).toHaveBeenCalledWith(503);
   });
 
-  it('returns 404 when strategy is not currently running', async () => {
+  it('cleans up stale DB state when strategy is not in orchestrator (server restart)', async () => {
     const orchestrator = {
       deregisterStrategy: jest.fn(),
       hasStrategy: jest.fn().mockReturnValue(false),
     };
+    mockUpdateRun.mockResolvedValue(undefined);
     const res = mockRes();
     await stopStrategyRun(
       ctxReq({ orchestrator }, { params: { id: 'run-1' } } as Partial<Request>),
       res,
     );
-    expect(res.status).toHaveBeenCalledWith(404);
+    // Must NOT call deregister (strategy not in memory)
     expect(orchestrator.deregisterStrategy).not.toHaveBeenCalled();
+    // Must still update DB to stopped so the UI cleans up
+    expect(mockUpdateRun).toHaveBeenCalledWith('run-1', expect.objectContaining({ status: 'stopped' }));
+    // Returns 200 success, not 404
+    expect(res.status).not.toHaveBeenCalledWith(404);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('run-1') }));
   });
 
   it('calls orchestrator.deregisterStrategy and returns 200', async () => {
