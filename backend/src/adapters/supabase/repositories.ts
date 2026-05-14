@@ -451,7 +451,9 @@ function stableStringify(val: unknown): string {
 // Returns a stable fingerprint over the fields that define a unique backtest run.
 // Excludes id, name, description, and meta since they don't affect the simulation.
 // Includes strategyVersion so results from outdated algorithm versions are not reused.
-function backtestConfigKey(config: BacktestConfig): string {
+// Exported so the controller can compute the key without an extra DB round-trip
+// (used for in-flight dedup against concurrent identical requests).
+export function backtestConfigKey(config: BacktestConfig): string {
   return stableStringify({
     startDate: config.startDate,
     endDate: config.endDate,
@@ -462,6 +464,9 @@ function backtestConfigKey(config: BacktestConfig): string {
     strategyVersion: config.strategyVersion ?? null,
     strategyConfig: config.strategyConfig,
     riskConfig: config.riskConfig ?? null,
+    fillModel: config.fillModel ?? null,
+    riskFreeRateAnnual: config.riskFreeRateAnnual ?? 0,
+    benchmarkCurve: config.benchmarkCurve ?? null,
   });
 }
 

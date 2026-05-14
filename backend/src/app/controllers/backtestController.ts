@@ -18,6 +18,7 @@ import {
   insertBacktestOrders,
   insertBacktestFills,
   updateBacktestResultStatus,
+  backtestConfigKey,
 } from "../../adapters/supabase/repositories";
 import { BacktestEngine } from "../../core/backtest/backtestEngine";
 import { PairsStrategy } from "../../strategies/pairs/pairsStrategy";
@@ -31,6 +32,11 @@ import type { BacktestConfig, BacktestResult } from "../../types/backtest";
 // completed, without a DB round trip. Entries expire after 10 minutes.
 const CACHE_TTL_MS = 10 * 60 * 1000;
 const resultCache = new Map<string, { result: BacktestResult; expiresAt: number }>();
+
+// Tracks config fingerprints of runs that are currently executing.
+// Prevents two concurrent identical requests from both passing the DB dedup check
+// (which only sees completed runs) and running the engine twice.
+const inFlightKeys = new Set<string>();
 
 function cacheResult(result: BacktestResult): void {
   if (!result?.id) return;
@@ -121,6 +127,26 @@ export async function runBacktest(req: Request, res: Response): Promise<void> {
     return;
   }
 
+  const rc = body.riskConfig;
+  if (rc) {
+    if (rc.maxIntradayDrawdownPct != null && (rc.maxIntradayDrawdownPct <= 0 || rc.maxIntradayDrawdownPct > 1)) {
+      res.status(400).json({ error: "riskConfig.maxIntradayDrawdownPct must be between 0 (exclusive) and 1" });
+      return;
+    }
+    if (rc.cashReservePct != null && (rc.cashReservePct < 0 || rc.cashReservePct >= 1)) {
+      res.status(400).json({ error: "riskConfig.cashReservePct must be between 0 and 1 (exclusive)" });
+      return;
+    }
+    if (rc.gapBufferBps != null && rc.gapBufferBps < 0) {
+      res.status(400).json({ error: "riskConfig.gapBufferBps must be >= 0" });
+      return;
+    }
+    if (rc.spreadBufferBps != null && rc.spreadBufferBps < 0) {
+      res.status(400).json({ error: "riskConfig.spreadBufferBps must be >= 0" });
+      return;
+    }
+  }
+
   const config: BacktestConfig = {
     ...body,
     id: newId(),
@@ -140,7 +166,19 @@ export async function runBacktest(req: Request, res: Response): Promise<void> {
   // Run backtest asynchronously. The outer try/catch ensures any unexpected
   // rejection (including DB connectivity failures in the dedup check) always
   // resolves the SSE channel so the client does not hang indefinitely.
+  const configKey = backtestConfigKey(config);
+
   setImmediate(async () => {
+    // Guard against concurrent identical requests both slipping through the DB
+    // dedup check (which only sees completed runs). The second request signals
+    // completion immediately so its SSE client is not left hanging.
+    if (!force && inFlightKeys.has(configKey)) {
+      logger.info("Backtest deduplicated (in-flight)", { id: config.id, configKey });
+      backtestStreamManager.complete(config.id);
+      return;
+    }
+
+    inFlightKeys.add(configKey);
     try {
       // Dedup: if an identical config has already been run, serve that result instead.
       // Skipped when force=true (explicit re-run requested by the user).
@@ -203,6 +241,8 @@ export async function runBacktest(req: Request, res: Response): Promise<void> {
       // Catch-all: guarantees the SSE channel is always resolved
       logger.error("Backtest runner unexpected error", { id: config.id, err });
       backtestStreamManager.error(config.id, err instanceof Error ? err.message : "Backtest failed");
+    } finally {
+      inFlightKeys.delete(configKey);
     }
   });
 }
