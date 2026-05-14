@@ -15,9 +15,10 @@ export const defaultRiskBudgetState: RiskBudgetState = {
 interface Props {
   value: RiskBudgetState;
   onChange: (next: RiskBudgetState) => void;
+  orderSizeConflict?: string;
 }
 
-export default function RiskBudgetSection({ value, onChange }: Props) {
+export default function RiskBudgetSection({ value, onChange, orderSizeConflict }: Props) {
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-col gap-1">
@@ -67,7 +68,7 @@ export default function RiskBudgetSection({ value, onChange }: Props) {
             type="checkbox"
             checked={value.maxOrderNotionalPct !== null}
             onChange={(e) =>
-              onChange({ ...value, maxOrderNotionalPct: e.target.checked ? 5 : null })
+              onChange({ ...value, maxOrderNotionalPct: e.target.checked ? 10 : null })
             }
             className="rounded border-zinc-300 dark:border-zinc-600"
           />
@@ -83,6 +84,9 @@ export default function RiskBudgetSection({ value, onChange }: Props) {
             onChange={(e) => onChange({ ...value, maxOrderNotionalPct: Number(e.target.value) })}
             className={inputClass}
           />
+        )}
+        {orderSizeConflict && (
+          <p className="text-xs text-amber-600 dark:text-amber-400">{orderSizeConflict}</p>
         )}
       </div>
     </div>

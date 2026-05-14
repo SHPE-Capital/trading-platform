@@ -241,7 +241,7 @@ export class BacktestEngine {
     const periodStart = new Date(config.startDate).getTime();
     const periodEnd = new Date(config.endDate).getTime();
 
-    const baseMetrics = this._computeMetrics(equityCurve, fills, config.initialCapital, periodStart, periodEnd);
+    const baseMetrics = this._computeMetrics(equityCurve, fills, config.initialCapital);
     const analytics = computeAnalytics(
       equityCurve,
       baseMetrics.tradePnls,
@@ -320,8 +320,6 @@ export class BacktestEngine {
     equityCurve: PortfolioSnapshot[],
     fills: Fill[],
     initialCapital: number,
-    periodStart: number,
-    periodEnd: number,
   ) {
     // Trade-level FIFO lot accounting — unchanged from the prior revision.
     interface Lot { price: number; qty: number; commissionPerShare: number; }
@@ -399,8 +397,6 @@ export class BacktestEngine {
         totalTrades,
         avgWin,
         avgLoss,
-        periodStart,
-        periodEnd,
         tradePnls: pnlPerTrade,
       };
     }
@@ -425,8 +421,6 @@ export class BacktestEngine {
       totalTrades,
       avgWin,
       avgLoss,
-      periodStart,
-      periodEnd,
       tradePnls: pnlPerTrade,
     };
   }

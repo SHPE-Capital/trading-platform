@@ -13,7 +13,7 @@
 
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import type { BacktestConfig } from "../../types/api";
 import { useStrategyConfigs } from "../../hooks/useStrategyConfigs";
 import { daysAgoString } from "../../utils/dates";
@@ -82,6 +82,15 @@ export default function BacktestForm({ onSubmit, isLoading }: Props) {
         : null,
     });
   }, [selectedId, definition, strategies]);
+
+  const orderSizeConflict = useMemo(() => {
+    if (riskBudget.maxOrderNotionalPct === null) return undefined;
+    const capUsd = initialCapital * (riskBudget.maxOrderNotionalPct / 100);
+    if (tradeNotionalUsd > capUsd) {
+      return `Trade notional ($${tradeNotionalUsd.toLocaleString()}) exceeds the per-order cap ($${capUsd.toLocaleString()} at ${riskBudget.maxOrderNotionalPct}%). No orders will execute.`;
+    }
+    return undefined;
+  }, [riskBudget.maxOrderNotionalPct, tradeNotionalUsd, initialCapital]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -225,7 +234,7 @@ export default function BacktestForm({ onSubmit, isLoading }: Props) {
       {/* Portfolio Allocation */}
       <div className="flex flex-col gap-3 rounded-md border border-zinc-200 p-3 dark:border-zinc-700">
         <p className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">Portfolio Allocation</p>
-        <RiskBudgetSection value={riskBudget} onChange={setRiskBudget} />
+        <RiskBudgetSection value={riskBudget} onChange={setRiskBudget} orderSizeConflict={orderSizeConflict} />
       </div>
 
       {/* Risk Config (collapsible) */}
