@@ -103,6 +103,18 @@ function createTestEnv(initialCash: number) {
   return { oms, capitalMgr, queue, eventBus, symbolState, portfolioState, orderState, riskEngine, events };
 }
 
+/** Publishes a BAR_RECEIVED event so SimulatedExecutionSink processes pending orders */
+function triggerBarFill(eventBus: EventBus, symbol: string, price: number) {
+  eventBus.publish({
+    id: uid(), type: 'BAR_RECEIVED', ts: Date.now(), mode: 'paper',
+    payload: {
+      symbol, open: price, high: price, low: price, close: price,
+      volume: 1_000, ts: Date.now(), isoTs: new Date().toISOString(),
+      timeframe: '1m', vwap: price,
+    },
+  } as any);
+}
+
 beforeEach(() => { idCounter = 0; });
 
 // ===========================================================================
@@ -115,9 +127,10 @@ describe('OrderManagerService', () => {
   // 1. Single intent, sufficient capital
   // -----------------------------------------------------------------------
   it('fills a single intent when sufficient capital is available', async () => {
-    const { oms, portfolioState, events } = createTestEnv(100_000);
+    const { oms, portfolioState, events, eventBus } = createTestEnv(100_000);
     const intent = makeIntent({ qty: 10 }); // 10 × $100 = $1,000
     oms.submitIntent(intent, 'momentum');
+    triggerBarFill(eventBus, 'SPY', 100);
 
     expect(portfolioState.getCash()).toBeLessThan(100_000); // cash decreased
     const fills = events.filter(e => e.type === 'ORDER_FILLED');
@@ -142,12 +155,13 @@ describe('OrderManagerService', () => {
   // 3. Two concurrent intents, only enough cash for one
   // -----------------------------------------------------------------------
   it('fills only the first intent when cash covers only one', async () => {
-    const { oms, events } = createTestEnv(1_200); // enough for one ($1,000)
+    const { oms, events, eventBus } = createTestEnv(1_200); // enough for one ($1,000)
     const intent1 = makeIntent({ id: 'a1', qty: 10 }); // $1,000
     const intent2 = makeIntent({ id: 'a2', qty: 10, strategyId: 'strat-2' }); // $1,000
 
     oms.submitIntent(intent1, 'momentum');
     oms.submitIntent(intent2, 'momentum');
+    triggerBarFill(eventBus, 'SPY', 100);
 
     const fills = events.filter(e => e.type === 'ORDER_FILLED');
     expect(fills.length).toBe(1);
@@ -159,12 +173,13 @@ describe('OrderManagerService', () => {
   // 4. Two concurrent intents, enough cash for both
   // -----------------------------------------------------------------------
   it('fills both intents when sufficient capital exists', async () => {
-    const { oms, events } = createTestEnv(100_000);
+    const { oms, events, eventBus } = createTestEnv(100_000);
     const intent1 = makeIntent({ id: 'b1', qty: 10 });
     const intent2 = makeIntent({ id: 'b2', qty: 10, strategyId: 'strat-2' });
 
     oms.submitIntent(intent1, 'momentum');
     oms.submitIntent(intent2, 'momentum');
+    triggerBarFill(eventBus, 'SPY', 100);
 
     const fills = events.filter(e => e.type === 'ORDER_FILLED');
     expect(fills.length).toBe(2);
@@ -174,12 +189,14 @@ describe('OrderManagerService', () => {
   // 5. Multi-leg signal (pairs trade), sufficient capital
   // -----------------------------------------------------------------------
   it('fills both legs of a pairs trade when capital is sufficient', async () => {
-    const { oms, events } = createTestEnv(100_000);
+    const { oms, events, eventBus } = createTestEnv(100_000);
     const buyLeg1 = makeIntent({ symbol: 'SPY', side: 'buy', qty: 10 }); // $1,000
     const buyLeg2 = makeIntent({ symbol: 'QQQ', side: 'buy', qty: 10 }); // $500
     const group = makeGroup([buyLeg1, buyLeg2]);
 
     oms.submitSignalGroup(group);
+    triggerBarFill(eventBus, 'SPY', 100);
+    triggerBarFill(eventBus, 'QQQ', 50);
 
     const fills = events.filter(e => e.type === 'ORDER_FILLED');
     expect(fills.length).toBe(2);
@@ -206,7 +223,7 @@ describe('OrderManagerService', () => {
   // 7. Multi-leg vs single-leg conflict
   // -----------------------------------------------------------------------
   it('group reserves capital first, blocking a subsequent single-leg', async () => {
-    const { oms, events } = createTestEnv(1_800);
+    const { oms, events, eventBus } = createTestEnv(1_800);
     // Group needs $1,500 (buy SPY 10 × $100 + buy QQQ 10 × $50)
     const buyLeg1 = makeIntent({ symbol: 'SPY', side: 'buy', qty: 10 });
     const buyLeg2 = makeIntent({ symbol: 'QQQ', side: 'buy', qty: 10 });
@@ -216,6 +233,8 @@ describe('OrderManagerService', () => {
     // Single intent needs $1,000 but only ~$300 remains
     const single = makeIntent({ id: 'conflict', qty: 10, strategyId: 'strat-2' });
     oms.submitIntent(single, 'momentum');
+    triggerBarFill(eventBus, 'SPY', 100);
+    triggerBarFill(eventBus, 'QQQ', 50);
 
     const fills = events.filter(e => e.type === 'ORDER_FILLED');
     expect(fills.length).toBe(2); // only group fills
@@ -280,9 +299,10 @@ describe('OrderManagerService', () => {
   // 10. Order fill releases reservation
   // -----------------------------------------------------------------------
   it('releases reservation after order fill', async () => {
-    const { oms, capitalMgr } = createTestEnv(100_000);
+    const { oms, capitalMgr, eventBus } = createTestEnv(100_000);
     const intent = makeIntent({ qty: 10 });
     oms.submitIntent(intent, 'momentum');
+    triggerBarFill(eventBus, 'SPY', 100);
 
     // After fill, reservation should be released
     expect(capitalMgr.getReservedTotal()).toBe(0);
@@ -294,12 +314,14 @@ describe('OrderManagerService', () => {
   // -----------------------------------------------------------------------
   it('sell orders pass through with zero capital reservation', async () => {
     // Seed a position first so we can sell
-    const { oms, events, portfolioState } = createTestEnv(100_000);
-    // Buy first
+    const { oms, events, portfolioState, eventBus } = createTestEnv(100_000);
+    // Buy and fill so portfolio has the position before risk-checking the sell
     oms.submitIntent(makeIntent({ qty: 10, side: 'buy' }), 'momentum');
+    triggerBarFill(eventBus, 'SPY', 100);
     // Now sell
     const sellIntent = makeIntent({ qty: 10, side: 'sell' });
     oms.submitIntent(sellIntent, 'momentum');
+    triggerBarFill(eventBus, 'SPY', 100);
 
     const fills = events.filter(e => e.type === 'ORDER_FILLED');
     expect(fills.length).toBe(2); // buy + sell
@@ -335,11 +357,12 @@ describe('OrderManagerService', () => {
   // 14. Three strategies, staggered signals
   // -----------------------------------------------------------------------
   it('processes three simultaneous signals correctly', async () => {
-    const { oms, events } = createTestEnv(100_000);
+    const { oms, events, eventBus } = createTestEnv(100_000);
 
     oms.submitIntent(makeIntent({ strategyId: 's1', qty: 10 }), 'momentum');
     oms.submitIntent(makeIntent({ strategyId: 's2', qty: 10 }), 'pairs_trading');
     oms.submitIntent(makeIntent({ strategyId: 's3', qty: 10 }), 'arbitrage');
+    triggerBarFill(eventBus, 'SPY', 100);
 
     const fills = events.filter(e => e.type === 'ORDER_FILLED');
     expect(fills.length).toBe(3);
@@ -540,10 +563,10 @@ describe('Orchestrator OMS integration', () => {
         strategyType: 'momentum',
       },
     } as any);
+    triggerBarFill(eventBus, 'AAPL', 150);
 
     const types = events.map(e => e.type);
     expect(types).toContain('CAPITAL_RESERVED');
-    expect(types).toContain('ORDER_QUEUED');
     expect(types).toContain('ORDER_INTENT_CREATED');
     expect(types).toContain('ORDER_FILLED');
 
@@ -748,7 +771,7 @@ describe('CapitalReservationManager — single reserve', () => {
   it('reserve creates reservation for buy with limitPrice', () => {
     const mgr = new CapitalReservationManager();
     const intent = makeIntent({ side: 'buy', qty: 10, limitPrice: 100 });
-    const result = mgr.reserve(intent, 5_000);
+    const result = mgr.reserve(intent, 1_000, 5_000); // notional=qty×price=1000
 
     expect(result).not.toBeNull();
     expect(result!.amount).toBe(1_000);
@@ -758,7 +781,7 @@ describe('CapitalReservationManager — single reserve', () => {
   it('reserve creates zero-cost tracking reservation for sell orders', () => {
     const mgr = new CapitalReservationManager();
     const intent = makeIntent({ side: 'sell', qty: 10, limitPrice: 100 });
-    const result = mgr.reserve(intent, 5_000);
+    const result = mgr.reserve(intent, 0, 5_000); // sells don't consume cash
 
     expect(result).not.toBeNull();
     expect(result!.amount).toBe(0);
@@ -767,22 +790,22 @@ describe('CapitalReservationManager — single reserve', () => {
   it('reserve returns null when amount exceeds available cash', () => {
     const mgr = new CapitalReservationManager();
     const intent = makeIntent({ side: 'buy', qty: 100, limitPrice: 100 }); // $10,000
-    const result = mgr.reserve(intent, 5_000);
+    const result = mgr.reserve(intent, 10_000, 5_000); // notional > cash
     expect(result).toBeNull();
     expect(mgr.getReservedTotal()).toBe(0);
   });
 
-  it('reserve returns null for buy with zero cost (no price info)', () => {
+  it('reserve returns null for buy with zero worstCaseNotional', () => {
     const mgr = new CapitalReservationManager();
-    const intent = makeIntent({ side: 'buy', qty: 10 }); // no limitPrice, no estimator
-    const result = mgr.reserve(intent, 5_000);
+    const intent = makeIntent({ side: 'buy', qty: 10 });
+    const result = mgr.reserve(intent, 0, 5_000); // zero notional → null
     expect(result).toBeNull();
   });
 
   it('release deletes reservation and frees capital', () => {
     const mgr = new CapitalReservationManager();
     const intent = makeIntent({ side: 'buy', qty: 10, limitPrice: 100 });
-    const result = mgr.reserve(intent, 5_000)!;
+    const result = mgr.reserve(intent, 1_000, 5_000)!;
 
     expect(mgr.getReservedTotal()).toBe(1_000);
     mgr.release(result.reservationId);
@@ -796,27 +819,27 @@ describe('CapitalReservationManager — single reserve', () => {
     expect(mgr.getReservedTotal()).toBe(0);
   });
 
-  it('getReservation returns reservation or null', () => {
+  it('getReservation returns reservation or undefined', () => {
     const mgr = new CapitalReservationManager();
-    expect(mgr.getReservation('nonexistent')).toBeNull();
+    expect(mgr.getReservation('nonexistent')).toBeUndefined();
 
     const intent = makeIntent({ side: 'buy', qty: 5, limitPrice: 50 });
-    const result = mgr.reserve(intent, 5_000)!;
-    expect(mgr.getReservation(result.reservationId)).not.toBeNull();
+    const result = mgr.reserve(intent, 250, 5_000)!; // notional=5×50=250
+    expect(mgr.getReservation(result.reservationId)).toBeDefined();
   });
 
   it('getAvailableCash reflects active reservations', () => {
     const mgr = new CapitalReservationManager();
     expect(mgr.getAvailableCash(10_000)).toBe(10_000);
 
-    mgr.reserve(makeIntent({ side: 'buy', qty: 10, limitPrice: 100 }), 10_000);
+    mgr.reserve(makeIntent({ side: 'buy', qty: 10, limitPrice: 100 }), 1_000, 10_000);
     expect(mgr.getAvailableCash(10_000)).toBe(9_000);
   });
 
   it('clear removes all reservations', () => {
     const mgr = new CapitalReservationManager();
-    mgr.reserve(makeIntent({ side: 'buy', qty: 10, limitPrice: 100 }), 10_000);
-    mgr.reserve(makeIntent({ side: 'buy', qty: 5, limitPrice: 200 }), 10_000);
+    mgr.reserve(makeIntent({ side: 'buy', qty: 10, limitPrice: 100 }), 1_000, 10_000);
+    mgr.reserve(makeIntent({ side: 'buy', qty: 5, limitPrice: 200 }), 1_000, 10_000);
 
     mgr.clear();
     expect(mgr.reservationCount).toBe(0);

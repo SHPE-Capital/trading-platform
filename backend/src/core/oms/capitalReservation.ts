@@ -214,8 +214,8 @@ export class CapitalReservationManager {
    * @param reservationId - Reservation ID to look up
    * @returns CapitalReservation or null
    */
-  getReservation(reservationId: UUID): CapitalReservation | null {
-    return this._reservations.get(reservationId) ?? null;
+  getReservation(reservationId: UUID): CapitalReservation | undefined {
+    return this._reservations.get(reservationId);
   }
 
   /**
