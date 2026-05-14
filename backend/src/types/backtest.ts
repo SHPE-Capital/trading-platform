@@ -115,10 +115,16 @@ export interface BacktestResult {
    * Used to draw the equity curve chart in the frontend.
    */
   equity_curve: PortfolioSnapshot[];
-  /** All orders placed during the backtest */
-  orders: Order[];
-  /** All fills during the backtest */
-  fills: Fill[];
+  /**
+   * All orders placed during the backtest. Omitted from the in-memory result
+   * cache and the main GET /api/backtests/:id response (served from the cache
+   * for 10 minutes after completion) to avoid OOM on long runs. Available in
+   * the DB-backed response after the cache window expires, or via a dedicated
+   * orders/fills endpoint when one is added.
+   */
+  orders?: Order[];
+  /** All fills during the backtest. Subject to same caching caveat as orders. */
+  fills?: Fill[];
   /** Number of events processed */
   event_count: number;
   /**

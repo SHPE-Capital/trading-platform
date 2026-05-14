@@ -57,11 +57,11 @@ async function main(): Promise<void> {
   await insertBacktestResult(result);
   logger.info("runtime/backtest: summary persisted", { id: result.id, event_count: result.event_count });
 
-  await insertBacktestOrders(result.id, result.orders);
-  logger.info("runtime/backtest: orders persisted", { count: result.orders.length });
+  await insertBacktestOrders(result.id, result.orders ?? []);
+  logger.info("runtime/backtest: orders persisted", { count: result.orders?.length ?? 0 });
 
-  await insertBacktestFills(result.id, result.fills);
-  logger.info("runtime/backtest: fills persisted", { count: result.fills.length });
+  await insertBacktestFills(result.id, result.fills ?? []);
+  logger.info("runtime/backtest: fills persisted", { count: result.fills?.length ?? 0 });
 
   logger.info("runtime/backtest: result persisted", { id: result.id });
 }

@@ -52,6 +52,12 @@ export interface BacktestConfig {
   /** Algorithm version of the saved strategy at run time */
   strategyVersion?: number;
   description?: string;
+  /** Annualized risk-free rate for Sharpe/Sortino (default 0) */
+  riskFreeRateAnnual?: number;
+  /** Optional benchmark equity/return series — must be chronologically ordered */
+  benchmarkCurve?: { ts: number; value: number }[];
+  /** Fill model override; merged with server defaults when supplied */
+  fillModel?: Record<string, unknown>;
   /** Risk configuration override merged with server defaults for this run */
   riskConfig?: {
     gapBufferBps?: number;

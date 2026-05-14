@@ -224,8 +224,8 @@ export async function runBacktest(req: Request, res: Response): Promise<void> {
           await insertBacktestResult(result);
           resultInserted = true;
           // Orders must complete before fills: backtest_fills.order_id FK references backtest_orders.id
-          await insertBacktestOrders(result.id, result.orders);
-          await insertBacktestFills(result.id, result.fills);
+          await insertBacktestOrders(result.id, result.orders ?? []);
+          await insertBacktestFills(result.id, result.fills ?? []);
           logger.info("Backtest completed and saved", { id: config.id });
         } catch (dbErr) {
           logger.warn("Backtest result saved to cache but DB persist failed", { id: config.id, err: dbErr });
