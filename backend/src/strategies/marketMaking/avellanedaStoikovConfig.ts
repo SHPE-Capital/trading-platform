@@ -76,6 +76,7 @@ export const DEFAULT_AVELLANEDA_STOIKOV_CONFIG: Omit<
   killSwitchInventoryMult: 1.5,
 
   minObservations: 10,
+  sharpeConvention: "intraday" as const,
 };
 
 // ------------------------------------------------------------------

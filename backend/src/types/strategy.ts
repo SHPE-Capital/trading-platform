@@ -60,6 +60,14 @@ export interface BaseStrategyConfig {
   sizerType?: SizerType;
   /** Per-strategy capital allocation registered with the risk engine at startup */
   riskBudget?: StrategyRiskBudget;
+  /**
+   * Which Sharpe/Sortino annualization convention to use when this strategy
+   * is backtested. "daily" (default) resamples the equity curve to one
+   * observation per calendar day — appropriate for directional strategies.
+   * "intraday" uses per-bar returns — appropriate for HFT/market-making
+   * strategies (e.g. Avellaneda-Stoikov) whose risk unit is the bar interval.
+   */
+  sharpeConvention?: "daily" | "intraday";
   /** Optional description */
   description?: string;
   /** Optional custom metadata */

@@ -115,9 +115,11 @@ export interface PerformanceMetrics {
   totalReturnPct: number;
   /** Maximum drawdown as a fraction */
   maxDrawdown: number;
-  /** Sharpe ratio (annualized) */
+  /** Sharpe ratio (annualized). Convention is daily-resampled for directional
+   *  strategies and per-bar for intraday/HFT strategies; set by the strategy's
+   *  `sharpeConvention` field. */
   sharpeRatio?: number;
-  /** Sortino ratio (annualized) */
+  /** Sortino ratio (annualized). Same convention as sharpeRatio. */
   sortinoRatio?: number;
   /** Calmar ratio */
   calmarRatio?: number;

@@ -235,6 +235,8 @@ export interface AvellanedaStoikovConfig {
 
   /** Optional human-readable description carried into BaseStrategyConfig. */
   description?: string;
+  /** Sharpe convention for backtests. Always "intraday" for market making. */
+  sharpeConvention?: "intraday";
 }
 
 // ------------------------------------------------------------------

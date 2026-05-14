@@ -238,15 +238,21 @@ export class BacktestEngine {
 
     const fills = orderState.getAllOrders().flatMap((o) => o.fills);
 
-    const baseMetrics = this._computeMetrics(equityCurve, fills, config.initialCapital, startedAt, completedAt);
+    const periodStart = new Date(config.startDate).getTime();
+    const periodEnd = new Date(config.endDate).getTime();
+
+    const baseMetrics = this._computeMetrics(equityCurve, fills, config.initialCapital, periodStart, periodEnd);
     const analytics = computeAnalytics(
       equityCurve,
       baseMetrics.tradePnls,
-      startedAt,
-      completedAt,
+      periodStart,
+      periodEnd,
       config.riskFreeRateAnnual ?? 0,
       config.benchmarkCurve,
     );
+
+    const useIntraday =
+      (config.strategyConfig as { sharpeConvention?: string }).sharpeConvention === "intraday";
 
     const metrics = {
       totalReturn: baseMetrics.totalReturn,
@@ -256,12 +262,12 @@ export class BacktestEngine {
       totalTrades: baseMetrics.totalTrades,
       avgWin: baseMetrics.avgWin,
       avgLoss: baseMetrics.avgLoss,
-      sharpeRatio: analytics.sharpeRatio,
-      sortinoRatio: analytics.sortinoRatio,
+      sharpeRatio: useIntraday ? analytics.intradaySharpeRatio : analytics.sharpeRatio,
+      sortinoRatio: useIntraday ? analytics.intradaySortinoRatio : analytics.sortinoRatio,
       calmarRatio: analytics.calmarRatio,
       profitFactor: analytics.profitFactor,
-      periodStart: startedAt,
-      periodEnd: completedAt,
+      periodStart,
+      periodEnd,
       meta: {
         annualizedReturn: analytics.annualizedReturn,
         annualizedVol: analytics.annualizedVol,
