@@ -154,9 +154,9 @@ describe('BacktestEngine + fill model', () => {
     ]);
 
     expect(result.fills).toHaveLength(1);
-    expect(result.fills[0].qty).toBe(100);
+    expect(result.fills![0].qty).toBe(100);
     expect(result.orders).toHaveLength(1);
-    expect(['expired', 'partial_fill', 'canceled', 'filled']).toContain(result.orders[0].status);
+    expect(['expired', 'partial_fill', 'canceled', 'filled']).toContain(result.orders![0].status);
   });
 
   it('rejects a market buy when bar volume is zero (halt bar)', async () => {
@@ -176,7 +176,7 @@ describe('BacktestEngine + fill model', () => {
     ]);
     expect(result.fills).toHaveLength(0);
     expect(result.orders).toHaveLength(1);
-    expect(result.orders[0].status).toBe('rejected');
+    expect(result.orders![0].status).toBe('rejected');
   });
 });
 

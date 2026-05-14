@@ -194,7 +194,7 @@ describe('run(): result structure', () => {
 
 describe('_computeMetrics', () => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let computeMetrics: (curve: PortfolioSnapshot[], fills: Fill[], initial: number, start: number, end: number) => any;
+  let computeMetrics: (curve: PortfolioSnapshot[], fills: Fill[], initial: number) => any;
 
   beforeEach(() => {
     const engine = new BacktestEngine();
@@ -204,7 +204,7 @@ describe('_computeMetrics', () => {
   });
 
   it('empty equity curve returns all-zero metrics', () => {
-    const m = computeMetrics([], [], 100_000, 0, 100);
+    const m = computeMetrics([], [], 100_000);
     expect(m.totalReturn).toBe(0);
     expect(m.totalReturnPct).toBe(0);
     expect(m.maxDrawdown).toBe(0);
@@ -212,9 +212,15 @@ describe('_computeMetrics', () => {
     expect(m.totalTrades).toBe(0);
   });
 
+  it('does not include periodStart or periodEnd (removed as dead fields)', () => {
+    const m = computeMetrics([makeSnap(100_000)], [], 100_000);
+    expect(m).not.toHaveProperty('periodStart');
+    expect(m).not.toHaveProperty('periodEnd');
+  });
+
   it('computes totalReturn and totalReturnPct correctly', () => {
     const curve = [makeSnap(110_000)];
-    const m = computeMetrics(curve, [], 100_000, 0, 1);
+    const m = computeMetrics(curve, [], 100_000);
     expect(m.totalReturn).toBe(10_000);
     expect(m.totalReturnPct).toBeCloseTo(0.1, 5);
   });
@@ -222,13 +228,13 @@ describe('_computeMetrics', () => {
   it('computes maxDrawdown across equity curve', () => {
     // Peak at 110k, drops to 90k → drawdown = 20k/110k ≈ 18.18%
     const curve = [makeSnap(110_000), makeSnap(90_000), makeSnap(95_000)];
-    const m = computeMetrics(curve, [], 100_000, 0, 1);
+    const m = computeMetrics(curve, [], 100_000);
     expect(m.maxDrawdown).toBeCloseTo(20_000 / 110_000, 4);
   });
 
   it('no drawdown when equity only increases', () => {
     const curve = [makeSnap(100_000), makeSnap(105_000), makeSnap(110_000)];
-    const m = computeMetrics(curve, [], 100_000, 0, 1);
+    const m = computeMetrics(curve, [], 100_000);
     expect(m.maxDrawdown).toBe(0);
   });
 
@@ -239,7 +245,7 @@ describe('_computeMetrics', () => {
       makeFill('AAPL', 'buy', 5, 200),   // buy at 200
       makeFill('AAPL', 'sell', 5, 180),  // sell at 180 → pnl = -100
     ];
-    const m = computeMetrics([makeSnap(100_000)], fills, 100_000, 0, 1);
+    const m = computeMetrics([makeSnap(100_000)], fills, 100_000);
     expect(m.totalTrades).toBe(2);
     expect(m.winRate).toBe(0.5);
     expect(m.avgWin).toBeCloseTo(100, 1);
@@ -251,7 +257,7 @@ describe('_computeMetrics', () => {
       makeFill('SPY', 'buy', 10, 100),
       makeFill('SPY', 'sell', 10, 120),
     ];
-    const m = computeMetrics([makeSnap(102_000)], fills, 100_000, 0, 1);
+    const m = computeMetrics([makeSnap(102_000)], fills, 100_000);
     expect(m.winRate).toBe(1);
     expect(m.totalTrades).toBe(1);
   });
@@ -261,7 +267,7 @@ describe('_computeMetrics', () => {
       makeFill('SPY', 'sell', 10, 100), // short at 100
       makeFill('SPY', 'buy', 10, 80),   // cover at 80 → pnl = (100-80)*10 = 200
     ];
-    const m = computeMetrics([makeSnap(100_200)], fills, 100_000, 0, 1);
+    const m = computeMetrics([makeSnap(100_200)], fills, 100_000);
     expect(m.totalTrades).toBe(1);
     expect(m.winRate).toBe(1);
     expect(m.avgWin).toBeCloseTo(200, 1);
@@ -272,7 +278,7 @@ describe('_computeMetrics', () => {
       makeFill('SPY', 'buy', 10, 100),
       makeFill('SPY', 'sell', 10, 90),  // pnl = -100
     ];
-    const m = computeMetrics([makeSnap(99_000)], fills, 100_000, 0, 1);
+    const m = computeMetrics([makeSnap(99_000)], fills, 100_000);
     expect(m.winRate).toBe(0);
     expect(m.avgLoss).toBeCloseTo(-100, 1);
   });
@@ -337,7 +343,7 @@ describe('BacktestEngine: terminal pending order cleanup', () => {
     );
 
     expect(result.orders).toHaveLength(1);
-    const order = result.orders[0];
+    const order = result.orders![0];
     // Must NOT remain "submitted" — that was the bug.
     expect(order.status).not.toBe('submitted');
     // Acceptable terminal states for an IOC intent that never had a next-bar
@@ -357,5 +363,146 @@ describe('BacktestEngine: terminal pending order cleanup', () => {
     // No fill ever occurred → equity stays at initialCapital throughout.
     expect(result.fills).toHaveLength(0);
     result.equity_curve.forEach((snap) => expect(snap.equity).toBe(100_000));
+  });
+});
+
+// ------------------------------------------------------------------
+// Simulated period timestamps
+// ------------------------------------------------------------------
+
+describe('run(): metrics.periodStart and metrics.periodEnd reflect simulated dates', () => {
+  it('periodStart equals config.startDate parsed to epoch ms', async () => {
+    const config = makeConfig({
+      startDate: '2023-01-01T00:00:00Z',
+      endDate:   '2023-12-31T23:59:59Z',
+    });
+    const result = await makeEngineWithBars([]).run(config, () => []);
+    expect(result.metrics.periodStart).toBe(new Date('2023-01-01T00:00:00Z').getTime());
+  });
+
+  it('periodEnd equals config.endDate parsed to epoch ms', async () => {
+    const config = makeConfig({
+      startDate: '2023-01-01T00:00:00Z',
+      endDate:   '2023-12-31T23:59:59Z',
+    });
+    const result = await makeEngineWithBars([]).run(config, () => []);
+    expect(result.metrics.periodEnd).toBe(new Date('2023-12-31T23:59:59Z').getTime());
+  });
+
+  it('periodStart and periodEnd are the simulated period, not wall-clock (differ by ~1 year)', async () => {
+    const config = makeConfig({
+      startDate: '2023-01-01T00:00:00Z',
+      endDate:   '2024-01-01T00:00:00Z',
+    });
+    const result = await makeEngineWithBars([]).run(config, () => []);
+    const spanMs = result.metrics.periodEnd - result.metrics.periodStart;
+    const oneYearMs = 365 * 24 * 3_600_000;
+    // Simulated span is ~1 year; wall-clock run takes milliseconds.
+    expect(spanMs).toBeGreaterThan(oneYearMs * 0.99);
+    expect(spanMs).toBeLessThan(oneYearMs * 1.01);
+  });
+});
+
+// ------------------------------------------------------------------
+// sharpeConvention routing
+// ------------------------------------------------------------------
+
+const DAY_MS = 24 * 3_600_000;
+
+/**
+ * Produces a config whose strategyConfig carries the given sharpeConvention.
+ * Bars are spaced 1 minute apart within a single UTC day so daily resampling
+ * yields 0 daily return observations (< MIN_PERIODS_FOR_RATIOS). Only the
+ * per-bar path can produce a defined Sharpe in this scenario.
+ */
+function makeIntradayConfig(sharpeConvention?: 'daily' | 'intraday'): BacktestConfig {
+  const base = makeConfig();
+  return {
+    ...base,
+    strategyConfig: {
+      ...base.strategyConfig,
+      ...(sharpeConvention !== undefined && { sharpeConvention }),
+    },
+  };
+}
+
+/**
+ * Strategy that emits a buy signal on the first bar so subsequent bars mark
+ * the position to market, creating equity variance across bars.
+ */
+function makeFirstBarBuyStrategy(symbol: string, firstBarTs: number): IStrategy {
+  return {
+    id: 'first-bar-strat' as UUID,
+    type: 'pairs_trading',
+    config: {
+      id: 'first-bar-strat' as UUID,
+      name: 'First bar buyer',
+      type: 'pairs_trading',
+      symbols: [symbol],
+      rollingWindowMs: 60_000,
+      maxPositionSizeUsd: 100_000,
+      cooldownMs: 0,
+      enabled: true,
+    },
+    start: () => {},
+    stop: () => {},
+    evaluate: (ctx): StrategySignal | null => {
+      const bar = ctx.symbolState.get(symbol)?.latestBar;
+      if (!bar || bar.ts !== firstBarTs) return null;
+      return {
+        id: 'sig-buy' as UUID,
+        strategyId: 'first-bar-strat',
+        strategyType: 'pairs_trading',
+        symbol,
+        direction: 'long',
+        qty: 10,
+        triggerLabel: 'first-bar',
+        ts: bar.ts,
+      };
+    },
+  };
+}
+
+describe('run(): sharpeConvention routing', () => {
+  // Bars are spaced 1 minute apart within one UTC day.
+  // Daily resampling → ≤ 1 daily observation → periodCount = 0 → no daily Sharpe.
+  // Per-bar returns have variance from MTM price changes → per-bar Sharpe is defined.
+  const BASE_TS = DAY_MS * 19_000; // arbitrary epoch anchored to a UTC day boundary
+  const barPrices = [100, 101, 99, 102, 98, 103, 97, 104, 96, 105,
+                     104, 103, 102, 101, 100, 101, 102, 103, 104, 105];
+  const intradayBars = barPrices.map((price, i) =>
+    makeBar('SPY', BASE_TS + i * 60_000, price),
+  );
+
+  it('no sharpeConvention → metrics.sharpeRatio is undefined when only 1 calendar day of data', async () => {
+    const engine = makeEngineWithBars(intradayBars);
+    const result = await engine.run(
+      makeIntradayConfig(),
+      () => [makeFirstBarBuyStrategy('SPY', BASE_TS)],
+    );
+    // < 4 daily observations → daily Sharpe undefined
+    expect(result.metrics.sharpeRatio).toBeUndefined();
+  });
+
+  it('sharpeConvention "intraday" → metrics.sharpeRatio is defined from per-bar returns', async () => {
+    const engine = makeEngineWithBars(intradayBars);
+    const result = await engine.run(
+      makeIntradayConfig('intraday'),
+      () => [makeFirstBarBuyStrategy('SPY', BASE_TS)],
+    );
+    // Per-bar returns have variance → intraday Sharpe is defined
+    expect(result.metrics.sharpeRatio).toBeDefined();
+    expect(typeof result.metrics.sharpeRatio).toBe('number');
+  });
+
+  it('sharpeConvention "daily" behaves identically to omitting it', async () => {
+    const engine1 = makeEngineWithBars(intradayBars);
+    const engine2 = makeEngineWithBars(intradayBars);
+    const [r1, r2] = await Promise.all([
+      engine1.run(makeIntradayConfig('daily'), () => [makeFirstBarBuyStrategy('SPY', BASE_TS)]),
+      engine2.run(makeIntradayConfig(),        () => [makeFirstBarBuyStrategy('SPY', BASE_TS)]),
+    ]);
+    expect(r1.metrics.sharpeRatio).toBe(r2.metrics.sharpeRatio);
+    expect(r1.metrics.sortinoRatio).toBe(r2.metrics.sortinoRatio);
   });
 });

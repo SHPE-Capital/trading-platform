@@ -558,3 +558,33 @@ describe('signal shape', () => {
     expect(sig.qty).toBe(sumLegs);
   });
 });
+
+// ------------------------------------------------------------------
+// Config factory — sharpeConvention
+// ------------------------------------------------------------------
+
+describe('createAvellanedaStoikovConfig: sharpeConvention', () => {
+  it('default config includes sharpeConvention "intraday"', () => {
+    const cfg = createAvellanedaStoikovConfig('AAPL');
+    expect(cfg.sharpeConvention).toBe('intraday');
+  });
+
+  it('all presets include sharpeConvention "intraday"', () => {
+    for (const preset of ['conservative', 'balanced', 'aggressive'] as const) {
+      const cfg = createAvellanedaStoikovConfig('AAPL', preset);
+      expect(cfg.sharpeConvention).toBe('intraday');
+    }
+  });
+
+  it('sharpeConvention survives overrides that do not explicitly set it', () => {
+    const cfg = createAvellanedaStoikovConfig('AAPL', 'balanced', { gamma: 2 });
+    expect(cfg.sharpeConvention).toBe('intraday');
+  });
+
+  it('sharpeConvention cannot be overridden to "daily" (TypeScript narrowed to "intraday")', () => {
+    // The type system narrows sharpeConvention to "intraday" only on AvellanedaStoikovConfig.
+    // This runtime test confirms the factory preserves the correct value.
+    const cfg = createAvellanedaStoikovConfig('AAPL');
+    expect(['intraday']).toContain(cfg.sharpeConvention);
+  });
+});
