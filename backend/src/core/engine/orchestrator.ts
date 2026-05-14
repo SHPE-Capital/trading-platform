@@ -2,8 +2,12 @@
  * core/engine/orchestrator.ts
  *
  * The main trading engine orchestrator. Wires together the EventBus,
- * SymbolStateManager, StrategyRunner, RiskEngine, and ExecutionEngine.
- * Handles the full event pipeline from market data arrival to order submission.
+ * SymbolStateManager, StrategyRunner, RiskEngine, ExecutionEngine, and
+ * OrderManagerService (OMS).
+ *
+ * Signal routing is event-driven: STRATEGY_SIGNAL_CREATED → ORDER_INTENT_CREATED
+ * → risk check + capital reservation + execution. The OMS (orderManager) is kept
+ * as a public field for external callers that need direct queue access.
  *
  * This class is mode-agnostic: the same orchestrator runs in live, backtest,
  * and replay modes. What differs is the event source and execution sink
@@ -19,7 +23,9 @@ import { PortfolioStateManager } from "../state/portfolioState";
 import { OrderStateManager } from "../state/orderState";
 import { RiskEngine } from "../risk/riskEngine";
 import { ExecutionEngine } from "../execution/executionEngine";
+import { OrderManagerService } from "../oms/orderManager";
 import { CapitalReservationManager } from "../oms/capitalReservation";
+import { OrderIntentQueue } from "../oms/orderQueue";
 import { logger } from "../../utils/logger";
 import { nowMs } from "../../utils/time";
 import { newId } from "../../utils/ids";
@@ -30,12 +36,12 @@ import type {
   QuoteReceivedEvent,
   TradeReceivedEvent,
   BarReceivedEvent,
-  OrderIntentCreatedEvent,
   OrderFilledEvent,
+  OrderPartialFillEvent,
   OrderCanceledEvent,
   OrderRejectedEvent,
-  OrderPartialFillEvent,
   OrderExpiredEvent,
+  OrderIntentCreatedEvent,
 } from "../../types/events";
 
 export class Orchestrator {
@@ -45,6 +51,9 @@ export class Orchestrator {
   /** intentId → reservationId, for releasing on any terminal order event */
   private readonly _reservationByIntent = new Map<UUID, UUID>();
 
+  /** The Order Management System — available for external callers that need direct queue access */
+  public readonly orderManager: OrderManagerService;
+
   constructor(
     public readonly eventBus: EventBus,
     public readonly symbolState: SymbolStateManager,
@@ -53,7 +62,20 @@ export class Orchestrator {
     public readonly riskEngine: RiskEngine,
     public readonly executionEngine: ExecutionEngine,
     private readonly mode: ExecutionMode,
-  ) {}
+  ) {
+    const capitalMgr = new CapitalReservationManager();
+    const queue = new OrderIntentQueue();
+    this.orderManager = new OrderManagerService(
+      capitalMgr,
+      queue,
+      riskEngine,
+      executionEngine,
+      portfolioState,
+      symbolState,
+      eventBus,
+      mode,
+    );
+  }
 
   /**
    * Registers a strategy. If the orchestrator is already running, starts the
@@ -139,10 +161,8 @@ export class Orchestrator {
     this.eventBus.on("TRADE_RECEIVED", (e) => this._onTrade(e as TradeReceivedEvent));
     this.eventBus.on("BAR_RECEIVED", (e) => this._onBar(e as BarReceivedEvent));
 
-    // Listen to signals to generate intents
+    // Signals → intents → risk + reservation + execution
     this.eventBus.on("STRATEGY_SIGNAL_CREATED", (e) => this._onStrategySignal(e as any));
-
-    // Wire order intent → risk → execution
     this.eventBus.on("ORDER_INTENT_CREATED", (e) => this._onOrderIntent(e as OrderIntentCreatedEvent));
 
     // Wire fills and state updates back into portfolio and order state
@@ -182,11 +202,13 @@ export class Orchestrator {
   }
 
   /**
-   * Stops the orchestrator and all registered strategies.
+   * Stops the orchestrator, all registered strategies, and the OMS.
    */
   stop(): void {
     if (!this.running) return;
     this.running = false;
+
+    this.orderManager.clear();
 
     for (const strategy of this.strategies.values()) {
       strategy.stop();
@@ -234,8 +256,8 @@ export class Orchestrator {
 
   private _onBar(event: BarReceivedEvent): void {
     this.symbolState.onBar(event.payload);
-    // Mark-to-market against the bar close: this is what the equity snapshot
-    // taken right after this handler returns will see.
+    // Mark-to-market against the bar close so the equity snapshot taken right
+    // after this handler returns reflects the current price.
     this.portfolioState.updatePrice(event.payload.symbol, event.payload.close);
     this._evaluateStrategies(event.payload.symbol);
   }
@@ -273,14 +295,10 @@ export class Orchestrator {
   }
 
   /**
-   * Converts emitted StrategySignals into actionable OrderIntents.
-   * This currently serves both backtest mode and any future live integration.
-   * TODO: Revisit this routing logic when live order flow is fully wired up,
-   * to ensure live execution doesn't require a separate dedicated signal router.
+   * Converts emitted StrategySignals into ORDER_INTENT_CREATED events.
    *
    * Two-sided market-making signals (signal.meta.kind === "maker_quotes")
-   * are handled separately: instead of producing one market intent, the
-   * orchestrator emits one limit OrderIntent per leg of meta.makerQuotes.
+   * are handled separately: one limit intent per leg of meta.makerQuotes.
    * This keeps existing single-direction strategies untouched while
    * letting market makers post a bid and ask in a single dispatch.
    */
@@ -302,13 +320,7 @@ export class Orchestrator {
     else if (signal.direction === "short" || signal.direction === "close_long") side = "sell";
     else return;
 
-    // TODO: Call positionSizer.computeQty() here when signal.qty should be overridden by
-    // the sizing layer. Inject a Map<SizerType, IPositionSizer> into the Orchestrator
-    // constructor alongside riskEngine and executionEngine. Use signal.meta or strategy
-    // config's sizerType to select the sizer. estimatedPrice = symbolState mid ?? 0.
-    // See core/sizing/IPositionSizer.ts and core/sizing/fixedNotionalSizer.ts.
-
-    const intent = {
+    const primaryIntent: import("../../types/orders").OrderIntent = {
       id: newId(),
       strategyId: signal.strategyId,
       symbol: signal.symbol,
@@ -318,13 +330,12 @@ export class Orchestrator {
       timeInForce: "ioc" as const,
       reason: signal.triggerLabel,
       ts: nowMs(),
+      meta: signal.meta,
     };
 
-    // Fix #8: when a pair/hedge signal includes a counterpart leg, compute the
-    // counterpart's intent FIRST. If the counterpart rounds to zero qty, drop
-    // the leg-1 intent too — otherwise we'd execute a naked leg that no longer
-    // hedges anything (the original silent-drop bug).
-    let cIntent: typeof intent | null = null;
+    // Fix #8: compute counterpart FIRST. If counterpart qty rounds to zero, drop
+    // BOTH legs — otherwise we'd execute a naked leg that no longer hedges anything.
+    let cIntent: import("../../types/orders").OrderIntent | null = null;
     if (signal.meta && signal.meta.counterpartSymbol && signal.meta.counterpartDirection) {
       let cSide: "buy" | "sell" | null = null;
       const cDir = signal.meta.counterpartDirection as string;
@@ -352,6 +363,7 @@ export class Orchestrator {
           timeInForce: "ioc" as const,
           reason: (signal.triggerLabel || "") + "_counterpart",
           ts: nowMs(),
+          meta: signal.meta,
         };
       }
     }
@@ -362,7 +374,7 @@ export class Orchestrator {
       ts: nowMs(),
       mode: event.mode,
       strategyId: signal.strategyId,
-      payload: intent,
+      payload: primaryIntent,
     });
 
     if (cIntent) {
@@ -381,8 +393,7 @@ export class Orchestrator {
    * Routes a maker-quote signal (meta.kind === "maker_quotes") by emitting
    * one ORDER_INTENT_CREATED event per leg of meta.makerQuotes. Each leg
    * becomes a LIMIT order with the per-leg side/price/qty; the requested
-   * timeInForce from meta is honored (defaulting to "day" for resting
-   * orders).
+   * timeInForce from meta is honored (defaulting to "day" for resting orders).
    *
    * No-op when makerQuotes is empty (e.g. kill-switch state).
    */
@@ -421,6 +432,11 @@ export class Orchestrator {
     }
   }
 
+  /**
+   * Processes a single ORDER_INTENT_CREATED event through the full pre-trade
+   * pipeline: risk check → worst-case price estimation → strategy budget check
+   * → capital reservation → execution submission.
+   */
   private _onOrderIntent(event: OrderIntentCreatedEvent): void {
     const intent = event.payload;
     const symState = this.symbolState.get(intent.symbol);
@@ -488,7 +504,13 @@ export class Orchestrator {
       strategyId: intent.strategyId,
     });
 
-    this.executionEngine.submit(intent);
+    this.executionEngine.submit(intent).catch((err) => {
+      logger.error("Orchestrator: execution submission failed", {
+        intentId: intent.id,
+        error: String(err),
+      });
+      this._releaseReservation(intent.id, "rejected");
+    });
   }
 
   private _releaseReservation(intentId: UUID, reason: "filled" | "canceled" | "rejected"): void {
@@ -508,20 +530,13 @@ export class Orchestrator {
   }
 
   /**
-   * Handles partial fill events. Applies the (delta) fill to both order and
-   * portfolio state incrementally and emits PORTFOLIO_UPDATED so downstream
-   * consumers (WS push, snapshot persister) see the change immediately.
-   *
-   * Convention: `event.fill.qty` is the delta qty for THIS partial fill, not
-   * the cumulative. The terminal `ORDER_FILLED` event that follows also carries
-   * a delta — see AlpacaOrderExecutionAdapter — so applying both does not
-   * double-count. OrderStateManager.applyFill recomputes status from the running
-   * cumulative filledQty and transitions to "filled" once it reaches order.qty.
+   * Handles partial fill events. Applies the delta fill to both order and
+   * portfolio state incrementally and adjusts the capital reservation down
+   * proportionally so already-deployed capital is freed for subsequent orders.
    */
   private _onOrderPartialFill(event: OrderPartialFillEvent): void {
     // Scale down the capital reservation proportionally to the remaining unfilled
-    // qty so that already-deployed capital is freed for subsequent orders.
-    // Must run before orderState.applyFill so that filledQty still reflects the
+    // qty. Must run before orderState.applyFill so filledQty still reflects the
     // pre-fill cumulative, letting us compute the correct remaining fraction.
     const reservationId = this._reservationByIntent.get(event.orderId);
     if (reservationId) {

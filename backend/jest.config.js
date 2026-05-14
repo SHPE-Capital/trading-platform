@@ -13,6 +13,11 @@ module.exports = {
     'src/core/backtest/backtestEngine.ts',
     'src/adapters/supabase/repositories.ts',
     'src/core/engine/orchestrator.ts',
+    'src/core/oms/orderManager.ts',
+    'src/core/oms/capitalReservation.ts',
+    'src/core/oms/orderQueue.ts',
+    'src/core/oms/priorityConfig.ts',
+    'src/core/oms/parentChildOrder.ts',
   ],
   coverageThreshold: {
     global: {

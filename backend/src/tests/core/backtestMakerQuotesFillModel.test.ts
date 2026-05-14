@@ -162,7 +162,7 @@ describe('BacktestEngine + maker-quote signals + fill model', () => {
 
     expect(result.orders).toHaveLength(2);
     expect(result.fills).toHaveLength(2);
-    const sides = result.fills.map((f) => f.side).sort();
+    const sides = result.fills!.map((f) => f.side).sort();
     expect(sides).toEqual(['buy', 'sell']);
   });
 
@@ -188,12 +188,12 @@ describe('BacktestEngine + maker-quote signals + fill model', () => {
     ]);
 
     expect(result.orders).toHaveLength(2);
-    const buyOrder = result.orders.find((o) => o.side === 'buy')!;
-    const sellOrder = result.orders.find((o) => o.side === 'sell')!;
+    const buyOrder = result.orders!.find((o) => o.side === 'buy')!;
+    const sellOrder = result.orders!.find((o) => o.side === 'sell')!;
     expect(buyOrder.status).toBe('rejected');
     expect(sellOrder.status).toBe('filled');
     expect(result.fills).toHaveLength(1);
-    expect(result.fills[0].side).toBe('sell');
+    expect(result.fills![0].side).toBe('sell');
   });
 
   it('rejects both legs when neither side crosses the simulated touch price', async () => {
@@ -216,7 +216,7 @@ describe('BacktestEngine + maker-quote signals + fill model', () => {
     ]);
 
     expect(result.orders).toHaveLength(2);
-    for (const o of result.orders) {
+    for (const o of result.orders!) {
       expect(o.status).toBe('rejected');
     }
     expect(result.fills).toHaveLength(0);
