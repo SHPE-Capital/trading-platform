@@ -45,35 +45,42 @@ export class CapitalReservationManager {
 
   /**
    * Attempts to reserve capital for a pending order intent.
-   * Returns null if estimated cost is zero or exceeds available cash.
+   * `worstCaseNotional` must be pre-computed by `riskEngine.estimateWorstCasePrice()`
+   * so market orders (which have no limitPrice) are correctly reserved.
    * @param intent - OrderIntent to reserve capital for
+   * @param worstCaseNotional - Pre-computed worst-case notional (qty × worst-case price)
    * @param totalCash - Current total cash balance (before reservations)
    * @param priceEstimator - Optional callback for market price estimation
    * @returns Reservation receipt, or null if insufficient capital
    */
   reserve(
     intent: OrderIntent,
+    worstCaseNotional: number,
     totalCash: number,
-    priceEstimator?: PriceEstimator,
   ): { reservationId: UUID; amount: number } | null {
-    const amount = this.estimateCost(intent, priceEstimator);
+    // Sell orders generate cash rather than consuming it; reserve amount=0 so
+    // reservation bookkeeping tracks the pending order without reducing available cash.
+    if (intent.side === "sell") {
+      const reservationId = newId();
+      const reservation: CapitalReservation = {
+        reservationId,
+        amount: 0,
+        strategyId: intent.strategyId,
+        intentId: intent.id,
+        ts: nowMs(),
+      };
+      this._reservations.set(reservationId, reservation);
+      logger.info("CapitalReservationManager: sell intent does not require cash reservation", {
+        reservationId,
+        intentId: intent.id,
+        strategyId: intent.strategyId,
+      });
+      return { reservationId, amount: 0 };
+    }
 
-    // Sell orders or zero-cost intents don't need reservation
+    const amount = worstCaseNotional;
+
     if (amount <= 0) {
-      if (intent.side === "sell") {
-        // Sells don't need capital — return a zero-cost reservation for tracking
-        const reservationId = newId();
-        const reservation: CapitalReservation = {
-          reservationId,
-          amount: 0,
-          strategyId: intent.strategyId,
-          intentId: intent.id,
-          ts: nowMs(),
-        };
-        this._reservations.set(reservationId, reservation);
-        return { reservationId, amount: 0 };
-      }
-
       logger.warn("CapitalReservationManager: cannot reserve — amount is zero or negative", {
         intentId: intent.id,
         qty: intent.qty,
@@ -232,12 +239,60 @@ export class CapitalReservationManager {
     return totalCash - this.getReservedTotal();
   }
 
-  /**
-   * Returns the count of active reservations. Useful for diagnostics.
-   * @returns Number of active reservations
-   */
+  /** Returns the count of active reservations. Useful for diagnostics. */
   get reservationCount(): number {
     return this._reservations.size;
+  }
+
+  /**
+   * Returns the total USD amount currently reserved for a specific strategy.
+   * @param strategyId - Strategy to query
+   */
+  getStrategyReservedAmount(strategyId: string): number {
+    let total = 0;
+    for (const r of this._reservations.values()) {
+      if (r.strategyId === strategyId) total += r.amount;
+    }
+    return total;
+  }
+
+  /**
+   * Returns the number of open (pending) orders for a specific strategy,
+   * regardless of their reserved amount. Includes sell-order bookkeeping entries
+   * (amount=0) so the count reflects every submitted-but-not-yet-terminal order.
+   * @param strategyId - Strategy to query
+   */
+  getOpenOrderCount(strategyId: string): number {
+    let count = 0;
+    for (const r of this._reservations.values()) {
+      if (r.strategyId === strategyId) count++;
+    }
+    return count;
+  }
+
+  /**
+   * Reduces a buy reservation's amount in-place after a partial fill.
+   * Scales the locked capital down to the remaining unfilled portion so that
+   * already-filled shares no longer block other orders in the strategy.
+   * @param reservationId - Reservation to adjust
+   * @param newAmount - New amount (must be ≥ 0; clamped if negative)
+   */
+  adjustAmount(reservationId: UUID, newAmount: number): void {
+    const reservation = this._reservations.get(reservationId);
+    if (!reservation) {
+      logger.warn("CapitalReservationManager: adjustAmount called for unknown reservationId", {
+        reservationId,
+      });
+      return;
+    }
+    const prev = reservation.amount;
+    reservation.amount = Math.max(0, newAmount);
+    logger.info("CapitalReservationManager: adjusted reservation amount", {
+      reservationId,
+      prev,
+      newAmount: reservation.amount,
+      totalReserved: this.getReservedTotal(),
+    });
   }
 
   /**

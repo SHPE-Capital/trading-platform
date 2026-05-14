@@ -1,0 +1,14 @@
+{
+  "watch": [
+    "src/app",
+    "src/adapters/supabase",
+    "src/config",
+    "src/types",
+    "src/utils"
+  ],
+  "ext": "ts",
+  "exec": "ts-node src/index.ts",
+  "env": {
+    "PORT": "8082"
+  }
+}

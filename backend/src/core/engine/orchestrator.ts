@@ -5,16 +5,16 @@
  * SymbolStateManager, StrategyRunner, RiskEngine, ExecutionEngine, and
  * OrderManagerService (OMS).
  *
- * Handles the full event pipeline from market data arrival to order submission.
- * Signals are routed through the OMS for capital reservation and priority-based
- * conflict resolution before reaching the execution layer.
+ * Signal routing is event-driven: STRATEGY_SIGNAL_CREATED → ORDER_INTENT_CREATED
+ * → risk check + capital reservation + execution. The OMS (orderManager) is kept
+ * as a public field for external callers that need direct queue access.
  *
  * This class is mode-agnostic: the same orchestrator runs in live, backtest,
  * and replay modes. What differs is the event source and execution sink
  * injected at startup.
  *
  * Inputs:  EventBus events from any source (live, historical, replay).
- * Outputs: Coordinates state updates → strategy evaluation → OMS → risk → execution.
+ * Outputs: Coordinates state updates → strategy evaluation → risk → execution.
  */
 
 import { EventBus } from "./eventBus";
@@ -26,13 +26,12 @@ import { ExecutionEngine } from "../execution/executionEngine";
 import { OrderManagerService } from "../oms/orderManager";
 import { CapitalReservationManager } from "../oms/capitalReservation";
 import { OrderIntentQueue } from "../oms/orderQueue";
-import { getSignalPriority } from "../oms/priorityConfig";
 import { logger } from "../../utils/logger";
 import { nowMs } from "../../utils/time";
 import { newId } from "../../utils/ids";
 import type { IStrategy } from "../../strategies/base/strategy";
-import type { ExecutionMode } from "../../types/common";
-import type { SignalGroup } from "../../types/oms";
+import type { ExecutionMode, UUID } from "../../types/common";
+import type { BaseStrategyConfig } from "../../types/strategy";
 import type {
   QuoteReceivedEvent,
   TradeReceivedEvent,
@@ -42,13 +41,17 @@ import type {
   OrderCanceledEvent,
   OrderRejectedEvent,
   OrderExpiredEvent,
+  OrderIntentCreatedEvent,
 } from "../../types/events";
 
 export class Orchestrator {
   private strategies: Map<string, IStrategy> = new Map();
   private running = false;
+  private readonly capitalReservation = new CapitalReservationManager();
+  /** intentId → reservationId, for releasing on any terminal order event */
+  private readonly _reservationByIntent = new Map<UUID, UUID>();
 
-  /** The Order Management System for capital reservation and priority queue */
+  /** The Order Management System — available for external callers that need direct queue access */
   public readonly orderManager: OrderManagerService;
 
   constructor(
@@ -60,7 +63,6 @@ export class Orchestrator {
     public readonly executionEngine: ExecutionEngine,
     private readonly mode: ExecutionMode,
   ) {
-    // Build the OMS from existing dependencies
     const capitalMgr = new CapitalReservationManager();
     const queue = new OrderIntentQueue();
     this.orderManager = new OrderManagerService(
@@ -79,11 +81,23 @@ export class Orchestrator {
    * Registers a strategy. If the orchestrator is already running, starts the
    * strategy immediately and emits STRATEGY_STARTED (or STRATEGY_ERROR on failure).
    * @param strategy - Any IStrategy implementation
+   * @param runId - Optional run ID to use as the map key instead of strategy.id.
+   *   Pass the strategy_runs.id when registering via the HTTP API so that
+   *   hasStrategy/deregisterStrategy can be called with the run ID from the URL.
+   *   Startup-registered strategies (no runId) continue keying on strategy.id.
    */
-  registerStrategy(strategy: IStrategy): void {
-    this.strategies.set(strategy.id, strategy);
+  registerStrategy(strategy: IStrategy, runId?: string): void {
+    const key = runId ?? strategy.id;
+    this.strategies.set(key, strategy);
+
+    const cfg = strategy.config as BaseStrategyConfig;
+    if (cfg.riskBudget) {
+      this.riskEngine.registerStrategyBudget({ ...cfg.riskBudget, strategyId: strategy.id });
+    }
+
     logger.info("Orchestrator: strategy registered", {
       strategyId: strategy.id,
+      key,
       type: strategy.type,
     });
 
@@ -126,6 +140,14 @@ export class Orchestrator {
     return this.strategies.has(strategyId);
   }
 
+  /** Returns true if any registered strategy was launched from the given config ID. */
+  hasStrategyWithConfigId(configId: string): boolean {
+    for (const strategy of this.strategies.values()) {
+      if (strategy.config.id === configId) return true;
+    }
+    return false;
+  }
+
   /**
    * Starts the orchestrator: wires all EventBus listeners and starts strategies.
    * After this call, the orchestrator reacts to incoming events.
@@ -139,10 +161,11 @@ export class Orchestrator {
     this.eventBus.on("TRADE_RECEIVED", (e) => this._onTrade(e as TradeReceivedEvent));
     this.eventBus.on("BAR_RECEIVED", (e) => this._onBar(e as BarReceivedEvent));
 
-    // Listen to signals to generate intents → route through OMS
+    // Signals → intents → risk + reservation + execution
     this.eventBus.on("STRATEGY_SIGNAL_CREATED", (e) => this._onStrategySignal(e as any));
+    this.eventBus.on("ORDER_INTENT_CREATED", (e) => this._onOrderIntent(e as OrderIntentCreatedEvent));
 
-    // Wire fills and state updates back into portfolio, order state, and OMS
+    // Wire fills and state updates back into portfolio and order state
     this.eventBus.on("ORDER_SUBMITTED", (e) => this._onOrderSubmitted(e as any));
     this.eventBus.on("ORDER_PARTIAL_FILL", (e) => this._onOrderPartialFill(e as OrderPartialFillEvent));
     this.eventBus.on("ORDER_FILLED", (e) => this._onOrderFilled(e as OrderFilledEvent));
@@ -185,7 +208,6 @@ export class Orchestrator {
     if (!this.running) return;
     this.running = false;
 
-    // Clear OMS state (pending queue + reservations)
     this.orderManager.clear();
 
     for (const strategy of this.strategies.values()) {
@@ -195,6 +217,9 @@ export class Orchestrator {
         strategyId: strategy.id,
       });
     }
+
+    this.capitalReservation.clear();
+    this._reservationByIntent.clear();
 
     this.eventBus.publish({
       id: newId(),
@@ -217,16 +242,23 @@ export class Orchestrator {
 
   private _onQuote(event: QuoteReceivedEvent): void {
     this.symbolState.onQuote(event.payload);
+    // Mark-to-market: refresh unrealized PnL on every quote so equity tracks
+    // price moves even when no new fills occur.
+    this.portfolioState.updatePrice(event.payload.symbol, event.payload.midPrice);
     this._evaluateStrategies(event.payload.symbol);
   }
 
   private _onTrade(event: TradeReceivedEvent): void {
     this.symbolState.onTrade(event.payload);
+    this.portfolioState.updatePrice(event.payload.symbol, event.payload.price);
     this._evaluateStrategies(event.payload.symbol);
   }
 
   private _onBar(event: BarReceivedEvent): void {
     this.symbolState.onBar(event.payload);
+    // Mark-to-market against the bar close so the equity snapshot taken right
+    // after this handler returns reflects the current price.
+    this.portfolioState.updatePrice(event.payload.symbol, event.payload.close);
     this._evaluateStrategies(event.payload.symbol);
   }
 
@@ -263,25 +295,31 @@ export class Orchestrator {
   }
 
   /**
-   * Converts emitted StrategySignals into actionable OrderIntents and routes
-   * them through the OMS for capital reservation and priority-based execution.
+   * Converts emitted StrategySignals into ORDER_INTENT_CREATED events.
    *
-   * Multi-leg signals (e.g., pairs trades with counterpart orders) are grouped
-   * into a single SignalGroup so capital is reserved atomically for all legs.
+   * Two-sided market-making signals (signal.meta.kind === "maker_quotes")
+   * are handled separately: one limit intent per leg of meta.makerQuotes.
+   * This keeps existing single-direction strategies untouched while
+   * letting market makers post a bid and ask in a single dispatch.
    */
   private _onStrategySignal(event: any): void {
     const signal = event.payload;
-    if (!signal || signal.qty <= 0) return;
+    if (!signal) return;
+
+    // Maker-quote signals (e.g. Avellaneda-Stoikov): emit one limit intent
+    // per leg of meta.makerQuotes. Top-level qty/direction are ignored.
+    if (signal.meta && signal.meta.kind === "maker_quotes") {
+      this._onMakerQuoteSignal(signal, event.mode);
+      return;
+    }
+
+    if (signal.qty <= 0) return;
 
     let side: "buy" | "sell";
     if (signal.direction === "long" || signal.direction === "close_short") side = "buy";
     else if (signal.direction === "short" || signal.direction === "close_long") side = "sell";
     else return;
 
-    const groupId = newId();
-    const intents: import("../../types/orders").OrderIntent[] = [];
-
-    // Primary intent
     const primaryIntent: import("../../types/orders").OrderIntent = {
       id: newId(),
       strategyId: signal.strategyId,
@@ -292,25 +330,30 @@ export class Orchestrator {
       timeInForce: "ioc" as const,
       reason: signal.triggerLabel,
       ts: nowMs(),
-      meta: { ...signal.meta, groupId },
+      meta: signal.meta,
     };
-    intents.push(primaryIntent);
 
-    // Counterpart intent (for multi-leg signals like pairs trades)
+    // Fix #8: compute counterpart FIRST. If counterpart qty rounds to zero, drop
+    // BOTH legs — otherwise we'd execute a naked leg that no longer hedges anything.
+    let cIntent: import("../../types/orders").OrderIntent | null = null;
     if (signal.meta && signal.meta.counterpartSymbol && signal.meta.counterpartDirection) {
-      let cSide: "buy" | "sell";
+      let cSide: "buy" | "sell" | null = null;
       const cDir = signal.meta.counterpartDirection as string;
       if (cDir === "long" || cDir === "close_short") cSide = "buy";
       else if (cDir === "short" || cDir === "close_long") cSide = "sell";
-      else {
-        // Invalid counterpart direction — skip counterpart, submit primary only
-        this._submitSingleIntent(primaryIntent, signal);
-        return;
-      }
 
-      const cQty = Math.floor(signal.qty * ((signal.meta.hedgeRatio as number) || 1));
-      if (cQty > 0) {
-        const counterpartIntent: import("../../types/orders").OrderIntent = {
+      if (cSide !== null) {
+        const cQty = Math.floor(signal.qty * ((signal.meta.hedgeRatio as number) || 1));
+        if (cQty <= 0) {
+          logger.warn("Orchestrator: dropping pair signal — counterpart qty rounded to zero", {
+            strategyId: signal.strategyId,
+            symbol: signal.symbol,
+            counterpart: signal.meta.counterpartSymbol,
+            hedgeRatio: signal.meta.hedgeRatio,
+          });
+          return;
+        }
+        cIntent = {
           id: newId(),
           strategyId: signal.strategyId,
           symbol: signal.meta.counterpartSymbol as string,
@@ -320,63 +363,195 @@ export class Orchestrator {
           timeInForce: "ioc" as const,
           reason: (signal.triggerLabel || "") + "_counterpart",
           ts: nowMs(),
-          meta: { ...signal.meta, groupId },
+          meta: signal.meta,
         };
-        intents.push(counterpartIntent);
       }
     }
 
-    // Compute priority from strategy type and signal confidence
-    const priority = getSignalPriority(
-      signal.strategyType ?? "momentum",
-      signal.confidence,
-      (signal.meta?.urgency as number) ?? undefined,
-    );
-
-    // Build signal group and submit to OMS
-    const group: SignalGroup = {
-      groupId,
+    this.eventBus.publish({
+      id: newId(),
+      type: "ORDER_INTENT_CREATED",
+      ts: nowMs(),
+      mode: event.mode,
       strategyId: signal.strategyId,
-      strategyType: signal.strategyType ?? "momentum",
-      intents,
-      totalCapitalRequired: 0, // computed by OMS
-      priority,
-      confidence: signal.confidence,
-      createdAt: nowMs(),
-    };
+      payload: primaryIntent,
+    });
 
-    this.orderManager.submitSignalGroup(group);
+    if (cIntent) {
+      this.eventBus.publish({
+        id: newId(),
+        type: "ORDER_INTENT_CREATED",
+        ts: nowMs(),
+        mode: event.mode,
+        strategyId: signal.strategyId,
+        payload: cIntent,
+      });
+    }
   }
 
   /**
-   * Shortcut: submit a single intent through the OMS when there's no
-   * counterpart (single-leg signal).
+   * Routes a maker-quote signal (meta.kind === "maker_quotes") by emitting
+   * one ORDER_INTENT_CREATED event per leg of meta.makerQuotes. Each leg
+   * becomes a LIMIT order with the per-leg side/price/qty; the requested
+   * timeInForce from meta is honored (defaulting to "day" for resting orders).
+   *
+   * No-op when makerQuotes is empty (e.g. kill-switch state).
    */
-  private _submitSingleIntent(intent: import("../../types/orders").OrderIntent, signal: any): void {
-    const priority = getSignalPriority(
-      signal.strategyType ?? "momentum",
-      signal.confidence,
-    );
-
-    const group: SignalGroup = {
-      groupId: newId(),
-      strategyId: signal.strategyId,
-      strategyType: signal.strategyType ?? "momentum",
-      intents: [intent],
-      totalCapitalRequired: 0,
-      priority,
-      confidence: signal.confidence,
-      createdAt: nowMs(),
+  private _onMakerQuoteSignal(signal: any, mode: ExecutionMode): void {
+    const meta = signal.meta as {
+      kind: "maker_quotes";
+      makerQuotes?: Array<{ side: "buy" | "sell"; price: number; qty: number }>;
+      timeInForce?: "day" | "gtc" | "ioc";
     };
+    const quotes = meta.makerQuotes ?? [];
+    if (quotes.length === 0) return;
 
-    this.orderManager.submitSignalGroup(group);
+    const tif = meta.timeInForce ?? "day";
+    for (const q of quotes) {
+      if (!q || q.qty <= 0 || !Number.isFinite(q.price) || q.price <= 0) continue;
+      const intent = {
+        id: newId(),
+        strategyId: signal.strategyId,
+        symbol: signal.symbol,
+        side: q.side,
+        qty: q.qty,
+        orderType: "limit" as const,
+        limitPrice: q.price,
+        timeInForce: tif,
+        reason: signal.triggerLabel,
+        ts: nowMs(),
+      };
+      this.eventBus.publish({
+        id: newId(),
+        type: "ORDER_INTENT_CREATED",
+        ts: nowMs(),
+        mode,
+        strategyId: signal.strategyId,
+        payload: intent,
+      });
+    }
+  }
+
+  /**
+   * Processes a single ORDER_INTENT_CREATED event through the full pre-trade
+   * pipeline: risk check → worst-case price estimation → strategy budget check
+   * → capital reservation → execution submission.
+   */
+  private _onOrderIntent(event: OrderIntentCreatedEvent): void {
+    const intent = event.payload;
+    const symState = this.symbolState.get(intent.symbol);
+    const mid = symState?.latestMid ?? symState?.latestBar?.close ?? null;
+    const portfolio = this.portfolioState.getSnapshot();
+
+    // Stage 1: signal-time risk checks (kill switch, cooldown, position/cash/concentration)
+    const riskResult = this.riskEngine.check(intent, portfolio, mid ?? undefined);
+    if (!riskResult.passed) {
+      this.eventBus.publish({
+        id: newId(), type: "RISK_REJECTED", ts: nowMs(), mode: this.mode,
+        strategyId: event.strategyId,
+        reason: riskResult.reason ?? "Risk check failed",
+        rejectedIntent: intent,
+      });
+      return;
+    }
+
+    // Worst-case fill price: limit orders use limitPrice; market orders apply gap+spread+slippage buffer
+    const worstCasePrice = this.riskEngine.estimateWorstCasePrice(intent.side, intent, mid);
+    if (worstCasePrice === null) {
+      this.eventBus.publish({
+        id: newId(), type: "RISK_REJECTED", ts: nowMs(), mode: this.mode,
+        strategyId: event.strategyId,
+        reason: "No reference price available for worst-case estimate",
+        rejectedIntent: intent,
+      });
+      return;
+    }
+    const worstCaseNotional = intent.qty * worstCasePrice;
+
+    // Per-strategy budget check (skipped when no budget is registered for this strategy)
+    const alreadyReserved = this.capitalReservation.getStrategyReservedAmount(intent.strategyId);
+    const openOrderCount = this.capitalReservation.getOpenOrderCount(intent.strategyId);
+    const budgetFail = this.riskEngine.checkStrategyBudget(intent, worstCaseNotional, portfolio, alreadyReserved, openOrderCount);
+    if (budgetFail) {
+      this.eventBus.publish({
+        id: newId(), type: "RISK_REJECTED", ts: nowMs(), mode: this.mode,
+        strategyId: event.strategyId,
+        reason: budgetFail.reason,
+        rejectedIntent: intent,
+      });
+      return;
+    }
+
+    // Capital reservation — prevents double-spending across concurrent pending orders
+    const reservation = this.capitalReservation.reserve(intent, worstCaseNotional, portfolio.cash);
+    if (!reservation) {
+      this.eventBus.publish({
+        id: newId(), type: "CAPITAL_UNAVAILABLE", ts: nowMs(), mode: this.mode,
+        intentId: intent.id,
+        strategyId: intent.strategyId,
+        required: worstCaseNotional,
+        available: this.capitalReservation.getAvailableCash(portfolio.cash),
+      });
+      return;
+    }
+
+    this._reservationByIntent.set(intent.id, reservation.reservationId);
+    this.eventBus.publish({
+      id: newId(), type: "CAPITAL_RESERVED", ts: nowMs(), mode: this.mode,
+      reservationId: reservation.reservationId,
+      amount: reservation.amount,
+      intentId: intent.id,
+      strategyId: intent.strategyId,
+    });
+
+    this.executionEngine.submit(intent).catch((err) => {
+      logger.error("Orchestrator: execution submission failed", {
+        intentId: intent.id,
+        error: String(err),
+      });
+      this._releaseReservation(intent.id, "rejected");
+    });
+  }
+
+  private _releaseReservation(intentId: UUID, reason: "filled" | "canceled" | "rejected"): void {
+    const reservationId = this._reservationByIntent.get(intentId);
+    if (!reservationId) return;
+    this._reservationByIntent.delete(intentId);
+    this.capitalReservation.release(reservationId);
+    this.eventBus.publish({
+      id: newId(), type: "CAPITAL_RELEASED", ts: nowMs(), mode: this.mode,
+      reservationId,
+      reason,
+    });
   }
 
   private _onOrderSubmitted(event: any): void {
     this.orderState.addOrder(event.payload);
   }
 
+  /**
+   * Handles partial fill events. Applies the delta fill to both order and
+   * portfolio state incrementally and adjusts the capital reservation down
+   * proportionally so already-deployed capital is freed for subsequent orders.
+   */
   private _onOrderPartialFill(event: OrderPartialFillEvent): void {
+    // Scale down the capital reservation proportionally to the remaining unfilled
+    // qty. Must run before orderState.applyFill so filledQty still reflects the
+    // pre-fill cumulative, letting us compute the correct remaining fraction.
+    const reservationId = this._reservationByIntent.get(event.orderId);
+    if (reservationId) {
+      const order = this.orderState.getOrder(event.orderId);
+      const reservation = this.capitalReservation.getReservation(reservationId);
+      if (order && reservation && reservation.amount > 0 && order.qty > 0) {
+        const currentOpenQty = order.qty - order.filledQty;
+        const remainingQty = Math.max(0, currentOpenQty - event.fill.qty);
+        const newAmount = currentOpenQty > 0
+          ? reservation.amount * remainingQty / currentOpenQty
+          : 0;
+        this.capitalReservation.adjustAmount(reservationId, newAmount);
+      }
+    }
+
     this.orderState.applyFill(event.orderId, event.fill);
     this.portfolioState.applyFill(event.fill);
     this.eventBus.publish({
@@ -386,35 +561,63 @@ export class Orchestrator {
   }
 
   private _onOrderFilled(event: OrderFilledEvent): void {
-    // Guard: if partials already consumed the full qty, skip re-applying.
+    // If an upstream sink already applied a partial-fill chain that consumed
+    // the full order qty, skip re-applying — partials already covered it.
+    // This guards adapters that emit BOTH cumulative partial events and a
+    // final cumulative fill (rare but defensible: protocol bugs / replays).
     const order = this.orderState.getOrder(event.orderId);
     if (order && order.status === "filled" && order.filledQty >= order.qty) {
       return;
     }
+
+    this._releaseReservation(event.orderId, "filled");
     this.orderState.applyFill(event.orderId, event.fill);
     this.portfolioState.applyFill(event.fill);
 
-    // Release OMS capital reservation for the filled intent.
-    this.orderManager.onOrderFilled(event.orderId);
-
+    const snapshot = this.portfolioState.getSnapshot();
     this.eventBus.publish({
       id: newId(), type: "PORTFOLIO_UPDATED", ts: nowMs(), mode: this.mode,
-      payload: this.portfolioState.getSnapshot(),
+      payload: snapshot,
     });
+
+    const violation = this.riskEngine.checkPortfolio(snapshot);
+    if (violation) {
+      if (violation.engageKillSwitch) this.riskEngine.setKillSwitch(true);
+      this.eventBus.publish({
+        id: newId(), type: "PORTFOLIO_RISK_VIOLATION", ts: nowMs(), mode: this.mode,
+        check: violation.check,
+        reason: violation.reason,
+        engageKillSwitch: violation.engageKillSwitch,
+        grossExposurePct: violation.grossExposurePct,
+        netExposurePct: violation.netExposurePct,
+      });
+    }
   }
 
   private _onOrderCanceled(event: OrderCanceledEvent): void {
+    this._releaseReservation(event.orderId, "canceled");
     this.orderState.markCanceled(event.orderId);
-    this.orderManager.onOrderCanceled(event.orderId);
   }
 
+  /**
+   * Handles broker/sim rejection. Transitions the order to "rejected" so it
+   * doesn't remain stuck as "submitted" in OrderStateManager — critical for
+   * backtest accounting (e.g. SimulatedExecutionSink rejects orders that have
+   * no usable reference price). No portfolio change: a rejection means no fill
+   * occurred.
+   */
   private _onOrderRejected(event: OrderRejectedEvent): void {
+    this._releaseReservation(event.orderId, "rejected");
     this.orderState.markRejected(event.orderId);
-    this.orderManager.onOrderCanceled(event.orderId);
   }
 
+  /**
+   * Handles broker-side expiration (e.g. IOC orders that didn't fill in time).
+   * Equivalent terminal transition to cancellation from the orchestrator's
+   * perspective — no portfolio change.
+   */
   private _onOrderExpired(event: OrderExpiredEvent): void {
+    this._releaseReservation(event.orderId, "canceled");
     this.orderState.markCanceled(event.orderId);
-    this.orderManager.onOrderCanceled(event.orderId);
   }
 }

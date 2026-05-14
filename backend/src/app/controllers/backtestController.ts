@@ -18,6 +18,7 @@ import {
   insertBacktestOrders,
   insertBacktestFills,
   updateBacktestResultStatus,
+  backtestConfigKey,
 } from "../../adapters/supabase/repositories";
 import { BacktestEngine } from "../../core/backtest/backtestEngine";
 import { PairsStrategy } from "../../strategies/pairs/pairsStrategy";
@@ -31,6 +32,11 @@ import type { BacktestConfig, BacktestResult } from "../../types/backtest";
 // completed, without a DB round trip. Entries expire after 10 minutes.
 const CACHE_TTL_MS = 10 * 60 * 1000;
 const resultCache = new Map<string, { result: BacktestResult; expiresAt: number }>();
+
+// Tracks config fingerprints of runs that are currently executing.
+// Prevents two concurrent identical requests from both passing the DB dedup check
+// (which only sees completed runs) and running the engine twice.
+const inFlightKeys = new Set<string>();
 
 function cacheResult(result: BacktestResult): void {
   if (!result?.id) return;
@@ -114,11 +120,31 @@ export function streamBacktest(req: Request, res: Response): void {
  * @param res - Express Response: { backtestId: string, message: string }
  */
 export async function runBacktest(req: Request, res: Response): Promise<void> {
-  const body = req.body as Omit<BacktestConfig, "id">;
+  const { force, ...body } = req.body as Omit<BacktestConfig, "id"> & { force?: boolean };
 
   if (!body.strategyConfig || !body.startDate || !body.endDate) {
     res.status(400).json({ error: "strategyConfig, startDate, and endDate are required" });
     return;
+  }
+
+  const rc = body.riskConfig;
+  if (rc) {
+    if (rc.maxIntradayDrawdownPct != null && (rc.maxIntradayDrawdownPct <= 0 || rc.maxIntradayDrawdownPct > 1)) {
+      res.status(400).json({ error: "riskConfig.maxIntradayDrawdownPct must be between 0 (exclusive) and 1" });
+      return;
+    }
+    if (rc.cashReservePct != null && (rc.cashReservePct < 0 || rc.cashReservePct >= 1)) {
+      res.status(400).json({ error: "riskConfig.cashReservePct must be between 0 and 1 (exclusive)" });
+      return;
+    }
+    if (rc.gapBufferBps != null && rc.gapBufferBps < 0) {
+      res.status(400).json({ error: "riskConfig.gapBufferBps must be >= 0" });
+      return;
+    }
+    if (rc.spreadBufferBps != null && rc.spreadBufferBps < 0) {
+      res.status(400).json({ error: "riskConfig.spreadBufferBps must be >= 0" });
+      return;
+    }
   }
 
   const config: BacktestConfig = {
@@ -137,51 +163,86 @@ export async function runBacktest(req: Request, res: Response): Promise<void> {
   // Acknowledge the request immediately; backtest runs in background
   res.status(202).json({ backtestId: config.id, message: "Backtest queued" });
 
-  // Run backtest asynchronously
+  // Run backtest asynchronously. The outer try/catch ensures any unexpected
+  // rejection (including DB connectivity failures in the dedup check) always
+  // resolves the SSE channel so the client does not hang indefinitely.
+  const configKey = backtestConfigKey(config);
+
   setImmediate(async () => {
-    // Dedup: if an identical config has already been run, serve that result instead.
-    const existing = await findMatchingBacktestResult(config);
-    if (existing) {
-      const reused = { ...existing, id: config.id, reused_from_id: existing.id };
-      cacheResult(reused as typeof existing);
+    // Guard against concurrent identical requests both slipping through the DB
+    // dedup check (which only sees completed runs). The second request signals
+    // completion immediately so its SSE client is not left hanging.
+    if (!force && inFlightKeys.has(configKey)) {
+      logger.info("Backtest deduplicated (in-flight)", { id: config.id, configKey });
       backtestStreamManager.complete(config.id);
-      logger.info("Backtest deduplicated", { id: config.id, reusedFromId: existing.id });
       return;
     }
 
-    const engine = new BacktestEngine();
-    let resultInserted = false;
+    inFlightKeys.add(configKey);
     try {
-      const result = await engine.run(
-        config,
-        () => {
-          // Factory creates the strategy specified in the config
-          if (config.strategyConfig.type === "pairs_trading") {
-            const pairsConfig = createPairsConfig(
-              config.strategyConfig.symbols[0],
-              config.strategyConfig.symbols[1] ?? config.strategyConfig.symbols[0],
-              config.strategyConfig as never,
-            );
-            return [new PairsStrategy(pairsConfig)];
-          }
-          return [];
-        },
-        (point) => backtestStreamManager.emit(config.id, point),
-      );
-      cacheResult(result);
-      backtestStreamManager.complete(config.id);
-      await insertBacktestResult(result);
-      resultInserted = true;
-      // Orders must complete before fills: backtest_fills.order_id FK references backtest_orders.id
-      await insertBacktestOrders(result.id, result.orders);
-      await insertBacktestFills(result.id, result.fills);
-      logger.info("Backtest completed and saved", { id: config.id });
-    } catch (err) {
-      logger.error("Backtest failed", { id: config.id, err });
-      backtestStreamManager.error(config.id, err instanceof Error ? err.message : "Backtest failed");
-      if (resultInserted) {
-        try { await updateBacktestResultStatus(config.id, "failed"); } catch {}
+      // Dedup: if an identical config has already been run, serve that result instead.
+      // Skipped when force=true (explicit re-run requested by the user).
+      // If the DB is unreachable, log a warning and proceed as a fresh run.
+      let existing = null;
+      if (!force) {
+        try {
+          existing = await findMatchingBacktestResult(config);
+        } catch (dbErr) {
+          logger.warn("Dedup check failed — running fresh backtest", { id: config.id, err: dbErr });
+        }
       }
+      if (existing) {
+        const reused = { ...existing, id: config.id, reused_from_id: existing.id };
+        cacheResult(reused as typeof existing);
+        backtestStreamManager.complete(config.id);
+        logger.info("Backtest deduplicated", { id: config.id, reusedFromId: existing.id });
+        return;
+      }
+
+      const engine = new BacktestEngine();
+      let resultInserted = false;
+      try {
+        const result = await engine.run(
+          config,
+          () => {
+            // Factory creates the strategy specified in the config
+            if (config.strategyConfig.type === "pairs_trading") {
+              const pairsConfig = createPairsConfig(
+                config.strategyConfig.symbols[0],
+                config.strategyConfig.symbols[1] ?? config.strategyConfig.symbols[0],
+                config.strategyConfig as never,
+              );
+              return [new PairsStrategy(pairsConfig)];
+            }
+            return [];
+          },
+          (point) => backtestStreamManager.emit(config.id, point),
+        );
+        cacheResult(result);
+        backtestStreamManager.complete(config.id);
+        try {
+          await insertBacktestResult(result);
+          resultInserted = true;
+          // Orders must complete before fills: backtest_fills.order_id FK references backtest_orders.id
+          await insertBacktestOrders(result.id, result.orders ?? []);
+          await insertBacktestFills(result.id, result.fills ?? []);
+          logger.info("Backtest completed and saved", { id: config.id });
+        } catch (dbErr) {
+          logger.warn("Backtest result saved to cache but DB persist failed", { id: config.id, err: dbErr });
+        }
+      } catch (err) {
+        logger.error("Backtest engine failed", { id: config.id, err });
+        backtestStreamManager.error(config.id, err instanceof Error ? err.message : "Backtest failed");
+        if (resultInserted) {
+          try { await updateBacktestResultStatus(config.id, "failed"); } catch {}
+        }
+      }
+    } catch (err) {
+      // Catch-all: guarantees the SSE channel is always resolved
+      logger.error("Backtest runner unexpected error", { id: config.id, err });
+      backtestStreamManager.error(config.id, err instanceof Error ? err.message : "Backtest failed");
+    } finally {
+      inFlightKeys.delete(configKey);
     }
   });
 }

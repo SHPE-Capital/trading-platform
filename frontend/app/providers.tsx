@@ -30,6 +30,7 @@ import {
   systemReducer,
   systemInitialState,
 } from "../state/systemStore";
+import { DataProvider } from "../context/DataContext";
 
 export default function Providers({ children }: { children: React.ReactNode }) {
   const [strategyState, strategyDispatch] = useReducer(strategyReducer, strategyInitialState);
@@ -43,7 +44,9 @@ export default function Providers({ children }: { children: React.ReactNode }) {
           <PortfolioDispatchContext.Provider value={portfolioDispatch}>
             <StrategyStateContext.Provider value={strategyState}>
               <StrategyDispatchContext.Provider value={strategyDispatch}>
-                {children}
+                <DataProvider>
+                  {children}
+                </DataProvider>
               </StrategyDispatchContext.Provider>
             </StrategyStateContext.Provider>
           </PortfolioDispatchContext.Provider>

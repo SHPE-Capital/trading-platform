@@ -1,35 +1,27 @@
 /**
  * src/index.ts
  *
- * Main backend entry point. Starts the Express HTTP server with WebSocket
- * support at /ws/events. Does NOT start the trading engine — use
- * runtime/live.ts for that. This entry point serves just the API layer
- * for development/testing.
+ * API-only entry point. Starts the Express HTTP server without the trading
+ * engine — no Alpaca connection, no orchestrator. All strategy/portfolio
+ * routes that require the engine return 503 in this mode.
  *
- * Inputs:  Environment variables via config/env.ts.
- * Outputs: Running HTTP + WebSocket server on the configured port.
+ * Useful for iterating on API routes, controllers, and DB queries without
+ * an active Alpaca connection or live market data.
+ *
+ * For the full trading stack use:
+ *   npm run dev:paper-trading   — paper mode on port 8080 (simulated fills)
+ *   npm run dev:real-trading    — real-money mode on port 8081 (requires feature gates)
+ *   npm run dev                 — all three concurrently
  */
 
-import http from "http";
 import { createApp } from "./app/index";
-import { attachWebSocketServer } from "./app/websocket";
-import { EventBus } from "./core/engine/eventBus";
 import { env } from "./config/env";
 import { logger } from "./utils/logger";
 
 const app = createApp();
-const eventBus = new EventBus();
 
-// Use http.createServer so WebSocket upgrade requests on /ws/events are
-// handled by the ws library rather than falling through to Express (404).
-const server = http.createServer(app);
-attachWebSocketServer(server, eventBus);
-
-server.listen(env.port, () => {
-  logger.info(`Backend API server started on port ${env.port}`, {
-    mode: env.nodeEnv,
-    corsOrigin: env.corsOrigin,
-  });
+const server = app.listen(env.port, () => {
+  logger.info(`API server started on port ${env.port} [API-ONLY — no trading engine]`);
 });
 
 server.on("error", (err: NodeJS.ErrnoException) => {

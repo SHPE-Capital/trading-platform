@@ -85,20 +85,30 @@ class BacktestStreamManager {
     };
 
     const onComplete = () => {
+      clearInterval(heartbeat);
       res.write(`event: complete\ndata: {}\n\n`);
       res.end();
     };
 
     const onError = (message: string) => {
+      clearInterval(heartbeat);
       res.write(`event: error\ndata: ${JSON.stringify({ message })}\n\n`);
       res.end();
     };
+
+    // SSE comment ping every 25s keeps the connection alive through proxies and
+    // load balancers that close idle HTTP connections after 30s.
+    const heartbeat = setInterval(() => {
+      res.write(": heartbeat\n\n");
+    }, 25_000);
+    heartbeat.unref();
 
     emitter.on("progress", onProgress);
     emitter.once("complete", onComplete);
     emitter.once("run-error", onError);
 
     return () => {
+      clearInterval(heartbeat);
       emitter.off("progress", onProgress);
       emitter.off("complete", onComplete);
       emitter.off("run-error", onError);

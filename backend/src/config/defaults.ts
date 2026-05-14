@@ -3,9 +3,6 @@
  *
  * Default runtime configuration values used when strategy or engine
  * configs are not explicitly overridden. These are safe starting values.
- *
- * Inputs:  env module values.
- * Outputs: Default config objects consumed by core engine and strategies.
  */
 
 import { env } from "./env";
@@ -32,6 +29,9 @@ export const DEFAULT_RISK_CONFIG: RiskConfig = {
   maxIntradayDrawdownPct: 0.05,  // 5% intraday drawdown limit — engages kill switch
   maxConcentrationPct: 0.30,     // 30% max concentration in any single symbol
   cashReservePct: 0.05,          // 5% cash buffer always kept in reserve
+  gapBufferBps: 20,              // 0.20% gap risk buffer for market orders
+  spreadBufferBps: 5,            // 0.05% half-spread estimate
+  slippageBps: 5,                // 0.05% market impact (matches DEFAULT_SLIPPAGE_BPS)
 };
 
 /** Backtest risk configuration (enables short selling for pairs strategies) */
@@ -45,7 +45,7 @@ export const BACKTEST_RISK_CONFIG: RiskConfig = {
 export const DEFAULT_HEARTBEAT_INTERVAL_MS = 5_000;
 
 /** Default portfolio snapshot interval (ms) */
-export const DEFAULT_SNAPSHOT_INTERVAL_MS = 30_000;
+export const DEFAULT_SNAPSHOT_INTERVAL_MS = 60_000;
 
 /** Default simulated fill delay for backtest/paper modes (ms) */
 export const DEFAULT_SIMULATED_FILL_DELAY_MS = 100;

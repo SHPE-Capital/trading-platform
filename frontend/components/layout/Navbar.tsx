@@ -13,6 +13,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { config } from "../../config";
+import { useSystemHealthData } from "../../context/DataContext";
 
 const NAV_LINKS = [
   { href: "/dashboard",  label: "Dashboard"   },
@@ -24,6 +25,18 @@ const NAV_LINKS = [
 
 export default function Navbar() {
   const pathname = usePathname();
+  const { status, isLoading } = useSystemHealthData();
+
+  const dotColor =
+    isLoading || !status ? "bg-zinc-300" :
+    status.status === "healthy"  ? "bg-green-500" :
+    status.status === "degraded" ? "bg-yellow-400" :
+                                    "bg-red-500";
+  const label =
+    isLoading || !status ? "Connecting…" :
+    status.status === "healthy"  ? status.mode :
+    status.status === "degraded" ? "Degraded" :
+                                    "Unhealthy";
 
   return (
     <nav className="sticky top-0 z-50 flex h-14 items-center justify-between border-b border-zinc-200 bg-white px-6 dark:border-zinc-800 dark:bg-zinc-950">
@@ -54,10 +67,10 @@ export default function Navbar() {
         })}
       </ul>
 
-      {/* Status indicator — placeholder; wire to systemStore */}
-      <div className="flex items-center gap-2 text-xs text-zinc-400">
-        <span className="h-2 w-2 rounded-full bg-zinc-300" />
-        <span>Idle</span>
+      {/* System health indicator */}
+      <div className="flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
+        <span className={`h-2 w-2 rounded-full ${dotColor}`} />
+        <span className="capitalize">{label}</span>
       </div>
     </nav>
   );

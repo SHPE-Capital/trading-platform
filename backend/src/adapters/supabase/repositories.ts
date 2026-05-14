@@ -5,8 +5,6 @@
  * All database interactions in the backend go through this module, keeping
  * Supabase-specific logic isolated from the rest of the system.
  *
- * Inputs:  Domain objects (Order, Fill, PortfolioSnapshot, StrategyRun, etc.)
- * Outputs: Persisted records; query results for API responses.
  */
 
 import { getSupabaseClient } from "./client";
@@ -21,34 +19,49 @@ import type { UUID } from "../../types/common";
 // Orders
 // ------------------------------------------------------------------
 
-/**
- * Persists a submitted order record to the database.
- * @param order - The Order object to insert
- * @returns void
- */
+/** Persists a submitted order record to the database. */
 export async function insertOrder(order: Order, isPaper = true): Promise<void> {
   const supabase = getSupabaseClient();
-  const { error } = await supabase.from("orders").insert({ ...order, is_paper: isPaper });
+  const { error } = await supabase.from("orders").insert({
+    id:              order.id,
+    broker_order_id: order.brokerOrderId ?? null,
+    intent_id:       order.intentId,
+    strategy_id:     order.strategyId,
+    symbol:          order.symbol,
+    side:            order.side,
+    qty:             order.qty,
+    filled_qty:      order.filledQty,
+    avg_fill_price:  order.avgFillPrice ?? null,
+    order_type:      order.orderType,
+    limit_price:     order.limitPrice ?? null,
+    stop_price:      order.stopPrice ?? null,
+    time_in_force:   order.timeInForce,
+    status:          order.status,
+    submitted_at:    new Date(order.submittedAt).toISOString(),
+    updated_at:      new Date(order.updatedAt).toISOString(),
+    closed_at:       order.closedAt ? new Date(order.closedAt).toISOString() : null,
+    meta:            order.meta ?? null,
+    is_paper:        isPaper,
+    // order.fills is omitted — fills are a separate table with FK to orders.id
+  });
   if (error) logger.error("insertOrder failed", { error: error.message });
 }
 
-/**
- * Updates an existing order record (status, fill qty, etc.).
- * @param orderId - Internal order ID
- * @param updates - Partial Order fields to update
- * @returns void
- */
+/** Updates an existing order record (status, fill qty, etc.). */
 export async function updateOrder(orderId: UUID, updates: Partial<Order>): Promise<void> {
   const supabase = getSupabaseClient();
-  const { error } = await supabase.from("orders").update(updates).eq("id", orderId);
+  const payload: Record<string, unknown> = {};
+  if (updates.status !== undefined)        payload.status          = updates.status;
+  if (updates.brokerOrderId !== undefined) payload.broker_order_id = updates.brokerOrderId;
+  if (updates.filledQty !== undefined)     payload.filled_qty      = updates.filledQty;
+  if (updates.avgFillPrice !== undefined)  payload.avg_fill_price  = updates.avgFillPrice;
+  if (updates.updatedAt !== undefined)     payload.updated_at      = new Date(updates.updatedAt).toISOString();
+  if (updates.closedAt !== undefined)      payload.closed_at       = new Date(updates.closedAt).toISOString();
+  const { error } = await supabase.from("orders").update(payload).eq("id", orderId);
   if (error) logger.error("updateOrder failed", { error: error.message, orderId });
 }
 
-/**
- * Fetches all orders for a given strategy run.
- * @param strategyRunId - Strategy run ID to filter by
- * @returns Array of Order records
- */
+/** Fetches all orders for a given strategy run. */
 export async function getOrdersByStrategyRun(strategyRunId: UUID): Promise<Order[]> {
   const supabase = getSupabaseClient();
   const { data, error } = await supabase
@@ -60,21 +73,45 @@ export async function getOrdersByStrategyRun(strategyRunId: UUID): Promise<Order
     logger.error("getOrdersByStrategyRun failed", { error: error.message });
     return [];
   }
-  return (data ?? []) as Order[];
+  return (data ?? []).map((row) => mapOrder(row as Record<string, unknown>));
+}
+
+/** Fetches all orders, newest first, optionally limited. */
+export async function getAllOrders(limit = 500): Promise<Order[]> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase
+    .from("orders")
+    .select("*")
+    .order("submitted_at", { ascending: false })
+    .limit(limit);
+  if (error) {
+    logger.error("getAllOrders failed", { error: error.message });
+    return [];
+  }
+  return (data ?? []).map((row) => mapOrder(row as Record<string, unknown>));
 }
 
 // ------------------------------------------------------------------
 // Fills
 // ------------------------------------------------------------------
 
-/**
- * Persists a fill record to the database.
- * @param fill - The Fill object to insert
- * @returns void
- */
+/** Persists a fill record to the database. */
 export async function insertFill(fill: Fill, isPaper = true): Promise<void> {
   const supabase = getSupabaseClient();
-  const { error } = await supabase.from("fills").insert({ ...fill, is_paper: isPaper });
+  const { error } = await supabase.from("fills").insert({
+    id:         fill.id,
+    order_id:   fill.orderId,
+    symbol:     fill.symbol,
+    side:       fill.side,
+    qty:        fill.qty,
+    price:      fill.price,
+    notional:   fill.notional,
+    commission: fill.commission,
+    ts:         fill.isoTs || new Date(fill.ts).toISOString(),
+    exchange:   fill.exchange ?? null,
+    is_paper:   isPaper,
+    // fill.isoTs is omitted — not a DB column; used only as the ts value above
+  });
   if (error) logger.error("insertFill failed", { error: error.message });
 }
 
@@ -82,21 +119,76 @@ export async function insertFill(fill: Fill, isPaper = true): Promise<void> {
 // Portfolio Snapshots
 // ------------------------------------------------------------------
 
-/**
- * Persists a portfolio snapshot to the database.
- * @param snapshot - The PortfolioSnapshot to insert
- * @returns void
- */
+/** Persists a portfolio snapshot to the database. */
 export async function insertPortfolioSnapshot(snapshot: PortfolioSnapshot): Promise<void> {
   const supabase = getSupabaseClient();
-  const { error } = await supabase.from("portfolio_snapshots").insert(snapshot);
+  const { error } = await supabase.from("portfolio_snapshots").insert({
+    id:                   snapshot.id,
+    ts:                   new Date(snapshot.ts).toISOString(),
+    cash:                 snapshot.cash,
+    positions_value:      snapshot.positionsValue,
+    equity:               snapshot.equity,
+    initial_capital:      snapshot.initialCapital,
+    total_unrealized_pnl: snapshot.totalUnrealizedPnl,
+    total_realized_pnl:   snapshot.totalRealizedPnl,
+    total_pnl:            snapshot.totalPnl,
+    return_pct:           snapshot.returnPct,
+    positions:            snapshot.positions,
+    position_count:       snapshot.positionCount,
+    // snapshot.isoTs and snapshot.strategyBreakdowns are not DB columns
+    // strategy_run_id is not populated here (no run context at snapshot time)
+  });
   if (error) logger.error("insertPortfolioSnapshot failed", { error: error.message });
 }
 
-/**
- * Retrieves the most recent portfolio snapshot from the database.
- * @returns PortfolioSnapshot or null if none exists
- */
+// Maps a raw Supabase orders row (snake_case) to the camelCase Order type.
+function mapOrder(row: Record<string, unknown>): Order {
+  return {
+    id:            row.id as string,
+    brokerOrderId: row.broker_order_id as string | undefined,
+    intentId:      row.intent_id as string,
+    strategyId:    row.strategy_id as string,
+    symbol:        row.symbol as string,
+    side:          row.side as Order["side"],
+    qty:           row.qty as number,
+    filledQty:     (row.filled_qty as number) ?? 0,
+    avgFillPrice:  row.avg_fill_price as number | undefined,
+    orderType:     row.order_type as Order["orderType"],
+    limitPrice:    row.limit_price as number | undefined,
+    stopPrice:     row.stop_price as number | undefined,
+    timeInForce:   row.time_in_force as Order["timeInForce"],
+    status:        row.status as Order["status"],
+    submittedAt:   new Date(row.submitted_at as string).getTime(),
+    updatedAt:     new Date(row.updated_at as string).getTime(),
+    closedAt:      row.closed_at ? new Date(row.closed_at as string).getTime() : undefined,
+    fills:         [],
+    meta:          row.meta as Order["meta"],
+  };
+}
+
+// Maps a raw Supabase portfolio_snapshots row (snake_case, ts as ISO string)
+// to the camelCase PortfolioSnapshot type (ts as EpochMs number).
+function mapPortfolioSnapshot(row: Record<string, unknown>): PortfolioSnapshot {
+  const tsRaw = row.ts as string | number;
+  const ts = typeof tsRaw === "number" ? tsRaw : new Date(tsRaw).getTime();
+  return {
+    id:                 row.id as string,
+    ts,
+    isoTs:              typeof tsRaw === "string" ? tsRaw : new Date(tsRaw).toISOString(),
+    cash:               row.cash as number,
+    positionsValue:     row.positions_value as number,
+    equity:             row.equity as number,
+    initialCapital:     row.initial_capital as number,
+    totalUnrealizedPnl: row.total_unrealized_pnl as number,
+    totalRealizedPnl:   row.total_realized_pnl as number,
+    totalPnl:           row.total_pnl as number,
+    returnPct:          row.return_pct as number,
+    positions:          (row.positions as PortfolioSnapshot["positions"]) ?? [],
+    positionCount:      (row.position_count as number) ?? 0,
+  };
+}
+
+/** Retrieves the most recent portfolio snapshot from the database. */
 export async function getLatestPortfolioSnapshot(): Promise<PortfolioSnapshot | null> {
   const supabase = getSupabaseClient();
   const { data, error } = await supabase
@@ -109,14 +201,10 @@ export async function getLatestPortfolioSnapshot(): Promise<PortfolioSnapshot | 
     logger.error("getLatestPortfolioSnapshot failed", { error: error.message });
     return null;
   }
-  return data as PortfolioSnapshot;
+  return mapPortfolioSnapshot(data as Record<string, unknown>);
 }
 
-/**
- * Retrieves the portfolio equity curve (all snapshots) for charting.
- * @param limit - Maximum number of snapshots to return
- * @returns Array of PortfolioSnapshot records ordered by time ascending
- */
+/** Retrieves the portfolio equity curve (all snapshots) for charting. */
 export async function getPortfolioEquityCurve(limit = 500): Promise<PortfolioSnapshot[]> {
   const supabase = getSupabaseClient();
   const { data, error } = await supabase
@@ -128,7 +216,7 @@ export async function getPortfolioEquityCurve(limit = 500): Promise<PortfolioSna
     logger.error("getPortfolioEquityCurve failed", { error: error.message });
     return [];
   }
-  return (data ?? []) as PortfolioSnapshot[];
+  return (data ?? []).map((row) => mapPortfolioSnapshot(row as Record<string, unknown>));
 }
 
 // ------------------------------------------------------------------
@@ -146,7 +234,7 @@ function mapStrategyRun(row: Record<string, unknown>): StrategyRun {
     config: row.config as StrategyRun["config"],
     status: row.status as StrategyRun["status"],
     executionMode: row.execution_mode as string,
-    startedAt: row.started_at ? new Date(row.started_at as string).getTime() : Date.now(),
+    startedAt: row.started_at ? new Date(row.started_at as string).getTime() : undefined,
     stoppedAt: row.stopped_at ? new Date(row.stopped_at as string).getTime() : undefined,
     totalSignals: (row.total_signals as number) ?? 0,
     totalOrders: (row.total_orders as number) ?? 0,
@@ -178,7 +266,10 @@ export async function insertStrategyRun(run: StrategyRun): Promise<void> {
     meta: run.meta ?? null,
   };
   const { error } = await supabase.from("strategy_runs").insert(payload);
-  if (error) logger.error("insertStrategyRun failed", { error: error.message });
+  if (error) {
+    logger.error("insertStrategyRun failed", { error: error.message });
+    throw new Error(`insertStrategyRun failed: ${error.message}`);
+  }
 }
 
 /**
@@ -193,6 +284,7 @@ export async function updateStrategyRun(runId: UUID, updates: Partial<StrategyRu
   if (updates.totalSignals !== undefined) payload.total_signals  = updates.totalSignals;
   if (updates.totalOrders !== undefined)  payload.total_orders   = updates.totalOrders;
   if (updates.realizedPnl !== undefined)  payload.realized_pnl   = updates.realizedPnl;
+  if (updates.meta !== undefined)         payload.meta           = updates.meta;
   const { error } = await supabase.from("strategy_runs").update(payload).eq("id", runId);
   if (error) logger.error("updateStrategyRun failed", { error: error.message });
 }
@@ -211,6 +303,45 @@ export async function getAllStrategyRuns(): Promise<StrategyRun[]> {
     return [];
   }
   return (data ?? []).map((row) => mapStrategyRun(row as Record<string, unknown>));
+}
+
+
+/** Retrieves a single strategy run by ID. */
+export async function getStrategyRunById(id: UUID): Promise<StrategyRun | null> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase
+    .from("strategy_runs")
+    .select("*")
+    .eq("id", id)
+    .single();
+  if (error) {
+    if (error.code === "PGRST116") return null;
+    logger.error("getStrategyRunById failed", { error: error.message, id });
+    return null;
+  }
+  return mapStrategyRun(data as Record<string, unknown>);
+}
+
+/**
+ * Finds an existing running startup strategy run by its stable startup key
+ * (stored in meta.startupKey). Used on boot to resume rather than create a
+ * duplicate row when the runtime restarts with STARTUP_LEG1/LEG2 set.
+ */
+export async function findRunningStartupRun(startupKey: string): Promise<StrategyRun | null> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase
+    .from("strategy_runs")
+    .select("*")
+    .eq("status", "running")
+    .filter("meta->>startupKey", "eq", startupKey)
+    .order("started_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    logger.error("findRunningStartupRun failed", { error: error.message });
+    return null;
+  }
+  return data ? mapStrategyRun(data as Record<string, unknown>) : null;
 }
 
 // ------------------------------------------------------------------
@@ -380,11 +511,7 @@ export function downsampleEquityCurve<T>(curve: T[], targetPoints = 5000): T[] {
   return downsampled;
 }
 
-/**
- * Persists a full backtest result summary to the backtest_results table.
- * @param result - The BacktestResult to insert
- * @returns void
- */
+/** Persists a full backtest result summary to the backtest_results table. */
 export async function insertBacktestResult(result: BacktestResult): Promise<void> {
   const supabase = getSupabaseClient();
 
@@ -406,9 +533,13 @@ export async function insertBacktestResult(result: BacktestResult): Promise<void
     equity_curve: downsampledEquity,
   };
   
-  // Strip orders and fills from the summary row completely
+  // Strip fields that are not DB columns
   delete payload.orders;
   delete payload.fills;
+  delete payload.reused_from_id;   // serve-time annotation, not a persisted fact
+  delete payload.data_validation;  // derivable by re-running validateBars(); not a run result
+  delete payload.fill_model;       // derivable from config + DEFAULT_FILL_MODEL merge
+  delete payload.assumptions;      // derivable from metrics + config fields
 
   // Persist the FK link to the strategy definition row if the config referenced one
   payload.strategy_id = result.config ? (result.config as { strategyId?: string }).strategyId ?? null : null;
@@ -447,7 +578,9 @@ function stableStringify(val: unknown): string {
 // Returns a stable fingerprint over the fields that define a unique backtest run.
 // Excludes id, name, description, and meta since they don't affect the simulation.
 // Includes strategyVersion so results from outdated algorithm versions are not reused.
-function backtestConfigKey(config: BacktestConfig): string {
+// Exported so the controller can compute the key without an extra DB round-trip
+// (used for in-flight dedup against concurrent identical requests).
+export function backtestConfigKey(config: BacktestConfig): string {
   return stableStringify({
     startDate: config.startDate,
     endDate: config.endDate,
@@ -457,6 +590,10 @@ function backtestConfigKey(config: BacktestConfig): string {
     dataGranularity: config.dataGranularity,
     strategyVersion: config.strategyVersion ?? null,
     strategyConfig: config.strategyConfig,
+    riskConfig: config.riskConfig ?? null,
+    fillModel: config.fillModel ?? null,
+    riskFreeRateAnnual: config.riskFreeRateAnnual ?? 0,
+    benchmarkCurve: config.benchmarkCurve ?? null,
   });
 }
 
@@ -500,10 +637,7 @@ export async function updateBacktestResultStatus(id: string, status: string): Pr
   if (error) logger.error("updateBacktestResultStatus failed", { error: error.message, id });
 }
 
-/**
- * Retrieves all backtest result summaries (without large equity curve payload).
- * @returns Array of BacktestResult records
- */
+/** Retrieves all backtest result summaries (without large equity curve payload). */
 export async function getAllBacktestResults(): Promise<BacktestResult[]> {
   const supabase = getSupabaseClient();
   const { data, error } = await supabase
@@ -517,11 +651,7 @@ export async function getAllBacktestResults(): Promise<BacktestResult[]> {
   return (data ?? []) as unknown as BacktestResult[];
 }
 
-/**
- * Retrieves a single backtest result by ID, including the full equity curve.
- * @param id - Backtest result ID
- * @returns BacktestResult or null
- */
+/** Retrieves a single backtest result by ID, including the full equity curve. */
 export async function getBacktestResultById(id: UUID): Promise<BacktestResult | null> {
   const supabase = getSupabaseClient();
   const { data, error } = await supabase

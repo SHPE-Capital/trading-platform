@@ -22,10 +22,15 @@ const STATUS_BADGE: Record<string, string> = {
   paused:  "bg-yellow-100 text-yellow-700",
   stopped: "bg-zinc-100 text-zinc-500",
   error:   "bg-red-100 text-red-700",
+  stale:   "bg-yellow-100 text-yellow-700",
 };
 
 export default function StrategyStatusCard({ run, onStop }: Props) {
-  const badgeClass = STATUS_BADGE[run.status] ?? STATUS_BADGE["idle"];
+  // A run is stale when the DB says "running" but the engine lost it (server
+  // restart). isLive is the authoritative source from the orchestrator.
+  const isStale = run.status === "running" && run.isLive === false;
+  const displayStatus = isStale ? "stale" : run.status;
+  const badgeClass = STATUS_BADGE[displayStatus] ?? STATUS_BADGE["idle"];
 
   return (
     <div className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
@@ -35,7 +40,7 @@ export default function StrategyStatusCard({ run, onStop }: Props) {
           <p className="text-xs text-zinc-400">{run.strategyType}</p>
         </div>
         <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium capitalize ${badgeClass}`}>
-          {run.status}
+          {displayStatus}
         </span>
       </div>
 
@@ -56,12 +61,21 @@ export default function StrategyStatusCard({ run, onStop }: Props) {
         </div>
       </dl>
 
-      {run.status === "running" && onStop && (
+      {run.isLive && onStop && (
         <button
           onClick={() => onStop(run.id)}
           className="mt-4 w-full rounded-md border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 transition-colors hover:bg-red-50"
         >
           Stop Strategy
+        </button>
+      )}
+
+      {isStale && onStop && (
+        <button
+          onClick={() => onStop(run.id)}
+          className="mt-4 w-full rounded-md border border-yellow-200 px-3 py-1.5 text-xs font-medium text-yellow-700 transition-colors hover:bg-yellow-50"
+        >
+          Clean Up
         </button>
       )}
     </div>

@@ -659,14 +659,17 @@ describe("Orchestrator: ORDER_PARTIAL_FILL", () => {
     const { orch, orderState, portfolioState } = makeOrchestratorWithOrder(bus, "o3", 10);
     orch.start();
 
+    // partial 1: qty 4 @ 100
     bus.publish({
       id: "p1" as UUID, type: "ORDER_PARTIAL_FILL", ts: Date.now(), mode: "paper",
       orderId: "o3" as UUID, fill: makePartialFill("o3", 4, 100), remainingQty: 6,
     });
+    // partial 2: qty 3 @ 101
     bus.publish({
       id: "p2" as UUID, type: "ORDER_PARTIAL_FILL", ts: Date.now(), mode: "paper",
       orderId: "o3" as UUID, fill: makePartialFill("o3", 3, 101), remainingQty: 3,
     });
+    // final fill: qty 3 @ 102
     bus.publish({
       id: "f1" as UUID, type: "ORDER_FILLED", ts: Date.now(), mode: "paper",
       orderId: "o3" as UUID, fill: makePartialFill("o3", 3, 102),
@@ -675,6 +678,7 @@ describe("Orchestrator: ORDER_PARTIAL_FILL", () => {
     const o = orderState.getOrder("o3" as UUID)!;
     expect(o.filledQty).toBe(10);
     expect(o.status).toBe("filled");
+    // Portfolio reflects 10 shares bought
     const pos = portfolioState.getPosition("SPY");
     expect(pos?.qty).toBe(10);
   });
@@ -684,6 +688,7 @@ describe("Orchestrator: ORDER_PARTIAL_FILL", () => {
     const { orch, orderState, portfolioState } = makeOrchestratorWithOrder(bus, "o4", 10);
     orch.start();
 
+    // Partials sum to full qty
     bus.publish({
       id: "p1" as UUID, type: "ORDER_PARTIAL_FILL", ts: Date.now(), mode: "paper",
       orderId: "o4" as UUID, fill: makePartialFill("o4", 6, 100), remainingQty: 4,
@@ -696,6 +701,7 @@ describe("Orchestrator: ORDER_PARTIAL_FILL", () => {
     const cashAfterPartials = portfolioState.getCash();
     const posQtyAfterPartials = portfolioState.getPosition("SPY")?.qty ?? 0;
 
+    // A redundant terminal fill that would double-count if not guarded
     bus.publish({
       id: "f1" as UUID, type: "ORDER_FILLED", ts: Date.now(), mode: "paper",
       orderId: "o4" as UUID, fill: makePartialFill("o4", 10, 100),
@@ -725,5 +731,47 @@ describe("Orchestrator: ORDER_EXPIRED", () => {
 
     expect(orderState.getOrder("o-exp" as UUID)?.status).not.toBe("submitted");
     expect(orderState.getOpenOrders().map((o) => o.id)).not.toContain("o-exp");
+  });
+});
+
+// Tests: hasStrategyWithConfigId
+// ------------------------------------------------------------------
+
+describe("Orchestrator: hasStrategyWithConfigId", () => {
+  it("returns false when no strategies are registered", () => {
+    const bus = new EventBus();
+    const orch = makeOrchestrator(bus);
+    expect(orch.hasStrategyWithConfigId("config-1")).toBe(false);
+  });
+
+  it("returns true when a registered strategy has a matching config ID", () => {
+    const bus = new EventBus();
+    const orch = makeOrchestrator(bus);
+    orch.registerStrategy(makeStrategy("s1")); // makeStrategy sets config.id === id
+    expect(orch.hasStrategyWithConfigId("s1")).toBe(true);
+  });
+
+  it("returns false when no registered strategy has a matching config ID", () => {
+    const bus = new EventBus();
+    const orch = makeOrchestrator(bus);
+    orch.registerStrategy(makeStrategy("s1"));
+    expect(orch.hasStrategyWithConfigId("s2")).toBe(false);
+  });
+
+  it("returns false after the matching strategy has been deregistered", () => {
+    const bus = new EventBus();
+    const orch = makeOrchestrator(bus);
+    orch.registerStrategy(makeStrategy("s1"), "run-1");
+    expect(orch.hasStrategyWithConfigId("s1")).toBe(true);
+    orch.deregisterStrategy("run-1");
+    expect(orch.hasStrategyWithConfigId("s1")).toBe(false);
+  });
+
+  it("matches by config.id regardless of the map key (runId)", () => {
+    const bus = new EventBus();
+    const orch = makeOrchestrator(bus);
+    orch.registerStrategy(makeStrategy("s1"), "run-abc");
+    expect(orch.hasStrategyWithConfigId("s1")).toBe(true);
+    expect(orch.hasStrategyWithConfigId("run-abc")).toBe(false);
   });
 });

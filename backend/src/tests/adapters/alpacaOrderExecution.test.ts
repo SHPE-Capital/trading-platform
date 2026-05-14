@@ -239,6 +239,81 @@ describe('AlpacaOrderExecutionAdapter: trade update events', () => {
     );
   });
 
+  it('partial fills use per-event delta qty when data.qty is provided (fix #7)', () => {
+    // Alpaca trade_updates payload contains both `data.qty` (this event's qty)
+    // and `order.filled_qty` (cumulative across all fills). Previously the
+    // adapter used the cumulative figure on every event, double-counting.
+    const { adapter, eventBus } = makeAdapter();
+    const pubs: unknown[] = [];
+    (eventBus.publish as jest.Mock).mockImplementation((e: unknown) => { pubs.push(e); });
+
+    // First partial: 6 of 10.
+    callTradeStream(adapter, {
+      stream: 'trade_updates',
+      data: {
+        event: 'partial_fill', price: '100', qty: '6',
+        order: {
+          client_order_id: 'intent-1', id: 'alpaca-order-id-1',
+          symbol: 'SPY', side: 'buy', qty: '10', filled_qty: '6',
+        },
+      },
+    });
+
+    // Second partial: 4 more, cumulative=10.
+    callTradeStream(adapter, {
+      stream: 'trade_updates',
+      data: {
+        event: 'fill', price: '101', qty: '4',
+        order: {
+          client_order_id: 'intent-1', id: 'alpaca-order-id-1',
+          symbol: 'SPY', side: 'buy', qty: '10', filled_qty: '10',
+        },
+      },
+    });
+
+    const fillEvents = pubs.filter(
+      (e: any) => e?.type === 'ORDER_PARTIAL_FILL' || e?.type === 'ORDER_FILLED',
+    ) as Array<{ fill: { qty: number; price: number } }>;
+    expect(fillEvents).toHaveLength(2);
+    expect(fillEvents[0].fill.qty).toBe(6);  // not cumulative 6
+    expect(fillEvents[1].fill.qty).toBe(4);  // delta, not cumulative 10
+  });
+
+  it('partial fills derive delta from cumulative when data.qty is absent (fallback)', () => {
+    const { adapter, eventBus } = makeAdapter();
+    const pubs: unknown[] = [];
+    (eventBus.publish as jest.Mock).mockImplementation((e: unknown) => { pubs.push(e); });
+
+    // No data.qty — must fall back to (cumulative - previous).
+    callTradeStream(adapter, {
+      stream: 'trade_updates',
+      data: {
+        event: 'partial_fill', price: '100',
+        order: {
+          client_order_id: 'intent-1', id: 'alpaca-order-id-1',
+          symbol: 'SPY', side: 'buy', qty: '10', filled_qty: '3',
+        },
+      },
+    });
+    callTradeStream(adapter, {
+      stream: 'trade_updates',
+      data: {
+        event: 'fill', price: '101',
+        order: {
+          client_order_id: 'intent-1', id: 'alpaca-order-id-1',
+          symbol: 'SPY', side: 'buy', qty: '10', filled_qty: '10',
+        },
+      },
+    });
+
+    const fillEvents = pubs.filter(
+      (e: any) => e?.type === 'ORDER_PARTIAL_FILL' || e?.type === 'ORDER_FILLED',
+    ) as Array<{ fill: { qty: number } }>;
+    expect(fillEvents).toHaveLength(2);
+    expect(fillEvents[0].fill.qty).toBe(3);
+    expect(fillEvents[1].fill.qty).toBe(7);
+  });
+
   it('publishes ORDER_EXPIRED on expired event', () => {
     const { adapter, eventBus } = makeAdapter();
     callTradeStream(adapter, {
@@ -256,5 +331,148 @@ describe('AlpacaOrderExecutionAdapter: trade update events', () => {
   it('does not throw on malformed JSON', () => {
     const { adapter } = makeAdapter();
     expect(() => callTradeStream(adapter, 'not-valid-json')).not.toThrow();
+  });
+});
+
+describe('AlpacaOrderExecutionAdapter: remainingQty across multi-part partial fills', () => {
+  // Previously `remainingQty` was computed as `order.qty - fill.qty`, treating
+  // the per-event delta as if it were cumulative. After two partials this
+  // gave wildly incorrect residuals. The fix uses the cumulative.
+  it('remainingQty subtracts cumulative, not per-event delta', () => {
+    const { adapter, eventBus } = makeAdapter();
+    const pubs: any[] = [];
+    (eventBus.publish as jest.Mock).mockImplementation((e: any) => { pubs.push(e); });
+
+    // Order qty=10. First partial: delta=6, cumulative=6 → remaining=4.
+    callTradeStream(adapter, {
+      stream: 'trade_updates',
+      data: {
+        event: 'partial_fill', price: '100', qty: '6',
+        order: {
+          client_order_id: 'o-r', id: 'broker-r',
+          symbol: 'SPY', side: 'buy', qty: '10', filled_qty: '6',
+        },
+      },
+    });
+    // Second partial: delta=2, cumulative=8 → remaining=2 (NOT 8).
+    callTradeStream(adapter, {
+      stream: 'trade_updates',
+      data: {
+        event: 'partial_fill', price: '100', qty: '2',
+        order: {
+          client_order_id: 'o-r', id: 'broker-r',
+          symbol: 'SPY', side: 'buy', qty: '10', filled_qty: '8',
+        },
+      },
+    });
+
+    const partials = pubs.filter((e) => e.type === 'ORDER_PARTIAL_FILL');
+    expect(partials).toHaveLength(2);
+    expect(partials[0].remainingQty).toBe(4);
+    expect(partials[1].remainingQty).toBe(2);
+  });
+});
+
+describe('AlpacaOrderExecutionAdapter: lastFilledCumulative cleanup on terminal events', () => {
+  function tracked(adapter: AlpacaOrderExecutionAdapter): number {
+    return (adapter as unknown as { trackedOrderCount: () => number }).trackedOrderCount();
+  }
+
+  it('clears per-order tracking on terminal fill', () => {
+    const { adapter } = makeAdapter();
+    // partial then final fill — cumulative tracking should remain only
+    // during the partial, then be dropped after the final.
+    callTradeStream(adapter, {
+      stream: 'trade_updates',
+      data: {
+        event: 'partial_fill', price: '100', qty: '6',
+        order: { client_order_id: 'o-f', id: 'b1', symbol: 'SPY', side: 'buy', qty: '10', filled_qty: '6' },
+      },
+    });
+    expect(tracked(adapter)).toBe(1);
+    callTradeStream(adapter, {
+      stream: 'trade_updates',
+      data: {
+        event: 'fill', price: '100', qty: '4',
+        order: { client_order_id: 'o-f', id: 'b1', symbol: 'SPY', side: 'buy', qty: '10', filled_qty: '10' },
+      },
+    });
+    expect(tracked(adapter)).toBe(0);
+  });
+
+  it('clears per-order tracking on canceled / expired / rejected', () => {
+    const { adapter } = makeAdapter();
+
+    // Seed an entry via a partial.
+    callTradeStream(adapter, {
+      stream: 'trade_updates',
+      data: {
+        event: 'partial_fill', price: '100', qty: '5',
+        order: { client_order_id: 'o-c', id: 'b1', symbol: 'SPY', side: 'buy', qty: '10', filled_qty: '5' },
+      },
+    });
+    expect(tracked(adapter)).toBe(1);
+
+    // Canceled terminal event → cleared.
+    callTradeStream(adapter, {
+      stream: 'trade_updates',
+      data: { event: 'canceled', order: { client_order_id: 'o-c', id: 'b1' } },
+    });
+    expect(tracked(adapter)).toBe(0);
+
+    // Seed another, expire it.
+    callTradeStream(adapter, {
+      stream: 'trade_updates',
+      data: {
+        event: 'partial_fill', price: '100', qty: '5',
+        order: { client_order_id: 'o-e', id: 'b2', symbol: 'SPY', side: 'buy', qty: '10', filled_qty: '5' },
+      },
+    });
+    expect(tracked(adapter)).toBe(1);
+    callTradeStream(adapter, {
+      stream: 'trade_updates',
+      data: { event: 'expired', order: { client_order_id: 'o-e', id: 'b2' } },
+    });
+    expect(tracked(adapter)).toBe(0);
+
+    // Seed another, reject it.
+    callTradeStream(adapter, {
+      stream: 'trade_updates',
+      data: {
+        event: 'partial_fill', price: '100', qty: '5',
+        order: { client_order_id: 'o-rj', id: 'b3', symbol: 'SPY', side: 'buy', qty: '10', filled_qty: '5' },
+      },
+    });
+    expect(tracked(adapter)).toBe(1);
+    callTradeStream(adapter, {
+      stream: 'trade_updates',
+      data: {
+        event: 'rejected', reason: 'x',
+        order: { client_order_id: 'o-rj', id: 'b3' },
+      },
+    });
+    expect(tracked(adapter)).toBe(0);
+  });
+
+  it('does not leak entries across many fully-filled orders', () => {
+    const { adapter } = makeAdapter();
+    for (let i = 0; i < 50; i++) {
+      const cid = `lk-${i}`;
+      callTradeStream(adapter, {
+        stream: 'trade_updates',
+        data: {
+          event: 'partial_fill', price: '100', qty: '3',
+          order: { client_order_id: cid, id: `bk-${i}`, symbol: 'SPY', side: 'buy', qty: '5', filled_qty: '3' },
+        },
+      });
+      callTradeStream(adapter, {
+        stream: 'trade_updates',
+        data: {
+          event: 'fill', price: '101', qty: '2',
+          order: { client_order_id: cid, id: `bk-${i}`, symbol: 'SPY', side: 'buy', qty: '5', filled_qty: '5' },
+        },
+      });
+    }
+    expect(tracked(adapter)).toBe(0);
   });
 });

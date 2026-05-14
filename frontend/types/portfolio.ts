@@ -73,10 +73,20 @@ export interface PerformanceMetrics {
   totalReturnPct: number;
   maxDrawdown: number;
   sharpeRatio?: number;
+  sortinoRatio?: number;
+  calmarRatio?: number;
+  profitFactor?: number;
   winRate: number;
   totalTrades: number;
   avgWin: number;
   avgLoss: number;
   periodStart: number;
   periodEnd: number;
+  meta?: {
+    annualizedReturn?: number;
+    annualizedVol?: number;
+    riskFreeRateAnnual?: number;
+    benchmarkReturn?: number;
+    returnPeriods?: number;
+  };
 }

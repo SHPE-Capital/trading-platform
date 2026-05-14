@@ -62,6 +62,44 @@ export interface RiskConfig {
   maxConcentrationPct?: number;
   /** Minimum cash reserve as a fraction of total equity — orders rejected if breached */
   cashReservePct?: number;
+  /** Maximum gross exposure (sum of |positions|) as a fraction of equity */
+  maxGrossExposurePct?: number;
+  /** Maximum net exposure (|longs - shorts|) as a fraction of equity */
+  maxNetExposurePct?: number;
+  /** Gap risk buffer in basis points — applied adversely at signal time for market orders */
+  gapBufferBps: number;
+  /** Half-spread estimate in basis points — added to gap buffer */
+  spreadBufferBps: number;
+  /** Market impact beyond spread in basis points — added to gap and spread buffers */
+  slippageBps: number;
+}
+
+// ------------------------------------------------------------------
+// Strategy Risk Budget
+// ------------------------------------------------------------------
+
+/** Per-strategy capital allocation limits registered with the risk engine */
+export interface StrategyRiskBudget {
+  strategyId: string;
+  /** Max capital as a fraction of portfolio equity. e.g. 0.20 = 20%. */
+  maxCapitalPct: number;
+  /** Max single-order notional as a fraction of equity. e.g. 0.05 = 5%. */
+  maxOrderNotionalPct?: number;
+  /** Max simultaneous open orders from this strategy. */
+  maxOpenOrders?: number;
+}
+
+// ------------------------------------------------------------------
+// Portfolio Risk Violation
+// ------------------------------------------------------------------
+
+/** Result of a post-fill portfolio risk check */
+export interface PortfolioRiskViolation {
+  check: string;
+  reason: string;
+  engageKillSwitch: boolean;
+  grossExposurePct?: number;
+  netExposurePct?: number;
 }
 
 // ------------------------------------------------------------------
