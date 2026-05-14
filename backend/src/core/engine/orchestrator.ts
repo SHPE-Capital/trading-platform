@@ -38,7 +38,10 @@ import type {
   TradeReceivedEvent,
   BarReceivedEvent,
   OrderFilledEvent,
+  OrderPartialFillEvent,
   OrderCanceledEvent,
+  OrderRejectedEvent,
+  OrderExpiredEvent,
 } from "../../types/events";
 
 export class Orchestrator {
@@ -141,8 +144,11 @@ export class Orchestrator {
 
     // Wire fills and state updates back into portfolio, order state, and OMS
     this.eventBus.on("ORDER_SUBMITTED", (e) => this._onOrderSubmitted(e as any));
+    this.eventBus.on("ORDER_PARTIAL_FILL", (e) => this._onOrderPartialFill(e as OrderPartialFillEvent));
     this.eventBus.on("ORDER_FILLED", (e) => this._onOrderFilled(e as OrderFilledEvent));
     this.eventBus.on("ORDER_CANCELED", (e) => this._onOrderCanceled(e as OrderCanceledEvent));
+    this.eventBus.on("ORDER_REJECTED", (e) => this._onOrderRejected(e as OrderRejectedEvent));
+    this.eventBus.on("ORDER_EXPIRED", (e) => this._onOrderExpired(e as OrderExpiredEvent));
 
     // Start all registered strategies and emit per-strategy lifecycle events
     for (const strategy of this.strategies.values()) {
@@ -370,11 +376,25 @@ export class Orchestrator {
     this.orderState.addOrder(event.payload);
   }
 
+  private _onOrderPartialFill(event: OrderPartialFillEvent): void {
+    this.orderState.applyFill(event.orderId, event.fill);
+    this.portfolioState.applyFill(event.fill);
+    this.eventBus.publish({
+      id: newId(), type: "PORTFOLIO_UPDATED", ts: nowMs(), mode: this.mode,
+      payload: this.portfolioState.getSnapshot(),
+    });
+  }
+
   private _onOrderFilled(event: OrderFilledEvent): void {
+    // Guard: if partials already consumed the full qty, skip re-applying.
+    const order = this.orderState.getOrder(event.orderId);
+    if (order && order.status === "filled" && order.filledQty >= order.qty) {
+      return;
+    }
     this.orderState.applyFill(event.orderId, event.fill);
     this.portfolioState.applyFill(event.fill);
 
-    // Release OMS capital reservation for the filled intent
+    // Release OMS capital reservation for the filled intent.
     this.orderManager.onOrderFilled(event.orderId);
 
     this.eventBus.publish({
@@ -385,8 +405,16 @@ export class Orchestrator {
 
   private _onOrderCanceled(event: OrderCanceledEvent): void {
     this.orderState.markCanceled(event.orderId);
+    this.orderManager.onOrderCanceled(event.orderId);
+  }
 
-    // Release OMS capital reservation for the canceled intent
+  private _onOrderRejected(event: OrderRejectedEvent): void {
+    this.orderState.markRejected(event.orderId);
+    this.orderManager.onOrderCanceled(event.orderId);
+  }
+
+  private _onOrderExpired(event: OrderExpiredEvent): void {
+    this.orderState.markCanceled(event.orderId);
     this.orderManager.onOrderCanceled(event.orderId);
   }
 }
