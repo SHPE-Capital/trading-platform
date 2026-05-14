@@ -13,10 +13,11 @@
 
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import type { BacktestConfig } from "../../types/api";
 import { useStrategyConfigs } from "../../hooks/useStrategyConfigs";
 import { daysAgoString } from "../../utils/dates";
+import RiskBudgetSection, { type RiskBudgetState, defaultRiskBudgetState } from "../shared/RiskBudgetSection";
 
 interface Props {
   onSubmit: (config: Omit<BacktestConfig, "id">) => Promise<void>;
@@ -45,6 +46,15 @@ export default function BacktestForm({ onSubmit, isLoading }: Props) {
   const [initialCapital, setInitialCapital] = useState(100_000);
   const [slippageBps, setSlippageBps] = useState(5);
 
+  // Per-strategy risk budget (matches StrategyForm)
+  const [riskBudget, setRiskBudget] = useState<RiskBudgetState>(defaultRiskBudgetState);
+
+  // Risk config overrides (collapsed by default)
+  const [showRiskConfig, setShowRiskConfig] = useState(false);
+  const [gapBufferBps, setGapBufferBps] = useState(20);
+  const [maxIntradayDrawdownPct, setMaxIntradayDrawdownPct] = useState(5);
+  const [cashReservePct, setCashReservePct] = useState(5);
+
   // Populate strategy fields whenever the selected config changes
   useEffect(() => {
     const src: Record<string, unknown> =
@@ -63,11 +73,29 @@ export default function BacktestForm({ onSubmit, isLoading }: Props) {
     setHedgeRatioMethod((src.hedgeRatioMethod as "fixed" | "rolling_ols" | undefined) ?? "fixed");
     setOlsWindowMins(Math.round(((src.olsWindowMs as number | undefined) ?? 14_400_000) / 60_000));
     setOlsRecalcIntervalBars((src.olsRecalcIntervalBars as number | undefined) ?? 5);
+    const rb = src.riskBudget as { maxCapitalPct?: number; maxOpenOrders?: number; maxOrderNotionalPct?: number } | undefined;
+    setRiskBudget({
+      maxCapitalPct: Math.round((rb?.maxCapitalPct ?? 0.20) * 100),
+      maxOpenOrders: rb?.maxOpenOrders ?? null,
+      maxOrderNotionalPct: rb?.maxOrderNotionalPct != null
+        ? Math.round(rb.maxOrderNotionalPct * 100)
+        : null,
+    });
   }, [selectedId, definition, strategies]);
+
+  const orderSizeConflict = useMemo(() => {
+    if (riskBudget.maxOrderNotionalPct === null) return undefined;
+    const capUsd = initialCapital * (riskBudget.maxOrderNotionalPct / 100);
+    if (tradeNotionalUsd > capUsd) {
+      return `Trade notional ($${tradeNotionalUsd.toLocaleString()}) exceeds the per-order cap ($${capUsd.toLocaleString()} at ${riskBudget.maxOrderNotionalPct}%). No orders will execute.`;
+    }
+    return undefined;
+  }, [riskBudget.maxOrderNotionalPct, tradeNotionalUsd, initialCapital]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const selectedStrategy = strategies.find((s) => s.id === selectedId);
+
     await onSubmit({
       name: `${leg1}/${leg2} Pairs Backtest ${startDate} → ${endDate}`,
       strategyConfig: {
@@ -91,6 +119,13 @@ export default function BacktestForm({ onSubmit, isLoading }: Props) {
         priceSource: "mid",
         olsWindowMs: olsWindowMins * 60_000,
         olsRecalcIntervalBars,
+        riskBudget: {
+          maxCapitalPct: riskBudget.maxCapitalPct / 100,
+          ...(riskBudget.maxOpenOrders !== null && { maxOpenOrders: riskBudget.maxOpenOrders }),
+          ...(riskBudget.maxOrderNotionalPct !== null && {
+            maxOrderNotionalPct: riskBudget.maxOrderNotionalPct / 100,
+          }),
+        },
       },
       startDate: new Date(startDate).toISOString(),
       endDate: new Date(endDate).toISOString(),
@@ -100,6 +135,11 @@ export default function BacktestForm({ onSubmit, isLoading }: Props) {
       commissionPerShare: 0.005,
       strategyId: selectedStrategy?.id,
       strategyVersion: selectedStrategy?.version,
+      riskConfig: {
+        gapBufferBps,
+        maxIntradayDrawdownPct: maxIntradayDrawdownPct / 100,
+        cashReservePct: cashReservePct / 100,
+      },
     });
   };
 
@@ -189,6 +229,61 @@ export default function BacktestForm({ onSubmit, isLoading }: Props) {
         <Field label="Slippage (bps)">
           <input type="number" min="0" max="100" step="1" value={slippageBps} onChange={(e) => setSlippageBps(Number(e.target.value))} className={inputClass} />
         </Field>
+      </div>
+
+      {/* Portfolio Allocation */}
+      <div className="flex flex-col gap-3 rounded-md border border-zinc-200 p-3 dark:border-zinc-700">
+        <p className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">Portfolio Allocation</p>
+        <RiskBudgetSection value={riskBudget} onChange={setRiskBudget} orderSizeConflict={orderSizeConflict} />
+      </div>
+
+      {/* Risk Config (collapsible) */}
+      <div className="flex flex-col gap-2 rounded-md border border-zinc-200 p-3 dark:border-zinc-700">
+        <button
+          type="button"
+          onClick={() => setShowRiskConfig((v) => !v)}
+          className="flex items-center justify-between text-xs font-semibold text-zinc-700 dark:text-zinc-300"
+        >
+          <span>Risk Config</span>
+          <span>{showRiskConfig ? "▲" : "▼"}</span>
+        </button>
+        {showRiskConfig && (
+          <div className="grid grid-cols-2 gap-3 pt-1">
+            <Field label="Gap Buffer (bps)">
+              <input
+                type="number"
+                min="0"
+                max="200"
+                step="1"
+                value={gapBufferBps}
+                onChange={(e) => setGapBufferBps(Number(e.target.value))}
+                className={inputClass}
+              />
+            </Field>
+            <Field label="Max Intraday Drawdown (%)">
+              <input
+                type="number"
+                min="0"
+                max="100"
+                step="0.5"
+                value={maxIntradayDrawdownPct}
+                onChange={(e) => setMaxIntradayDrawdownPct(Number(e.target.value))}
+                className={inputClass}
+              />
+            </Field>
+            <Field label="Cash Reserve (%)">
+              <input
+                type="number"
+                min="0"
+                max="100"
+                step="0.5"
+                value={cashReservePct}
+                onChange={(e) => setCashReservePct(Number(e.target.value))}
+                className={inputClass}
+              />
+            </Field>
+          </div>
+        )}
       </div>
 
       <button

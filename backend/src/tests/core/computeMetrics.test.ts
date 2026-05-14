@@ -59,19 +59,50 @@ describe("BacktestEngine._computeMetrics", () => {
     expect(metrics.totalReturn).toBe(200);
   });
 
-  test("Partial closes do not double-count totalTrades", () => {
+  test("Partial closes — open 10, close 5, close 5 — count as 2 trades and preserve PnL on both slices", () => {
+    // Fix #5: previous FIFO dropped the residual when the closer qty < opener qty.
+    // With lot accounting, the 10-share buy is split into two 5-share slices,
+    // each matched against one of the closers. Trade-count definition: one
+    // realized PnL entry per closer-vs-opener slice.
     const fills: Fill[] = [
       createFill("SPY", "buy", 10, 100),
-      createFill("SPY", "sell", 5, 110), // Half closed
-      createFill("SPY", "sell", 5, 115), // Other half closed
+      createFill("SPY", "sell", 5, 110), // slice 1: PnL = (110-100)*5 = 50
+      createFill("SPY", "sell", 5, 115), // slice 2: PnL = (115-100)*5 = 75
     ];
 
-    const ec = [createSnapshot(100000), createSnapshot(100100)];
+    const ec = [createSnapshot(100000), createSnapshot(100125)];
     const metrics = engine._computeMetrics(ec, fills, 100000, 0, 1000);
 
-    // Simple FIFO matcher shifts the entire buy on the first sell, leaving the second sell
-    // unmatched. Known limitation: partial closes count as 1 trade, not 2.
-    expect(metrics.totalTrades).toBe(1);
+    expect(metrics.totalTrades).toBe(2);
+    expect(metrics.winRate).toBe(1.0);
+    // avgWin = (50+75)/2 = 62.5
+    expect(metrics.avgWin).toBeCloseTo(62.5, 4);
+  });
+
+  test("Short cover symmetric — short 10, cover 5, cover 5 — counts as 2 trades", () => {
+    const fills: Fill[] = [
+      createFill("SPY", "sell", 10, 110),
+      createFill("SPY", "buy", 5, 100), // slice 1: PnL = (110-100)*5 = 50
+      createFill("SPY", "buy", 5, 95),  // slice 2: PnL = (110-95)*5 = 75
+    ];
+    const ec = [createSnapshot(100000), createSnapshot(100125)];
+    const metrics = engine._computeMetrics(ec, fills, 100000, 0, 1000);
+    expect(metrics.totalTrades).toBe(2);
+    expect(metrics.winRate).toBe(1.0);
+    expect(metrics.avgWin).toBeCloseTo(62.5, 4);
+  });
+
+  test("Closer larger than opener — buy 5 then sell 10 — closes 5 and opens a 5-share short", () => {
+    const fills: Fill[] = [
+      createFill("SPY", "buy", 5, 100),
+      createFill("SPY", "sell", 10, 110), // 5 closes long, 5 opens short
+      createFill("SPY", "buy", 5, 105),   // covers the new short: PnL = (110-105)*5 = 25
+    ];
+    const ec = [createSnapshot(100000), createSnapshot(100075)];
+    const metrics = engine._computeMetrics(ec, fills, 100000, 0, 1000);
+    // First slice (close long): (110-100)*5 = 50. Second slice (cover short): 25.
+    expect(metrics.totalTrades).toBe(2);
+    expect(metrics.avgWin).toBeCloseTo((50 + 25) / 2, 4);
   });
 
   test("totalReturn is sourced from ledger (equity curve), not fills sum", () => {

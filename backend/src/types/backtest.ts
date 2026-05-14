@@ -13,6 +13,9 @@ import type { UUID, EpochMs, ISOTimestamp, Metadata } from "./common";
 import type { BaseStrategyConfig } from "./strategy";
 import type { PortfolioSnapshot, PerformanceMetrics } from "./portfolio";
 import type { Order, Fill } from "./orders";
+import type { FillModelConfig } from "../core/execution/fillModel";
+import type { ValidationIssue, ValidationMetadata } from "../core/backtest/dataValidation";
+import type { RiskConfig } from "./risk";
 
 // ------------------------------------------------------------------
 // Backtest Config
@@ -50,6 +53,34 @@ export interface BacktestConfig {
   strategyVersion?: number;
   /** Optional description */
   description?: string;
+  /**
+   * Optional fill model override. When omitted, the engine uses
+   * DEFAULT_FILL_MODEL merged with the top-level `slippageBps` /
+   * `commissionPerShare` fields so existing configs keep working.
+   */
+  fillModel?: Partial<FillModelConfig>;
+  /**
+   * Annualized risk-free rate used by Sharpe/Sortino. Default: 0.
+   */
+  riskFreeRateAnnual?: number;
+  /**
+   * Optional benchmark equity/return series (chronologically ordered).
+   * The engine does NOT fetch benchmark data — supply it explicitly. When
+   * omitted, benchmark fields in the result are left undefined.
+   */
+  benchmarkCurve?: { ts: EpochMs; value: number }[];
+  /**
+   * When true, abort the run if data validation reports any error-severity
+   * issue. When false (default) the engine drops the offending bars and
+   * surfaces a warning in the result.
+   */
+  strictDataValidation?: boolean;
+  /**
+   * Risk configuration override for this run. Merged with BACKTEST_RISK_CONFIG.
+   * Included in the deduplication fingerprint so runs with different risk limits
+   * are never treated as identical.
+   */
+  riskConfig?: Partial<RiskConfig>;
   /** Optional extra config */
   meta?: Metadata;
 }
@@ -84,10 +115,16 @@ export interface BacktestResult {
    * Used to draw the equity curve chart in the frontend.
    */
   equity_curve: PortfolioSnapshot[];
-  /** All orders placed during the backtest */
-  orders: Order[];
-  /** All fills during the backtest */
-  fills: Fill[];
+  /**
+   * All orders placed during the backtest. Omitted from the in-memory result
+   * cache and the main GET /api/backtests/:id response (served from the cache
+   * for 10 minutes after completion) to avoid OOM on long runs. Available in
+   * the DB-backed response after the cache window expires, or via a dedicated
+   * orders/fills endpoint when one is added.
+   */
+  orders?: Order[];
+  /** All fills during the backtest. Subject to same caching caveat as orders. */
+  fills?: Fill[];
   /** Number of events processed */
   event_count: number;
   /**
@@ -95,4 +132,33 @@ export interface BacktestResult {
    * Contains the original backtest_results.id that was reused.
    */
   reused_from_id?: string;
+  /**
+   * Data validation issues and counts collected before the run started.
+   * Useful for downstream visibility into excluded bars and gap warnings.
+   */
+  data_validation?: {
+    issues: ValidationIssue[];
+    metadata: ValidationMetadata;
+  };
+  /**
+   * Fill model that was effectively in use for this run (after applying
+   * defaults and config overrides). Consumers can inspect this to know
+   * exactly which assumptions produced the fills/equity curve.
+   */
+  fill_model?: FillModelConfig;
+  /**
+   * Analytics availability and assumptions. Mirrors fields populated on
+   * PerformanceMetrics but also includes which ratios were skipped due to
+   * insufficient data.
+   */
+  assumptions?: {
+    /** Number of return periods that fed into ratio computations. */
+    periodCount: number;
+    /** True if Sharpe/Sortino/Calmar were skipped due to short series. */
+    insufficientReturnsForRatios: boolean;
+    /** Whether the benchmark was supplied. */
+    benchmarkProvided: boolean;
+    /** Risk-free rate used. */
+    riskFreeRateAnnual: number;
+  };
 }

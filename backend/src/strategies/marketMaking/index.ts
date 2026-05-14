@@ -1,27 +1,33 @@
 /**
  * strategies/marketMaking/index.ts
  *
- * Avellaneda-Stoikov inventory-aware market making strategy placeholder.
- * This module is intentionally minimal — the market making strategy will be
- * implemented in a future phase.
+ * Re-exports the Avellaneda-Stoikov inventory-aware market making strategy.
  *
- * Planned approach (Avellaneda-Stoikov model):
- *   - Continuously compute a reservation price adjusted for current inventory.
- *   - Compute optimal bid/ask spread based on volatility, risk aversion, and time horizon.
- *   - Post two-sided quotes around the reservation price.
- *   - Widen spread and shift quotes to reduce inventory risk.
- *   - Refresh quotes on every relevant quote update event.
+ * Model summary:
+ *   reservationPrice = mid − (inventory − target) × γ × σ² × (T − t)
+ *   halfSpread       = ½ · ( γ × σ² × (T − t) + (2/γ) × ln(1 + γ/κ) )
+ *   bid = reservation − halfSpread,  ask = reservation + halfSpread
  *
- * Key model components:
- *   - reservationPrice = midPrice - inventory × gamma × sigma² × (T - t)
- *   - optimalSpread = gamma × sigma² × (T - t) + (2/gamma) × ln(1 + gamma/kappa)
+ * See ./avellanedaStoikovStrategy.ts and backend/docs/strategies/avellaneda_stoikov.md
+ * for full documentation, parameter reference, and limitations.
  *
- * Inputs:  EvaluationContext with quote state, rolling volatility, inventory.
- * Outputs: Two StrategySignals (bid and ask quotes), or null.
+ * Inputs:  EvaluationContext with quote/mid state and current inventory.
+ * Outputs: A StrategySignal with two-sided quotes in meta.makerQuotes,
+ *          or null when no quote should be emitted.
  */
 
-export {};
-
-// TODO: Implement MarketMakingStrategy extends BaseStrategy
-// TODO: Implement createMarketMakingConfig()
-// TODO: Define MarketMakingStrategyConfig and AvellanedaStoikovParams interfaces
+export { AvellanedaStoikovStrategy } from "./avellanedaStoikovStrategy";
+export {
+  createAvellanedaStoikovConfig,
+  getAvellanedaStoikovPreset,
+  validateAvellanedaStoikovConfig,
+  DEFAULT_AVELLANEDA_STOIKOV_CONFIG,
+} from "./avellanedaStoikovConfig";
+export type {
+  AvellanedaStoikovConfig,
+  AvellanedaStoikovInternalState,
+  MakerQuote,
+  MakerQuotesMeta,
+  VolatilityEstimator,
+} from "./avellanedaStoikovTypes";
+export type { AvellanedaStoikovPreset } from "./avellanedaStoikovConfig";

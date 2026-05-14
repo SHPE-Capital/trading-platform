@@ -34,6 +34,7 @@ export async function fetchBacktest(id: string): Promise<BacktestResult> {
  */
 export async function runBacktest(
   config: Omit<BacktestConfig, "id">,
+  force = false,
 ): Promise<{ backtestId: string; message: string }> {
-  return apiPost("/backtests/run", config);
+  return apiPost("/backtests/run", force ? { ...config, force } : config);
 }

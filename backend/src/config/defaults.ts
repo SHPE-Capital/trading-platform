@@ -29,6 +29,9 @@ export const DEFAULT_RISK_CONFIG: RiskConfig = {
   maxIntradayDrawdownPct: 0.05,  // 5% intraday drawdown limit — engages kill switch
   maxConcentrationPct: 0.30,     // 30% max concentration in any single symbol
   cashReservePct: 0.05,          // 5% cash buffer always kept in reserve
+  gapBufferBps: 20,              // 0.20% gap risk buffer for market orders
+  spreadBufferBps: 5,            // 0.05% half-spread estimate
+  slippageBps: 5,                // 0.05% market impact (matches DEFAULT_SLIPPAGE_BPS)
 };
 
 /** Backtest risk configuration (enables short selling for pairs strategies) */

@@ -23,11 +23,13 @@ interface BacktestProgress {
 interface UseBacktestResult {
   results: BacktestResult[];
   selectedResult: BacktestResult | null;
+  previousResult: BacktestResult | null;
   isLoading: boolean;
   isRunning: boolean;
   progress: BacktestProgress | null;
   error: string | null;
   run: (config: Omit<BacktestConfig, "id">) => Promise<string>;
+  rerun: (config: Omit<BacktestConfig, "id">) => Promise<string>;
   loadResult: (id: string, prefetched?: BacktestResult) => Promise<void>;
   refetch: () => void;
 }
@@ -39,6 +41,7 @@ interface UseBacktestResult {
 export function useBacktest(): UseBacktestResult {
   const [results, setResults] = useState<BacktestResult[]>([]);
   const [selectedResult, setSelectedResult] = useState<BacktestResult | null>(null);
+  const [previousResult, setPreviousResult] = useState<BacktestResult | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRunning, setIsRunning] = useState(false);
   const [progress, setProgress] = useState<BacktestProgress | null>(null);
@@ -62,12 +65,12 @@ export function useBacktest(): UseBacktestResult {
   // Close any open SSE connection when the component unmounts
   useEffect(() => () => { esRef.current?.close(); }, []);
 
-  const run = useCallback(async (config: Omit<BacktestConfig, "id">): Promise<string> => {
+  const run = useCallback(async (config: Omit<BacktestConfig, "id">, force = false): Promise<string> => {
     setIsRunning(true);
     setProgress(null);
     setError(null);
     try {
-      const { backtestId } = await runBacktest(config);
+      const { backtestId } = await runBacktest(config, force);
       await fetchData();
 
       // Open SSE stream for real-time progress.
@@ -116,5 +119,14 @@ export function useBacktest(): UseBacktestResult {
     setSelectedResult(result);
   }, []);
 
-  return { results, selectedResult, isLoading, isRunning, progress, error, run, loadResult, refetch: fetchData };
+  // Stores the current result as "previous" then forces a fresh run (bypasses dedup).
+  const selectedResultRef = useRef<BacktestResult | null>(null);
+  selectedResultRef.current = selectedResult;
+  const rerun = useCallback(async (config: Omit<BacktestConfig, "id">): Promise<string> => {
+    setPreviousResult(selectedResultRef.current);
+    setSelectedResult(null);
+    return run(config, true);
+  }, [run]);
+
+  return { results, selectedResult, previousResult, isLoading, isRunning, progress, error, run, rerun, loadResult, refetch: fetchData };
 }

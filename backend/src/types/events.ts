@@ -15,6 +15,7 @@ import type { OrderIntent, Order, Fill } from "./orders";
 import type { PortfolioSnapshot } from "./portfolio";
 import type { StrategySignal } from "./strategy";
 import type { ReplayStatus, ReplaySpeed } from "./replay";
+import type { PortfolioRiskViolation } from "./risk";
 
 // ------------------------------------------------------------------
 // Event Type Enum
@@ -55,7 +56,9 @@ export type EventType =
   | "ENGINE_STOPPED"
   | "HEARTBEAT"
   // Replay events
-  | "REPLAY_TICK";
+  | "REPLAY_TICK"
+  // Post-fill portfolio risk
+  | "PORTFOLIO_RISK_VIOLATION";
 
 // ------------------------------------------------------------------
 // Base Event
@@ -309,6 +312,19 @@ export interface ReplayTickEvent extends BaseEvent {
 }
 
 // ------------------------------------------------------------------
+// Portfolio Risk Events
+// ------------------------------------------------------------------
+
+export interface PortfolioRiskViolationEvent extends BaseEvent {
+  type: "PORTFOLIO_RISK_VIOLATION";
+  check: string;
+  reason: string;
+  engageKillSwitch: boolean;
+  grossExposurePct?: number;
+  netExposurePct?: number;
+}
+
+// ------------------------------------------------------------------
 // Discriminated Union
 // ------------------------------------------------------------------
 
@@ -339,7 +355,8 @@ export type TradingEvent =
   | EngineStartedEvent
   | EngineStoppedEvent
   | HeartbeatEvent
-  | ReplayTickEvent;
+  | ReplayTickEvent
+  | PortfolioRiskViolationEvent;
 
 /** Typed event handler callback */
 export type EventHandler<E extends TradingEvent = TradingEvent> = (event: E) => void | Promise<void>;

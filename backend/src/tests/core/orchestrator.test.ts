@@ -500,6 +500,240 @@ describe("Orchestrator: PORTFOLIO_UPDATED on ORDER_FILLED", () => {
 });
 
 // ------------------------------------------------------------------
+// Tests: ORDER_REJECTED handling
+// ------------------------------------------------------------------
+
+/**
+ * Construct an Orchestrator and seed an Order in OrderStateManager so terminal
+ * lifecycle handlers have something to transition. Returns both for inspection.
+ */
+function makeOrchestratorWithOrder(bus: EventBus, orderId: string, qty = 10) {
+  const symbolState = new SymbolStateManager();
+  const portfolioState = new PortfolioStateManager(100_000);
+  const orderState = new OrderStateManager();
+  const orch = new Orchestrator(
+    bus,
+    symbolState,
+    portfolioState,
+    orderState,
+    new RiskEngine(),
+    { submit: jest.fn() } as unknown as ExecutionEngine,
+    "paper",
+  );
+  orderState.addOrder({
+    id: orderId as UUID,
+    intentId: orderId as UUID,
+    strategyId: "s1",
+    symbol: "SPY",
+    side: "buy",
+    qty,
+    filledQty: 0,
+    orderType: "market",
+    timeInForce: "ioc",
+    status: "submitted",
+    submittedAt: Date.now(),
+    updatedAt: Date.now(),
+    fills: [],
+  });
+  return { orch, orderState, portfolioState };
+}
+
+describe("Orchestrator: ORDER_REJECTED", () => {
+  it("transitions the order from submitted to rejected", () => {
+    const bus = new EventBus();
+    const { orch, orderState } = makeOrchestratorWithOrder(bus, "order-rj");
+    orch.start();
+
+    bus.publish({
+      id: "e-rj" as UUID,
+      type: "ORDER_REJECTED",
+      ts: Date.now(),
+      mode: "paper",
+      orderId: "order-rj" as UUID,
+      reason: "broker said no",
+    });
+
+    expect(orderState.getOrder("order-rj" as UUID)?.status).toBe("rejected");
+  });
+
+  it("does not emit PORTFOLIO_UPDATED on rejection (no fill occurred)", () => {
+    const bus = new EventBus();
+    const events = captureEvents(bus);
+    const { orch } = makeOrchestratorWithOrder(bus, "order-rj");
+    orch.start();
+    events.length = 0;
+
+    bus.publish({
+      id: "e-rj" as UUID,
+      type: "ORDER_REJECTED",
+      ts: Date.now(),
+      mode: "paper",
+      orderId: "order-rj" as UUID,
+      reason: "no price",
+    });
+
+    expect(events.filter((e) => e.type === "PORTFOLIO_UPDATED")).toHaveLength(0);
+  });
+
+  it("rejected order is not returned by getOpenOrders()", () => {
+    const bus = new EventBus();
+    const { orch, orderState } = makeOrchestratorWithOrder(bus, "order-rj");
+    orch.start();
+
+    bus.publish({
+      id: "e-rj" as UUID,
+      type: "ORDER_REJECTED",
+      ts: Date.now(),
+      mode: "paper",
+      orderId: "order-rj" as UUID,
+      reason: "x",
+    });
+
+    expect(orderState.getOpenOrders().map((o) => o.id)).not.toContain("order-rj");
+  });
+});
+
+// ------------------------------------------------------------------
+// Tests: ORDER_PARTIAL_FILL handling
+// ------------------------------------------------------------------
+
+function makePartialFill(orderId: string, qty: number, price: number) {
+  const ts = Date.now();
+  return {
+    id: `f-${qty}-${price}` as UUID,
+    orderId: orderId as UUID,
+    symbol: "SPY",
+    side: "buy" as const,
+    qty,
+    price,
+    notional: qty * price,
+    commission: 0,
+    ts,
+    isoTs: new Date(ts).toISOString(),
+  };
+}
+
+describe("Orchestrator: ORDER_PARTIAL_FILL", () => {
+  it("applies the delta qty to filledQty and leaves status partial_fill", () => {
+    const bus = new EventBus();
+    const { orch, orderState } = makeOrchestratorWithOrder(bus, "o1", 10);
+    orch.start();
+
+    bus.publish({
+      id: "e1" as UUID,
+      type: "ORDER_PARTIAL_FILL",
+      ts: Date.now(),
+      mode: "paper",
+      orderId: "o1" as UUID,
+      fill: makePartialFill("o1", 4, 100),
+      remainingQty: 6,
+    });
+
+    const o = orderState.getOrder("o1" as UUID)!;
+    expect(o.filledQty).toBe(4);
+    expect(o.status).toBe("partial_fill");
+  });
+
+  it("emits PORTFOLIO_UPDATED on every partial fill", () => {
+    const bus = new EventBus();
+    const events = captureEvents(bus);
+    const { orch } = makeOrchestratorWithOrder(bus, "o2", 10);
+    orch.start();
+    events.length = 0;
+
+    bus.publish({
+      id: "e1" as UUID,
+      type: "ORDER_PARTIAL_FILL",
+      ts: Date.now(),
+      mode: "paper",
+      orderId: "o2" as UUID,
+      fill: makePartialFill("o2", 4, 100),
+      remainingQty: 6,
+    });
+
+    expect(events.filter((e) => e.type === "PORTFOLIO_UPDATED")).toHaveLength(1);
+  });
+
+  it("partial fills then final fill produce correct cumulative filledQty without double-applying", () => {
+    const bus = new EventBus();
+    const { orch, orderState, portfolioState } = makeOrchestratorWithOrder(bus, "o3", 10);
+    orch.start();
+
+    // partial 1: qty 4 @ 100
+    bus.publish({
+      id: "p1" as UUID, type: "ORDER_PARTIAL_FILL", ts: Date.now(), mode: "paper",
+      orderId: "o3" as UUID, fill: makePartialFill("o3", 4, 100), remainingQty: 6,
+    });
+    // partial 2: qty 3 @ 101
+    bus.publish({
+      id: "p2" as UUID, type: "ORDER_PARTIAL_FILL", ts: Date.now(), mode: "paper",
+      orderId: "o3" as UUID, fill: makePartialFill("o3", 3, 101), remainingQty: 3,
+    });
+    // final fill: qty 3 @ 102
+    bus.publish({
+      id: "f1" as UUID, type: "ORDER_FILLED", ts: Date.now(), mode: "paper",
+      orderId: "o3" as UUID, fill: makePartialFill("o3", 3, 102),
+    });
+
+    const o = orderState.getOrder("o3" as UUID)!;
+    expect(o.filledQty).toBe(10);
+    expect(o.status).toBe("filled");
+    // Portfolio reflects 10 shares bought
+    const pos = portfolioState.getPosition("SPY");
+    expect(pos?.qty).toBe(10);
+  });
+
+  it("does not double-apply a terminal ORDER_FILLED if partials already reached order.qty", () => {
+    const bus = new EventBus();
+    const { orch, orderState, portfolioState } = makeOrchestratorWithOrder(bus, "o4", 10);
+    orch.start();
+
+    // Partials sum to full qty
+    bus.publish({
+      id: "p1" as UUID, type: "ORDER_PARTIAL_FILL", ts: Date.now(), mode: "paper",
+      orderId: "o4" as UUID, fill: makePartialFill("o4", 6, 100), remainingQty: 4,
+    });
+    bus.publish({
+      id: "p2" as UUID, type: "ORDER_PARTIAL_FILL", ts: Date.now(), mode: "paper",
+      orderId: "o4" as UUID, fill: makePartialFill("o4", 4, 100), remainingQty: 0,
+    });
+
+    const cashAfterPartials = portfolioState.getCash();
+    const posQtyAfterPartials = portfolioState.getPosition("SPY")?.qty ?? 0;
+
+    // A redundant terminal fill that would double-count if not guarded
+    bus.publish({
+      id: "f1" as UUID, type: "ORDER_FILLED", ts: Date.now(), mode: "paper",
+      orderId: "o4" as UUID, fill: makePartialFill("o4", 10, 100),
+    });
+
+    const o = orderState.getOrder("o4" as UUID)!;
+    expect(o.filledQty).toBe(10);
+    expect(portfolioState.getCash()).toBe(cashAfterPartials);
+    expect(portfolioState.getPosition("SPY")?.qty).toBe(posQtyAfterPartials);
+  });
+});
+
+// ------------------------------------------------------------------
+// Tests: ORDER_EXPIRED handling
+// ------------------------------------------------------------------
+
+describe("Orchestrator: ORDER_EXPIRED", () => {
+  it("transitions an expired order out of the open-orders set", () => {
+    const bus = new EventBus();
+    const { orch, orderState } = makeOrchestratorWithOrder(bus, "o-exp");
+    orch.start();
+
+    bus.publish({
+      id: "e-exp" as UUID, type: "ORDER_EXPIRED", ts: Date.now(),
+      mode: "paper", orderId: "o-exp" as UUID,
+    });
+
+    expect(orderState.getOrder("o-exp" as UUID)?.status).not.toBe("submitted");
+    expect(orderState.getOpenOrders().map((o) => o.id)).not.toContain("o-exp");
+  });
+});
+
 // Tests: hasStrategyWithConfigId
 // ------------------------------------------------------------------
 

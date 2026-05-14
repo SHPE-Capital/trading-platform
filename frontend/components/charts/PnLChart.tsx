@@ -22,6 +22,11 @@ interface Props {
 const SVG_W = 600;
 const PAD = { top: 12, right: 12, bottom: 32, left: 64 };
 
+// Supabase returns TIMESTAMPTZ as ISO strings; normalize to Unix ms before arithmetic.
+function toMs(ts: number | string): number {
+  return typeof ts === "number" ? ts : new Date(ts as string).getTime();
+}
+
 function fmtTime(ts: number): string {
   const d = new Date(ts);
   const h = d.getHours().toString().padStart(2, "0");
@@ -51,8 +56,8 @@ export default function PnLChart({ data, height = 240 }: Props) {
   const pnl = latest.equity - first.equity;
 
   // If all points are the same timestamp (single fill), give a minimal span
-  const minTs = first.ts;
-  const maxTs = latest.ts;
+  const minTs = toMs(first.ts);
+  const maxTs = toMs(latest.ts);
   const tsRange = maxTs - minTs || 1;
 
   const equities = data.map((d) => d.equity);
@@ -63,7 +68,7 @@ export default function PnLChart({ data, height = 240 }: Props) {
   const innerW = SVG_W - PAD.left - PAD.right;
   const innerH = height - PAD.top - PAD.bottom - 48; // 48 = header row
 
-  const toX = (ts: number): number => PAD.left + ((ts - minTs) / tsRange) * innerW;
+  const toX = (ts: number | string): number => PAD.left + ((toMs(ts) - minTs) / tsRange) * innerW;
   const toY = (eq: number): number => PAD.top + (1 - (eq - minEquity) / equityRange) * innerH;
 
   const points = data.map((d) => `${toX(d.ts).toFixed(1)},${toY(d.equity).toFixed(1)}`).join(" ");

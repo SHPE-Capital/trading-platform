@@ -13,8 +13,9 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import type { PairsStrategyConfig } from "../../types/strategy";
+import type { PairsStrategyConfig, RiskBudget } from "../../types/strategy";
 import { useStrategyConfigs } from "../../hooks/useStrategyConfigs";
+import RiskBudgetSection, { type RiskBudgetState, defaultRiskBudgetState } from "../shared/RiskBudgetSection";
 
 interface Props {
   onSubmit: (config: Omit<PairsStrategyConfig, "id">) => Promise<void>;
@@ -38,7 +39,9 @@ export default function StrategyForm({ onSubmit, isLoading }: Props) {
   const [olsWindowMins, setOlsWindowMins] = useState(240);
   const [olsRecalcIntervalBars, setOlsRecalcIntervalBars] = useState(5);
 
-  // Save UI state
+  // Risk budget
+  const [riskBudget, setRiskBudget] = useState<RiskBudgetState>(defaultRiskBudgetState);
+
   const [isSavingNew, setIsSavingNew] = useState(false);
   const [newName, setNewName] = useState("");
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -58,10 +61,12 @@ export default function StrategyForm({ onSubmit, isLoading }: Props) {
       setHedgeRatioMethod((d.hedgeRatioMethod as "fixed" | "rolling_ols" | undefined) ?? "fixed");
       setOlsWindowMins(Math.round(((d.olsWindowMs as number | undefined) ?? 14_400_000) / 60_000));
       setOlsRecalcIntervalBars((d.olsRecalcIntervalBars as number | undefined) ?? 5);
+      setRiskBudget(defaultRiskBudgetState);
     } else {
       const s = strategies.find((s) => s.id === selectedId);
       if (!s) return;
       const c = s.config as Record<string, unknown>;
+      const rb = c.riskBudget as RiskBudget | undefined;
       setName(s.name);
       setLeg1((c.leg1Symbol as string | undefined) ?? "SPY");
       setLeg2((c.leg2Symbol as string | undefined) ?? "QQQ");
@@ -72,31 +77,48 @@ export default function StrategyForm({ onSubmit, isLoading }: Props) {
       setHedgeRatioMethod((c.hedgeRatioMethod as "fixed" | "rolling_ols" | undefined) ?? "fixed");
       setOlsWindowMins(Math.round(((c.olsWindowMs as number | undefined) ?? 14_400_000) / 60_000));
       setOlsRecalcIntervalBars((c.olsRecalcIntervalBars as number | undefined) ?? 5);
+      setRiskBudget({
+        maxCapitalPct: Math.round((rb?.maxCapitalPct ?? 0.20) * 100),
+        maxOpenOrders: rb?.maxOpenOrders ?? null,
+        maxOrderNotionalPct: rb?.maxOrderNotionalPct != null
+          ? Math.round(rb.maxOrderNotionalPct * 100)
+          : null,
+      });
     }
   }, [selectedId, definition, strategies]);
 
-  const buildConfig = (): Omit<PairsStrategyConfig, "id"> => ({
-    name,
-    type: "pairs_trading",
-    leg1Symbol: leg1,
-    leg2Symbol: leg2,
-    symbols: [leg1, leg2],
-    rollingWindowMs: rollingWindowMins * 60_000,
-    maxPositionSizeUsd: 10_000,
-    cooldownMs: 60_000,
-    enabled: true,
-    hedgeRatioMethod,
-    fixedHedgeRatio: 1,
-    entryZScore,
-    exitZScore,
-    stopLossZScore: 4,
-    maxHoldingTimeMs: 86_400_000,
-    minObservations: 30,
-    tradeNotionalUsd,
-    priceSource: "mid",
-    olsWindowMs: olsWindowMins * 60_000,
-    olsRecalcIntervalBars,
-  });
+  const buildConfig = (): Omit<PairsStrategyConfig, "id"> => {
+    const budget: RiskBudget = {
+      maxCapitalPct: riskBudget.maxCapitalPct / 100,
+      ...(riskBudget.maxOpenOrders !== null && { maxOpenOrders: riskBudget.maxOpenOrders }),
+      ...(riskBudget.maxOrderNotionalPct !== null && {
+        maxOrderNotionalPct: riskBudget.maxOrderNotionalPct / 100,
+      }),
+    };
+    return {
+      name,
+      type: "pairs_trading",
+      leg1Symbol: leg1,
+      leg2Symbol: leg2,
+      symbols: [leg1, leg2],
+      rollingWindowMs: rollingWindowMins * 60_000,
+      maxPositionSizeUsd: 10_000,
+      cooldownMs: 60_000,
+      enabled: true,
+      hedgeRatioMethod,
+      fixedHedgeRatio: 1,
+      entryZScore,
+      exitZScore,
+      stopLossZScore: 4,
+      maxHoldingTimeMs: 86_400_000,
+      minObservations: 30,
+      tradeNotionalUsd,
+      priceSource: "mid",
+      olsWindowMs: olsWindowMins * 60_000,
+      olsRecalcIntervalBars,
+      riskBudget: budget,
+    };
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -272,6 +294,12 @@ export default function StrategyForm({ onSubmit, isLoading }: Props) {
           </Field>
         </div>
       )}
+
+      {/* Portfolio Allocation */}
+      <div className="flex flex-col gap-3 rounded-md border border-zinc-200 p-3 dark:border-zinc-700">
+        <p className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">Portfolio Allocation</p>
+        <RiskBudgetSection value={riskBudget} onChange={setRiskBudget} />
+      </div>
 
       {saveError && (
         <p className="text-xs text-red-600 dark:text-red-400">{saveError}</p>

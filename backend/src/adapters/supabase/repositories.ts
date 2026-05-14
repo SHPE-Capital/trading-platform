@@ -533,9 +533,13 @@ export async function insertBacktestResult(result: BacktestResult): Promise<void
     equity_curve: downsampledEquity,
   };
   
-  // Strip orders and fills from the summary row completely
+  // Strip fields that are not DB columns
   delete payload.orders;
   delete payload.fills;
+  delete payload.reused_from_id;   // serve-time annotation, not a persisted fact
+  delete payload.data_validation;  // derivable by re-running validateBars(); not a run result
+  delete payload.fill_model;       // derivable from config + DEFAULT_FILL_MODEL merge
+  delete payload.assumptions;      // derivable from metrics + config fields
 
   // Persist the FK link to the strategy definition row if the config referenced one
   payload.strategy_id = result.config ? (result.config as { strategyId?: string }).strategyId ?? null : null;
@@ -574,7 +578,9 @@ function stableStringify(val: unknown): string {
 // Returns a stable fingerprint over the fields that define a unique backtest run.
 // Excludes id, name, description, and meta since they don't affect the simulation.
 // Includes strategyVersion so results from outdated algorithm versions are not reused.
-function backtestConfigKey(config: BacktestConfig): string {
+// Exported so the controller can compute the key without an extra DB round-trip
+// (used for in-flight dedup against concurrent identical requests).
+export function backtestConfigKey(config: BacktestConfig): string {
   return stableStringify({
     startDate: config.startDate,
     endDate: config.endDate,
@@ -584,6 +590,10 @@ function backtestConfigKey(config: BacktestConfig): string {
     dataGranularity: config.dataGranularity,
     strategyVersion: config.strategyVersion ?? null,
     strategyConfig: config.strategyConfig,
+    riskConfig: config.riskConfig ?? null,
+    fillModel: config.fillModel ?? null,
+    riskFreeRateAnnual: config.riskFreeRateAnnual ?? 0,
+    benchmarkCurve: config.benchmarkCurve ?? null,
   });
 }
 

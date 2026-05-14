@@ -106,6 +106,69 @@ describe('loadBars: success', () => {
   });
 });
 
+describe('loadBars: deterministic same-timestamp ordering', () => {
+  it('breaks ties on equal timestamps by symbol ascending', async () => {
+    // Three symbols at the same minute; the fetch order is INTENTIONALLY not
+    // alphabetical to prove the sort is stable regardless of fetch order.
+    const sharedTs = '2024-01-15T09:30:00Z';
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ bars: [alpacaBar(sharedTs, 200)] }) }) // SPY first
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ bars: [alpacaBar(sharedTs, 100)] }) }) // AAPL
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ bars: [alpacaBar(sharedTs, 300)] }) }); // MSFT
+    const loader = new BacktestLoader();
+    const bars = await loader.loadBars(['SPY', 'AAPL', 'MSFT'], START, END);
+    expect(bars.map((b) => b.symbol)).toEqual(['AAPL', 'MSFT', 'SPY']);
+  });
+
+  it('is stable across runs with shuffled same-timestamp input order', async () => {
+    const sharedTs = '2024-01-15T09:30:00Z';
+
+    // Run 1: input order [QQQ, SPY, AAPL]
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ bars: [alpacaBar(sharedTs)] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ bars: [alpacaBar(sharedTs)] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ bars: [alpacaBar(sharedTs)] }) });
+    const order1 = (await new BacktestLoader().loadBars(['QQQ', 'SPY', 'AAPL'], START, END)).map((b) => b.symbol);
+
+    (global.fetch as jest.Mock).mockReset();
+
+    // Run 2: input order [SPY, AAPL, QQQ] — must produce the SAME ordering.
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ bars: [alpacaBar(sharedTs)] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ bars: [alpacaBar(sharedTs)] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ bars: [alpacaBar(sharedTs)] }) });
+    const order2 = (await new BacktestLoader().loadBars(['SPY', 'AAPL', 'QQQ'], START, END)).map((b) => b.symbol);
+
+    expect(order1).toEqual(['AAPL', 'QQQ', 'SPY']);
+    expect(order2).toEqual(order1);
+  });
+
+  it('preserves timestamp-ascending order across symbols with mixed equal/unequal timestamps', async () => {
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          bars: [alpacaBar('2024-01-15T09:31:00Z'), alpacaBar('2024-01-15T09:30:00Z')],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          bars: [alpacaBar('2024-01-15T09:30:00Z'), alpacaBar('2024-01-15T09:32:00Z')],
+        }),
+      });
+    const bars = await new BacktestLoader().loadBars(['SPY', 'AAPL'], START, END);
+
+    // First two are 09:30 sorted by symbol; then 09:31 SPY; then 09:32 AAPL.
+    expect(bars[0].ts).toEqual(bars[1].ts);
+    expect(bars[0].symbol).toBe('AAPL');
+    expect(bars[1].symbol).toBe('SPY');
+    expect(bars[2].ts).toBeGreaterThan(bars[1].ts);
+    expect(bars[2].symbol).toBe('SPY');
+    expect(bars[3].symbol).toBe('AAPL');
+  });
+});
+
 describe('loadBars: error handling', () => {
   it('throws when the API returns a non-ok response', async () => {
     (global.fetch as jest.Mock).mockResolvedValue({
