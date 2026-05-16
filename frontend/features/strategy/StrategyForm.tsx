@@ -192,7 +192,7 @@ export default function StrategyForm({ onSubmit, isLoading }: Props) {
         </Field>
       )}
 
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-2 gap-3 rounded-md border border-zinc-200 p-3 dark:border-zinc-700">
         <Field label="Leg 1 Symbol">
           <input
             type="text"
