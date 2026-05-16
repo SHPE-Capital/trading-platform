@@ -24,20 +24,18 @@ export const DEFAULT_RISK_CONFIG: RiskConfig = {
   maxNotionalExposureUsd: env.maxNotionalExposureUsd,
   orderCooldownMs: env.orderCooldownMs,
   staleQuoteThresholdMs: 10_000,
-  allowShortSelling: false,
+  allowShortSelling: true,       // Required for pairs, stat-arb, and market-making strategies
   killSwitchActive: false,
   maxIntradayDrawdownPct: 0.05,  // 5% intraday drawdown limit — engages kill switch
   maxConcentrationPct: 0.30,     // 30% max concentration in any single symbol
   cashReservePct: 0.05,          // 5% cash buffer always kept in reserve
   gapBufferBps: 20,              // 0.20% gap risk buffer for market orders
   spreadBufferBps: 5,            // 0.05% half-spread estimate
-  slippageBps: 5,                // 0.05% market impact (matches DEFAULT_SLIPPAGE_BPS)
 };
 
-/** Backtest risk configuration (enables short selling for pairs strategies) */
+/** Backtest risk configuration */
 export const BACKTEST_RISK_CONFIG: RiskConfig = {
   ...DEFAULT_RISK_CONFIG,
-  allowShortSelling: true,
   orderCooldownMs: 0, // Prevent blocking paired legs in backtest
 };
 
@@ -49,9 +47,6 @@ export const DEFAULT_SNAPSHOT_INTERVAL_MS = 60_000;
 
 /** Default simulated fill delay for backtest/paper modes (ms) */
 export const DEFAULT_SIMULATED_FILL_DELAY_MS = 100;
-
-/** Default slippage for backtesting in basis points */
-export const DEFAULT_SLIPPAGE_BPS = 5;
 
 /** Default commission per share for backtesting */
 export const DEFAULT_COMMISSION_PER_SHARE = 0.005;
