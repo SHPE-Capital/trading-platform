@@ -101,6 +101,10 @@ export class BacktestEngine {
 
     // Register strategies and any per-strategy capital budgets
     const strategies = strategyFactory({ symbolState, portfolioState, orderState, eventBus });
+    // Derive strategyVersion from the first strategy that declares one, so the DB
+    // column is populated even when the caller doesn't set it explicitly in config.
+    const effectiveStrategyVersion =
+      config.strategyVersion ?? strategies.find((s) => s.version != null)?.version;
     for (const strategy of strategies) {
       const budget = (strategy.config as BaseStrategyConfig).riskBudget;
       if (budget) riskEngine.registerStrategyBudget({ ...budget, strategyId: strategy.id });
@@ -279,7 +283,9 @@ export class BacktestEngine {
 
     const result: BacktestResult = {
       id: config.id,
-      config,
+      config: effectiveStrategyVersion != null
+        ? { ...config, strategyVersion: effectiveStrategyVersion }
+        : config,
       status: "completed",
       started_at: startedAt,
       completed_at: completedAt,

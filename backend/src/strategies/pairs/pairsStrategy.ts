@@ -38,6 +38,8 @@ import type {
 
 export class PairsStrategy extends BaseStrategy {
   readonly type: StrategyType = "pairs_trading";
+  // v2: removed slippageBps from risk-engine fill buffer (now only gapBufferBps + spreadBufferBps)
+  readonly version = 2;
 
   private readonly state: PairsInternalState;
 
