@@ -94,8 +94,8 @@ describe("BacktestEngine Integration", () => {
     expect(result.equity_curve.length).toBeLessThanOrEqual(5000);
     expect(result.equity_curve[0].equity).toBe(INITIAL_CAPITAL);
 
-    expect(result.orders.length).toBeGreaterThan(0);
-    expect(result.fills.length).toBeGreaterThan(0);
+    expect(result.orders!.length).toBeGreaterThan(0);
+    expect(result.fills!.length).toBeGreaterThan(0);
   });
 
   test("INT 2.2 — Pairs leg consistency", async () => {
@@ -139,9 +139,9 @@ describe("BacktestEngine Integration", () => {
     //     terminal drain — no exit fills.
     // → 2 fills total (one SPY entry + one QQQ entry). This is the correct,
     // lookahead-free outcome under per-timestamp batch semantics.
-    expect(result.fills.length).toBe(2);
+    expect(result.fills!.length).toBe(2);
 
-    const symbolsFilled = result.fills.map(f => f.symbol).sort();
+    const symbolsFilled = result.fills!.map(f => f.symbol).sort();
     expect(symbolsFilled).toEqual(["QQQ", "SPY"]);
     void allBars;
   });
@@ -197,7 +197,7 @@ describe("BacktestEngine Integration", () => {
 
     const result = await engine.run(config as any, () => [new PairsStrategy(config.strategyConfig)]);
 
-    expect(result.orders.length).toBe(2);
+    expect(result.orders!.length).toBe(2);
   });
 
   test("INT 2.4 — Simulated clock isolation", async () => {
