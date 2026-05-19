@@ -20,8 +20,12 @@ export interface StrategyDefinition {
   type: StrategyType;
   label: string;
   description: string;
-  /** Algorithm version — written to strategies.version on INSERT */
-  version: number;
+  /**
+   * Current algorithm version sourced directly from the strategy class
+   * (e.g. PairsStrategy.VERSION). Never stored in the strategies table —
+   * derived at runtime so the API always reflects the deployed code version.
+   */
+  algorithmVersion: number;
   defaultConfig: Record<string, unknown>;
 }
 
@@ -42,7 +46,7 @@ export const STRATEGY_DEFINITIONS: Record<string, StrategyDefinition> = {
     label: "Pairs Trading",
     description:
       "Statistical arbitrage between two correlated instruments using z-score mean reversion.",
-    version: 1,
+    algorithmVersion: PairsStrategy.VERSION,
     defaultConfig: {
       ...DEFAULT_PAIRS_CONFIG,
       leg1Symbol: "SPY",

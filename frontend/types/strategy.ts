@@ -30,13 +30,17 @@ export interface StrategyRun {
   totalSignals: number;
   totalOrders: number;
   realizedPnl: number;
+  /** Algorithm version snapshot at the time this run was started. */
+  strategyVersion?: number;
 }
 
 /** A stored strategy definition row from the DB (strategies table) */
 export interface StoredStrategy {
   id: string;
   strategy_type: StrategyType;
-  version: number;
+  /** Current algorithm version — derived from the strategy class at read time,
+   *  not stored in the DB. Same value for all configs of the same type. */
+  algorithmVersion?: number;
   name: string;
   config: Record<string, unknown>;
   created_at: string;
@@ -48,7 +52,8 @@ export interface StrategyDefinition {
   type: StrategyType;
   label: string;
   description: string;
-  version: number;
+  /** Current algorithm version sourced from the strategy class constant. */
+  algorithmVersion: number;
   defaultConfig: Record<string, unknown>;
 }
 

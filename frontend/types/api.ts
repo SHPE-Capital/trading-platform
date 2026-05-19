@@ -68,11 +68,13 @@ export interface BacktestConfig {
 
 export interface BacktestResult {
   id: string;
-  config: BacktestConfig;
+  config: BacktestConfig & { strategyVersion?: number };
   status: "pending" | "running" | "completed" | "failed";
   started_at: number;
   completed_at?: number;
   error_message?: string;
+  /** Algorithm version that ran this backtest — snapshot at run time. */
+  strategy_version?: number;
   metrics?: import("./portfolio").PerformanceMetrics;
   equity_curve?: import("./portfolio").PortfolioSnapshot[];
   event_count?: number;
