@@ -45,12 +45,9 @@ export interface BacktestConfig {
   endDate: string;
   initialCapital: number;
   dataGranularity: "bar" | "quote" | "trade";
-  slippageBps: number;
   commissionPerShare: number;
   /** Set when the user picked a saved strategy; written to backtest_results.strategy_id */
   strategyId?: string;
-  /** Algorithm version of the saved strategy at run time */
-  strategyVersion?: number;
   description?: string;
   /** Annualized risk-free rate for Sharpe/Sortino (default 0) */
   riskFreeRateAnnual?: number;
@@ -71,11 +68,13 @@ export interface BacktestConfig {
 
 export interface BacktestResult {
   id: string;
-  config: BacktestConfig;
+  config: BacktestConfig & { strategyVersion?: number };
   status: "pending" | "running" | "completed" | "failed";
   started_at: number;
   completed_at?: number;
   error_message?: string;
+  /** Algorithm version that ran this backtest — snapshot at run time. */
+  strategy_version?: number;
   metrics?: import("./portfolio").PerformanceMetrics;
   equity_curve?: import("./portfolio").PortfolioSnapshot[];
   event_count?: number;

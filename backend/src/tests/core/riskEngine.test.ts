@@ -303,7 +303,7 @@ describe('check result shape', () => {
 // ---------------------------------------------------------------------------
 describe('estimateWorstCasePrice', () => {
   it('limit order returns limitPrice regardless of mid or buffers', () => {
-    const engine = new RiskEngine({ gapBufferBps: 200, spreadBufferBps: 100, slippageBps: 100 });
+    const engine = new RiskEngine({ gapBufferBps: 200, spreadBufferBps: 100 });
     expect(engine.estimateWorstCasePrice('buy', makeIntent({ limitPrice: 99 }), 500)).toBe(99);
   });
 
@@ -313,16 +313,16 @@ describe('estimateWorstCasePrice', () => {
   });
 
   it('market buy applies composite buffer upward: mid * (1 + totalBps)', () => {
-    // gapBufferBps=20, spreadBufferBps=5, slippageBps=5 → 30 bps = 0.003
-    const engine = new RiskEngine({ gapBufferBps: 20, spreadBufferBps: 5, slippageBps: 5 });
+    // gapBufferBps=20, spreadBufferBps=5 → 25 bps = 0.0025
+    const engine = new RiskEngine({ gapBufferBps: 20, spreadBufferBps: 5 });
     const price = engine.estimateWorstCasePrice('buy', makeIntent({ limitPrice: undefined }), 100);
-    expect(price).toBeCloseTo(100.30, 4);
+    expect(price).toBeCloseTo(100.25, 4);
   });
 
   it('market sell applies composite buffer downward: mid * (1 − totalBps)', () => {
-    const engine = new RiskEngine({ gapBufferBps: 20, spreadBufferBps: 5, slippageBps: 5 });
+    const engine = new RiskEngine({ gapBufferBps: 20, spreadBufferBps: 5 });
     const price = engine.estimateWorstCasePrice('sell', makeIntent({ limitPrice: undefined }), 100);
-    expect(price).toBeCloseTo(99.70, 4);
+    expect(price).toBeCloseTo(99.75, 4);
   });
 
   it('returns null when mid is null', () => {
@@ -341,7 +341,7 @@ describe('estimateWorstCasePrice', () => {
   });
 
   it('zero-buffer config returns mid unchanged for a market order', () => {
-    const engine = new RiskEngine({ gapBufferBps: 0, spreadBufferBps: 0, slippageBps: 0 });
+    const engine = new RiskEngine({ gapBufferBps: 0, spreadBufferBps: 0 });
     expect(engine.estimateWorstCasePrice('buy', makeIntent({ limitPrice: undefined }), 200)).toBe(200);
   });
 });

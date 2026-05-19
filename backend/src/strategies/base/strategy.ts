@@ -52,6 +52,13 @@ export interface IStrategy {
   readonly id: UUID;
   /** Algorithm type identifier */
   readonly type: StrategyType;
+  /**
+   * Algorithm version. Incremented whenever the signal logic changes in a way
+   * that makes backtest results incompatible with earlier runs. Stored as
+   * `strategy_version` in the database so cached results from stale versions
+   * are never reused.
+   */
+  readonly version?: number;
   /** Full strategy configuration */
   readonly config: BaseStrategyConfig;
 

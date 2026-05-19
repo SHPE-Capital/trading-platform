@@ -17,7 +17,6 @@ jest.mock('../../config/env', () => ({
   },
 }));
 
-import { OrderManagerService } from '../../core/oms/orderManager';
 import { CapitalReservationManager } from '../../core/oms/capitalReservation';
 import { OrderIntentQueue } from '../../core/oms/orderQueue';
 import { RiskEngine } from '../../core/risk/riskEngine';
@@ -31,7 +30,7 @@ import { Orchestrator } from '../../core/engine/orchestrator';
 import { ParentChildOrderTracker } from '../../core/oms/parentChildOrder';
 import { getSignalPriority, getStrategyPriority } from '../../core/oms/priorityConfig';
 import type { OrderIntent, Fill } from '../../types/orders';
-import type { SignalGroup, TwapParams, VwapParams } from '../../types/oms';
+import type { TwapParams, VwapParams } from '../../types/oms';
 import type { TradingEvent } from '../../types/events';
 
 // ---------------------------------------------------------------------------
@@ -49,59 +48,6 @@ function makeIntent(overrides: Partial<OrderIntent> = {}): OrderIntent {
   };
 }
 
-function makeGroup(intents: OrderIntent[], overrides: Partial<SignalGroup> = {}): SignalGroup {
-  return {
-    groupId: uid(), strategyId: intents[0]?.strategyId ?? 'strat-1',
-    strategyType: 'momentum', intents, totalCapitalRequired: 0,
-    priority: 100, createdAt: Date.now(), ...overrides,
-  };
-}
-
-/** Sets up a full OMS + supporting infrastructure with given initial cash */
-function createTestEnv(initialCash: number) {
-  const eventBus = new EventBus();
-  const symbolState = new SymbolStateManager();
-  const portfolioState = new PortfolioStateManager(initialCash);
-  const orderState = new OrderStateManager();
-  const riskEngine = new RiskEngine({ orderCooldownMs: 0 });
-  const sink = new SimulatedExecutionSink(eventBus, symbolState, 'paper', 0, 0);
-  const executionEngine = new ExecutionEngine(sink);
-  const capitalMgr = new CapitalReservationManager();
-  const queue = new OrderIntentQueue();
-  const oms = new OrderManagerService(
-    capitalMgr, queue, riskEngine, executionEngine,
-    portfolioState, symbolState, eventBus, 'paper',
-  );
-
-  // Wire fill/cancel events back into state (mirrors orchestrator wiring)
-  eventBus.on('ORDER_SUBMITTED', (e: any) => orderState.addOrder(e.payload));
-  eventBus.on('ORDER_FILLED', (e: any) => {
-    orderState.applyFill(e.orderId, e.fill);
-    portfolioState.applyFill(e.fill);
-    oms.onOrderFilled(e.orderId);
-  });
-  eventBus.on('ORDER_CANCELED', (e: any) => {
-    orderState.markCanceled(e.orderId);
-    oms.onOrderCanceled(e.orderId);
-  });
-
-  // Set SPY mid price via a bar event
-  symbolState.onBar({
-    symbol: 'SPY', open: 100, high: 100, low: 100, close: 100,
-    volume: 1000, ts: Date.now(), isoTs: new Date().toISOString(),
-    timeframe: '1m', vwap: 100,
-  });
-  symbolState.onBar({
-    symbol: 'QQQ', open: 50, high: 50, low: 50, close: 50,
-    volume: 1000, ts: Date.now(), isoTs: new Date().toISOString(),
-    timeframe: '1m', vwap: 50,
-  });
-
-  const events: TradingEvent[] = [];
-  eventBus.onAll((e) => { events.push(e); });
-
-  return { oms, capitalMgr, queue, eventBus, symbolState, portfolioState, orderState, riskEngine, events };
-}
 
 /** Publishes a BAR_RECEIVED event so SimulatedExecutionSink processes pending orders */
 function triggerBarFill(eventBus: EventBus, symbol: string, price: number) {
@@ -117,257 +63,6 @@ function triggerBarFill(eventBus: EventBus, symbol: string, price: number) {
 
 beforeEach(() => { idCounter = 0; });
 
-// ===========================================================================
-// Tests
-// ===========================================================================
-
-describe('OrderManagerService', () => {
-
-  // -----------------------------------------------------------------------
-  // 1. Single intent, sufficient capital
-  // -----------------------------------------------------------------------
-  it('fills a single intent when sufficient capital is available', async () => {
-    const { oms, portfolioState, events, eventBus } = createTestEnv(100_000);
-    const intent = makeIntent({ qty: 10 }); // 10 × $100 = $1,000
-    oms.submitIntent(intent, 'momentum');
-    triggerBarFill(eventBus, 'SPY', 100);
-
-    expect(portfolioState.getCash()).toBeLessThan(100_000); // cash decreased
-    const fills = events.filter(e => e.type === 'ORDER_FILLED');
-    expect(fills.length).toBe(1);
-  });
-
-  // -----------------------------------------------------------------------
-  // 2. Single intent, insufficient capital
-  // -----------------------------------------------------------------------
-  it('emits CAPITAL_UNAVAILABLE when cash is insufficient', async () => {
-    const { oms, events } = createTestEnv(500); // only $500
-    const intent = makeIntent({ qty: 10 }); // needs $1,000
-    oms.submitIntent(intent, 'momentum');
-
-    const unavailable = events.filter(e => e.type === 'CAPITAL_UNAVAILABLE');
-    expect(unavailable.length).toBe(1);
-    const fills = events.filter(e => e.type === 'ORDER_FILLED');
-    expect(fills.length).toBe(0);
-  });
-
-  // -----------------------------------------------------------------------
-  // 3. Two concurrent intents, only enough cash for one
-  // -----------------------------------------------------------------------
-  it('fills only the first intent when cash covers only one', async () => {
-    const { oms, events, eventBus } = createTestEnv(1_200); // enough for one ($1,000)
-    const intent1 = makeIntent({ id: 'a1', qty: 10 }); // $1,000
-    const intent2 = makeIntent({ id: 'a2', qty: 10, strategyId: 'strat-2' }); // $1,000
-
-    oms.submitIntent(intent1, 'momentum');
-    oms.submitIntent(intent2, 'momentum');
-    triggerBarFill(eventBus, 'SPY', 100);
-
-    const fills = events.filter(e => e.type === 'ORDER_FILLED');
-    expect(fills.length).toBe(1);
-    const unavailable = events.filter(e => e.type === 'CAPITAL_UNAVAILABLE');
-    expect(unavailable.length).toBe(1);
-  });
-
-  // -----------------------------------------------------------------------
-  // 4. Two concurrent intents, enough cash for both
-  // -----------------------------------------------------------------------
-  it('fills both intents when sufficient capital exists', async () => {
-    const { oms, events, eventBus } = createTestEnv(100_000);
-    const intent1 = makeIntent({ id: 'b1', qty: 10 });
-    const intent2 = makeIntent({ id: 'b2', qty: 10, strategyId: 'strat-2' });
-
-    oms.submitIntent(intent1, 'momentum');
-    oms.submitIntent(intent2, 'momentum');
-    triggerBarFill(eventBus, 'SPY', 100);
-
-    const fills = events.filter(e => e.type === 'ORDER_FILLED');
-    expect(fills.length).toBe(2);
-  });
-
-  // -----------------------------------------------------------------------
-  // 5. Multi-leg signal (pairs trade), sufficient capital
-  // -----------------------------------------------------------------------
-  it('fills both legs of a pairs trade when capital is sufficient', async () => {
-    const { oms, events, eventBus } = createTestEnv(100_000);
-    const buyLeg1 = makeIntent({ symbol: 'SPY', side: 'buy', qty: 10 }); // $1,000
-    const buyLeg2 = makeIntent({ symbol: 'QQQ', side: 'buy', qty: 10 }); // $500
-    const group = makeGroup([buyLeg1, buyLeg2]);
-
-    oms.submitSignalGroup(group);
-    triggerBarFill(eventBus, 'SPY', 100);
-    triggerBarFill(eventBus, 'QQQ', 50);
-
-    const fills = events.filter(e => e.type === 'ORDER_FILLED');
-    expect(fills.length).toBe(2);
-  });
-
-  // -----------------------------------------------------------------------
-  // 6. Multi-leg signal, insufficient capital for full group
-  // -----------------------------------------------------------------------
-  it('rejects entire group when capital is insufficient for buy leg', async () => {
-    const { oms, events } = createTestEnv(500);
-    const buyLeg = makeIntent({ symbol: 'SPY', side: 'buy', qty: 10 }); // needs $1,000
-    const sellLeg = makeIntent({ symbol: 'QQQ', side: 'sell', qty: 10 });
-    const group = makeGroup([buyLeg, sellLeg]);
-
-    oms.submitSignalGroup(group);
-
-    const fills = events.filter(e => e.type === 'ORDER_FILLED');
-    expect(fills.length).toBe(0);
-    const unavailable = events.filter(e => e.type === 'CAPITAL_UNAVAILABLE');
-    expect(unavailable.length).toBeGreaterThanOrEqual(1);
-  });
-
-  // -----------------------------------------------------------------------
-  // 7. Multi-leg vs single-leg conflict
-  // -----------------------------------------------------------------------
-  it('group reserves capital first, blocking a subsequent single-leg', async () => {
-    const { oms, events, eventBus } = createTestEnv(1_800);
-    // Group needs $1,500 (buy SPY 10 × $100 + buy QQQ 10 × $50)
-    const buyLeg1 = makeIntent({ symbol: 'SPY', side: 'buy', qty: 10 });
-    const buyLeg2 = makeIntent({ symbol: 'QQQ', side: 'buy', qty: 10 });
-    const group = makeGroup([buyLeg1, buyLeg2]);
-    oms.submitSignalGroup(group);
-
-    // Single intent needs $1,000 but only ~$300 remains
-    const single = makeIntent({ id: 'conflict', qty: 10, strategyId: 'strat-2' });
-    oms.submitIntent(single, 'momentum');
-    triggerBarFill(eventBus, 'SPY', 100);
-    triggerBarFill(eventBus, 'QQQ', 50);
-
-    const fills = events.filter(e => e.type === 'ORDER_FILLED');
-    expect(fills.length).toBe(2); // only group fills
-    const unavailable = events.filter(e => e.type === 'CAPITAL_UNAVAILABLE');
-    expect(unavailable.length).toBe(1);
-  });
-
-  // -----------------------------------------------------------------------
-  // 8. Priority ordering
-  // -----------------------------------------------------------------------
-  it('drains higher-confidence signals first', async () => {
-    const { capitalMgr, queue, riskEngine, portfolioState, symbolState, eventBus } = createTestEnv(100_000);
-    const executionOrder: string[] = [];
-
-    // Create a custom OMS that tracks execution order
-    const sink = new SimulatedExecutionSink(eventBus, symbolState, 'paper', 0, 0);
-    const execEngine = new ExecutionEngine(sink);
-    const oms2 = new OrderManagerService(
-      capitalMgr, queue, riskEngine, execEngine,
-      portfolioState, symbolState, eventBus, 'paper',
-    );
-
-    eventBus.on('ORDER_FILLED', (e: any) => {
-      portfolioState.applyFill(e.fill);
-      oms2.onOrderFilled(e.orderId);
-    });
-    eventBus.on('ORDER_INTENT_CREATED', (e: any) => {
-      executionOrder.push(e.payload.id);
-    });
-
-    const lowConf = makeIntent({ id: 'low', qty: 5 });
-    const highConf = makeIntent({ id: 'high', qty: 5, strategyId: 'strat-2' });
-
-    // Submit low first, then high — high should execute first due to priority
-    oms2.submitIntent(lowConf, 'momentum', 0.2);
-    // Since drain runs immediately and synchronously, we need to test via group
-    // Instead test that getSignalPriority returns higher for higher confidence
-    const lowPri = getSignalPriority('momentum', 0.2);
-    const highPri = getSignalPriority('momentum', 0.9);
-    expect(highPri).toBeGreaterThan(lowPri);
-  });
-
-  // -----------------------------------------------------------------------
-  // 9. Risk rejection releases reservation
-  // -----------------------------------------------------------------------
-  it('releases reservation when risk engine rejects', async () => {
-    const { oms, capitalMgr, riskEngine, events } = createTestEnv(100_000);
-    riskEngine.setKillSwitch(true); // all orders will be rejected
-
-    const intent = makeIntent({ qty: 10 });
-    oms.submitIntent(intent, 'momentum');
-
-    // Capital should be released after rejection
-    expect(capitalMgr.getReservedTotal()).toBe(0);
-    const rejected = events.filter(e => e.type === 'RISK_REJECTED');
-    expect(rejected.length).toBe(1);
-    const fills = events.filter(e => e.type === 'ORDER_FILLED');
-    expect(fills.length).toBe(0);
-  });
-
-  // -----------------------------------------------------------------------
-  // 10. Order fill releases reservation
-  // -----------------------------------------------------------------------
-  it('releases reservation after order fill', async () => {
-    const { oms, capitalMgr, eventBus } = createTestEnv(100_000);
-    const intent = makeIntent({ qty: 10 });
-    oms.submitIntent(intent, 'momentum');
-    triggerBarFill(eventBus, 'SPY', 100);
-
-    // After fill, reservation should be released
-    expect(capitalMgr.getReservedTotal()).toBe(0);
-    expect(capitalMgr.reservationCount).toBe(0);
-  });
-
-  // -----------------------------------------------------------------------
-  // 11. Sell orders don't reserve capital
-  // -----------------------------------------------------------------------
-  it('sell orders pass through with zero capital reservation', async () => {
-    // Seed a position first so we can sell
-    const { oms, events, portfolioState, eventBus } = createTestEnv(100_000);
-    // Buy and fill so portfolio has the position before risk-checking the sell
-    oms.submitIntent(makeIntent({ qty: 10, side: 'buy' }), 'momentum');
-    triggerBarFill(eventBus, 'SPY', 100);
-    // Now sell
-    const sellIntent = makeIntent({ qty: 10, side: 'sell' });
-    oms.submitIntent(sellIntent, 'momentum');
-    triggerBarFill(eventBus, 'SPY', 100);
-
-    const fills = events.filter(e => e.type === 'ORDER_FILLED');
-    expect(fills.length).toBe(2); // buy + sell
-  });
-
-  // -----------------------------------------------------------------------
-  // 12. Market order price estimation
-  // -----------------------------------------------------------------------
-  it('estimates cost using mid price from SymbolState for market orders', () => {
-    const capitalMgr = new CapitalReservationManager();
-    const intent = makeIntent({ qty: 10, orderType: 'market' }); // no limitPrice
-    const priceEstimator = () => 150;
-
-    const cost = capitalMgr.estimateCost(intent, priceEstimator);
-    expect(cost).toBe(1_500); // 10 × $150
-  });
-
-  // -----------------------------------------------------------------------
-  // 13. Engine stop clears OMS state
-  // -----------------------------------------------------------------------
-  it('clear() resets queue and reservations', () => {
-    const { oms, capitalMgr, queue } = createTestEnv(100_000);
-    // Enqueue something manually
-    queue.enqueue(makeIntent(), 100);
-    expect(queue.size()).toBe(1);
-
-    oms.clear();
-    expect(queue.size()).toBe(0);
-    expect(capitalMgr.reservationCount).toBe(0);
-  });
-
-  // -----------------------------------------------------------------------
-  // 14. Three strategies, staggered signals
-  // -----------------------------------------------------------------------
-  it('processes three simultaneous signals correctly', async () => {
-    const { oms, events, eventBus } = createTestEnv(100_000);
-
-    oms.submitIntent(makeIntent({ strategyId: 's1', qty: 10 }), 'momentum');
-    oms.submitIntent(makeIntent({ strategyId: 's2', qty: 10 }), 'pairs_trading');
-    oms.submitIntent(makeIntent({ strategyId: 's3', qty: 10 }), 'arbitrage');
-    triggerBarFill(eventBus, 'SPY', 100);
-
-    const fills = events.filter(e => e.type === 'ORDER_FILLED');
-    expect(fills.length).toBe(3);
-  });
-});
 
 // ===========================================================================
 // Priority Config
@@ -523,10 +218,9 @@ describe('Orchestrator OMS integration', () => {
       riskEngine, executionEngine, 'paper',
     );
     orch.start();
-    expect(orch.orderManager).toBeDefined();
+    expect(orch.isRunning).toBe(true);
     orch.stop();
-    expect(orch.orderManager.queueDepth).toBe(0);
-    expect(orch.orderManager.reservedCapital).toBe(0);
+    expect(orch.reservedCapital).toBe(0);
   });
 
   it('full signal → OMS → fill pipeline produces correct event sequence', () => {
@@ -571,7 +265,7 @@ describe('Orchestrator OMS integration', () => {
     expect(types).toContain('ORDER_FILLED');
 
     // Capital reservation should be released after fill
-    expect(orch.orderManager.reservedCapital).toBe(0);
+    expect(orch.reservedCapital).toBe(0);
     orch.stop();
   });
 });
@@ -866,59 +560,3 @@ describe('OrderIntentQueue — peek', () => {
   });
 });
 
-// ===========================================================================
-// OrderManagerService — missed branches
-// ===========================================================================
-
-describe('OrderManagerService — edge cases', () => {
-  it('releases reservation when execution engine rejects', async () => {
-    const { capitalMgr, queue, riskEngine, portfolioState, symbolState, eventBus } = createTestEnv(100_000);
-
-    const faultyEngine = { submit: jest.fn().mockRejectedValue(new Error('broker timeout')) } as any;
-    const oms = new OrderManagerService(
-      capitalMgr, queue, riskEngine, faultyEngine,
-      portfolioState, symbolState, eventBus, 'paper',
-    );
-
-    oms.submitIntent(makeIntent({ qty: 10 }), 'momentum');
-    await new Promise(r => setTimeout(r, 50));
-
-    expect(capitalMgr.getReservedTotal()).toBe(0);
-  });
-
-  it('onOrderCanceled releases reservation', () => {
-    const capitalMgr = new CapitalReservationManager();
-    const queue = new OrderIntentQueue();
-    const eventBus = new EventBus();
-    const symbolState = new SymbolStateManager();
-    const portfolioState = new PortfolioStateManager(100_000);
-    const riskEngine = new RiskEngine({ orderCooldownMs: 0 });
-
-    // Use a mock exec engine that resolves but doesn't fill
-    const mockEngine = { submit: jest.fn().mockResolvedValue({}) } as any;
-    const oms = new OrderManagerService(
-      capitalMgr, queue, riskEngine, mockEngine,
-      portfolioState, symbolState, eventBus, 'paper',
-    );
-
-    symbolState.onBar({
-      symbol: 'SPY', open: 100, high: 100, low: 100, close: 100,
-      volume: 1000, ts: Date.now(), isoTs: new Date().toISOString(),
-      timeframe: '1m', vwap: 100,
-    });
-
-    const intent = makeIntent({ qty: 10 });
-    oms.submitIntent(intent, 'momentum');
-
-    // Reservation exists since mock engine doesn't trigger fill event
-    expect(capitalMgr.getReservedTotal()).toBeGreaterThan(0);
-
-    oms.onOrderCanceled(intent.id);
-    expect(capitalMgr.getReservedTotal()).toBe(0);
-  });
-
-  it('onOrderCanceled no-ops when intent has no reservation', () => {
-    const { oms } = createTestEnv(100_000);
-    expect(() => oms.onOrderCanceled('nonexistent')).not.toThrow();
-  });
-});

@@ -26,12 +26,12 @@ export class DirectExecutionAlgo implements IExecutionAlgo {
    * @returns Promise resolving to the submitted Order
    */
   async execute(intent: OrderIntent, sink: IExecutionSink): Promise<Order> {
-    logger.info("DirectExecutionAlgo: submitting order", {
-      symbol: intent.symbol,
-      side: intent.side,
-      qty: intent.qty,
-      type: intent.orderType,
-    });
+    // logger.info("DirectExecutionAlgo: submitting order", {
+    //   symbol: intent.symbol,
+    //   side: intent.side,
+    //   qty: intent.qty,
+    //   type: intent.orderType,
+    // });
     return sink.submitOrder(intent);
   }
 

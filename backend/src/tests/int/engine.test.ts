@@ -38,7 +38,7 @@ describe("BacktestEngine Integration", () => {
     const barsQQQ = createSyntheticBars("QQQ", 300, pattern.length, pattern.map(v => -v)); // Opposite pattern for spread widening
 
     const allBars = [...barsSPY, ...barsQQQ].sort((a, b) => a.ts - b.ts);
-    (BacktestLoader.prototype.loadBars as jest.Mock).mockResolvedValue(allBars);
+    (BacktestLoader.prototype.streamBars as jest.Mock).mockImplementation(async function*() { yield allBars; });
 
     const config: BacktestConfig = {
       id: "run-1" as UUID,
@@ -94,8 +94,8 @@ describe("BacktestEngine Integration", () => {
     expect(result.equity_curve.length).toBeLessThanOrEqual(5000);
     expect(result.equity_curve[0].equity).toBe(INITIAL_CAPITAL);
 
-    expect(result.orders.length).toBeGreaterThan(0);
-    expect(result.fills.length).toBeGreaterThan(0);
+    expect(result.orders!.length).toBeGreaterThan(0);
+    expect(result.fills!.length).toBeGreaterThan(0);
   });
 
   test("INT 2.2 — Pairs leg consistency", async () => {
@@ -107,7 +107,7 @@ describe("BacktestEngine Integration", () => {
     const barsSPY = createSyntheticBars("SPY", 400, pattern.length, pattern);
     const barsQQQ = createSyntheticBars("QQQ", 300, pattern.length, pattern.map(v => -v));
     const allBars = [...barsSPY, ...barsQQQ].sort((a, b) => a.ts - b.ts);
-    (BacktestLoader.prototype.loadBars as jest.Mock).mockResolvedValue(allBars);
+    (BacktestLoader.prototype.streamBars as jest.Mock).mockImplementation(async function*() { yield allBars; });
 
     const config: any = {
       id: "run-2",
@@ -139,9 +139,9 @@ describe("BacktestEngine Integration", () => {
     //     terminal drain — no exit fills.
     // → 2 fills total (one SPY entry + one QQQ entry). This is the correct,
     // lookahead-free outcome under per-timestamp batch semantics.
-    expect(result.fills.length).toBe(2);
+    expect(result.fills!.length).toBe(2);
 
-    const symbolsFilled = result.fills.map(f => f.symbol).sort();
+    const symbolsFilled = result.fills!.map(f => f.symbol).sort();
     expect(symbolsFilled).toEqual(["QQQ", "SPY"]);
     void allBars;
   });
@@ -150,7 +150,7 @@ describe("BacktestEngine Integration", () => {
     const pattern = [0, 1, 2, -2, -3];
     const barsSPY = createSyntheticBars("SPY", 400, pattern.length, pattern);
     const barsQQQ = createSyntheticBars("QQQ", 300, pattern.length, pattern.map(v => -v));
-    (BacktestLoader.prototype.loadBars as jest.Mock).mockResolvedValue([...barsSPY, ...barsQQQ].sort((a, b) => a.ts - b.ts));
+    (BacktestLoader.prototype.streamBars as jest.Mock).mockImplementation(async function*() { yield [...barsSPY, ...barsQQQ].sort((a, b) => a.ts - b.ts); });
 
     const config: any = {
         id: "run-3",
@@ -179,7 +179,7 @@ describe("BacktestEngine Integration", () => {
     const pattern = [0, 0, 3, 3];
     const barsSPY = createSyntheticBars("SPY", 400, pattern.length, pattern);
     const barsQQQ = createSyntheticBars("QQQ", 300, pattern.length, pattern.map(v => -v));
-    (BacktestLoader.prototype.loadBars as jest.Mock).mockResolvedValue([...barsSPY, ...barsQQQ].sort((a, b) => a.ts - b.ts));
+    (BacktestLoader.prototype.streamBars as jest.Mock).mockImplementation(async function*() { yield [...barsSPY, ...barsQQQ].sort((a, b) => a.ts - b.ts); });
 
     const config: any = {
         id: "run-4",
@@ -197,12 +197,12 @@ describe("BacktestEngine Integration", () => {
 
     const result = await engine.run(config as any, () => [new PairsStrategy(config.strategyConfig)]);
 
-    expect(result.orders.length).toBe(2);
+    expect(result.orders!.length).toBe(2);
   });
 
   test("INT 2.4 — Simulated clock isolation", async () => {
     const bars = createSyntheticBars("SPY", 100, 10, [0]);
-    (BacktestLoader.prototype.loadBars as jest.Mock).mockResolvedValue(bars);
+    (BacktestLoader.prototype.streamBars as jest.Mock).mockImplementation(async function*() { yield bars; });
 
     const config: any = { strategyConfig: { symbols: ["SPY"] }, initialCapital: 100000 };
     const strategyFactory = () => [];
@@ -217,7 +217,7 @@ describe("BacktestEngine Integration", () => {
 
     // Test exception case
     const errorEngine = new BacktestEngine();
-    (BacktestLoader.prototype.loadBars as jest.Mock).mockRejectedValue(new Error("Loader failed"));
+    (BacktestLoader.prototype.streamBars as jest.Mock).mockImplementation(async function*() { throw new Error("Loader failed"); });
 
     try {
         await errorEngine.run(config, strategyFactory);

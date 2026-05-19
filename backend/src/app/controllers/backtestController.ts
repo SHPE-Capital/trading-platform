@@ -33,10 +33,10 @@ import type { BacktestConfig, BacktestResult } from "../../types/backtest";
 const CACHE_TTL_MS = 10 * 60 * 1000;
 const resultCache = new Map<string, { result: BacktestResult; expiresAt: number }>();
 
-// Tracks config fingerprints of runs that are currently executing.
-// Prevents two concurrent identical requests from both passing the DB dedup check
-// (which only sees completed runs) and running the engine twice.
-const inFlightKeys = new Set<string>();
+// Tracks config fingerprints of runs that are currently executing, mapped to
+// the channel ID of the in-progress run. Used both to prevent duplicate engine
+// runs and to relay progress events to duplicate SSE clients.
+const inFlightKeys = new Map<string, string>(); // configKey → channelId
 
 function cacheResult(result: BacktestResult): void {
   if (!result?.id) return;
@@ -147,6 +147,12 @@ export async function runBacktest(req: Request, res: Response): Promise<void> {
     }
   }
 
+  // Resolve the strategy version from the actual strategy class so the config
+  // key is stable across requests regardless of what the frontend sends.
+  // Adding a new strategy type here is the only change needed when extending.
+  const resolvedStrategyVersion: number | undefined =
+    body.strategyConfig?.type === "pairs_trading" ? PairsStrategy.VERSION : body.strategyVersion;
+
   const config: BacktestConfig = {
     ...body,
     id: newId(),
@@ -154,6 +160,7 @@ export async function runBacktest(req: Request, res: Response): Promise<void> {
     slippageBps: body.slippageBps ?? 5,
     commissionPerShare: body.commissionPerShare ?? 0.005,
     dataGranularity: body.dataGranularity ?? "bar",
+    strategyVersion: resolvedStrategyVersion,
   };
 
   // Register the SSE channel before sending 202 to avoid a race where the
@@ -173,32 +180,51 @@ export async function runBacktest(req: Request, res: Response): Promise<void> {
     // dedup check (which only sees completed runs). The second request signals
     // completion immediately so its SSE client is not left hanging.
     if (!force && inFlightKeys.has(configKey)) {
-      logger.info("Backtest deduplicated (in-flight)", { id: config.id, configKey });
-      backtestStreamManager.complete(config.id);
+      const existingChannelId = inFlightKeys.get(configKey)!;
+      logger.info("Backtest deduplicated (in-flight)", { id: config.id, existingChannelId, configKey });
+      backtestStreamManager.relay(config.id, existingChannelId);
       return;
     }
 
-    inFlightKeys.add(configKey);
+    inFlightKeys.set(configKey, config.id);
     try {
       // Dedup: if an identical config has already been run, serve that result instead.
       // Skipped when force=true (explicit re-run requested by the user).
       // If the DB is unreachable, log a warning and proceed as a fresh run.
       let existing = null;
       if (!force) {
+        logger.info("Backtest dedup: searching DB for matching result", { id: config.id, configKey });
         try {
           existing = await findMatchingBacktestResult(config);
+          logger.info("Backtest dedup: DB search complete", {
+            id: config.id,
+            found: !!existing,
+            existingId: existing?.id ?? null,
+          });
         } catch (dbErr) {
-          logger.warn("Dedup check failed — running fresh backtest", { id: config.id, err: dbErr });
+          logger.error("Backtest dedup: DB search failed — running fresh backtest", { id: config.id, err: dbErr });
         }
+      } else {
+        logger.info("Backtest dedup: skipping DB search (force=true)", { id: config.id });
       }
+
       if (existing) {
+        logger.info("Backtest dedup: returning existing result, engine will NOT run", {
+          id: config.id,
+          existingId: existing.id,
+        });
         const reused = { ...existing, id: config.id, reused_from_id: existing.id };
         cacheResult(reused as typeof existing);
-        backtestStreamManager.complete(config.id);
-        logger.info("Backtest deduplicated", { id: config.id, reusedFromId: existing.id });
+        // Release the in-flight key before firing complete so any subsequent
+        // request with the same config immediately goes through the DB dedup
+        // path rather than hitting the relay branch on an already-closed channel.
+        inFlightKeys.delete(configKey);
+        backtestStreamManager.complete(config.id, { backtestId: existing.id });
+        logger.info("Backtest dedup: SSE complete fired with existing result", { id: config.id, backtestId: existing.id });
         return;
       }
 
+      logger.info("Backtest dedup: no match found, starting engine run", { id: config.id });
       const engine = new BacktestEngine();
       let resultInserted = false;
       try {
@@ -218,8 +244,13 @@ export async function runBacktest(req: Request, res: Response): Promise<void> {
           },
           (point) => backtestStreamManager.emit(config.id, point),
         );
+        logger.info("Backtest engine run finished", { id: config.id });
         cacheResult(result);
-        backtestStreamManager.complete(config.id);
+        // Release in-flight key before SSE fires so back-to-back runs from the
+        // same client reach findMatchingBacktestResult instead of the relay path.
+        inFlightKeys.delete(configKey);
+        backtestStreamManager.complete(config.id, { backtestId: config.id });
+        logger.info("Backtest SSE complete fired for fresh run", { id: config.id });
         try {
           await insertBacktestResult(result);
           resultInserted = true;

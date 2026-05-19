@@ -25,7 +25,7 @@
 import { BaseStrategy } from "../base/strategy";
 import { RollingTimeWindow } from "../../core/state/rollingWindow";
 import { computeZScore } from "../../services/indicators/zscore";
-import { computeOLSHedgeRatio } from "../../services/indicators/ols";
+import { computeEngleGranger } from "../../services/indicators/cointegration";
 import { logger } from "../../utils/logger";
 import { nowMs } from "../../utils/time";
 import type { EvaluationContext } from "../base/strategy";
@@ -38,6 +38,9 @@ import type {
 
 export class PairsStrategy extends BaseStrategy {
   readonly type: StrategyType = "pairs_trading";
+  // v3: replaced R² gate with Engle-Granger cointegration test; fixed entry-above-stop and state-before-qty bugs
+  static readonly VERSION = 3;
+  readonly version = PairsStrategy.VERSION;
 
   private readonly state: PairsInternalState;
 
@@ -172,21 +175,37 @@ export class PairsStrategy extends BaseStrategy {
 
     const leg1Prices = this.state.olsLeg1Window.getValues();
     const leg2Prices = this.state.olsLeg2Window.getValues();
-    const result = computeOLSHedgeRatio(leg1Prices, leg2Prices);
+    const level = this.pairsConfig.cointSignificanceLevel ?? 0.05;
+    const result = computeEngleGranger(leg1Prices, leg2Prices, level);
 
     if (result === null) {
       return this.state.currentHedgeRatio;
     }
 
-    if (result.rSquared < 0.5) {
-      logger.warn("PairsStrategy: low OLS R² — pair may not be cointegrated", {
+    const wasCointegrated = this.state.isCointegrated;
+    this.state.lastCointStat = result.testStatistic;
+    this.state.isCointegrated = result.isCointegrated;
+
+    if (wasCointegrated && !result.isCointegrated) {
+      logger.warn("PairsStrategy: pair lost cointegration", {
         id: this.id,
-        rSquared: result.rSquared.toFixed(3),
+        testStatistic: result.testStatistic.toFixed(3),
+        criticalValue: result.criticalValue,
+      });
+    } else if (!wasCointegrated && result.isCointegrated) {
+      logger.info("PairsStrategy: pair regained cointegration", {
+        id: this.id,
+        testStatistic: result.testStatistic.toFixed(3),
+        criticalValue: result.criticalValue,
       });
     }
 
-    this.state.currentHedgeRatio = result.beta;
-    return result.beta;
+    // Only update hedge ratio when the pair is cointegrated
+    if (result.isCointegrated) {
+      this.state.currentHedgeRatio = result.beta;
+    }
+
+    return this.state.currentHedgeRatio;
   }
 
   private _checkExitSignals(
@@ -237,15 +256,25 @@ export class PairsStrategy extends BaseStrategy {
   ): StrategySignal | null {
     if (this.state.positionState !== "flat") return null;
 
+    // Bug 1 fix: never enter when spread is already at or past stop-loss threshold
+    if (Math.abs(zScore) >= this.pairsConfig.stopLossZScore) return null;
+
+    // Cointegration gate: block entry when pair fails EG test (rolling_ols only)
+    if (
+      this.pairsConfig.hedgeRatioMethod === "rolling_ols" &&
+      this.state.lastCointStat !== null &&
+      !this.state.isCointegrated
+    ) {
+      return null;
+    }
+
     const { entryZScore } = this.pairsConfig;
 
     if (zScore <= -entryZScore) {
-      // Spread unusually LOW → enter long spread (buy leg1, sell leg2)
       return this._buildEntrySignal("long_spread", leg1, leg2, zScore, mean, std, spread);
     }
 
     if (zScore >= entryZScore) {
-      // Spread unusually HIGH → enter short spread (sell leg1, buy leg2)
       return this._buildEntrySignal("short_spread", leg1, leg2, zScore, mean, std, spread);
     }
 
@@ -260,20 +289,21 @@ export class PairsStrategy extends BaseStrategy {
     mean: number,
     std: number,
     spread: number,
-  ): StrategySignal {
+  ): StrategySignal | null {
+    // Bug 3 fix: compute and validate both leg quantities before mutating state
+    const leg1Qty = this._computeQty();
+    if (leg1Qty <= 0) return null;
+
+    const leg2Qty = Math.floor(leg1Qty * this.state.currentHedgeRatio);
+    if (leg2Qty <= 0) return null;
+
     const isLong = direction === "long_spread";
     const leg1Direction = isLong ? "long" : "short";
     const leg2Direction = isLong ? "short" : "long";
 
+    // Only mutate state after both quantities are validated
     this.state.positionState = direction;
     this.state.positionOpenedAt = nowMs();
-
-    logger.info("PairsStrategy: entry signal", {
-      id: this.id,
-      direction,
-      zScore: zScore.toFixed(3),
-      spread: spread.toFixed(4),
-    });
 
     const meta: PairsSignalMeta = {
       zScore,
@@ -290,7 +320,7 @@ export class PairsStrategy extends BaseStrategy {
     return this.buildSignal({
       symbol: leg1,
       direction: leg1Direction,
-      qty: this._computeQty(),
+      qty: leg1Qty,
       triggerValue: zScore,
       triggerLabel: isLong ? "z_score_entry_long" : "z_score_entry_short",
       meta: meta as unknown as Record<string, unknown>,
@@ -320,11 +350,11 @@ export class PairsStrategy extends BaseStrategy {
     this.state.cooldownActive = true;
     this.state.cooldownExpiresAt = nowMs() + this.pairsConfig.cooldownMs;
 
-    logger.info("PairsStrategy: exit signal", {
-      id: this.id,
-      signalType,
-      zScore: zScore.toFixed(3),
-    });
+    // logger.info("PairsStrategy: exit signal", {
+    //   id: this.id,
+    //   signalType,
+    //   zScore: zScore.toFixed(3),
+    // });
 
     const meta: PairsSignalMeta = {
       zScore,
@@ -366,6 +396,8 @@ export class PairsStrategy extends BaseStrategy {
       lastSpread: null,
       spreadWindow: new RollingTimeWindow(this.pairsConfig.rollingWindowMs),
       currentHedgeRatio: this.pairsConfig.fixedHedgeRatio,
+      lastCointStat: null,
+      isCointegrated: false,
       completedTrades: 0,
       cooldownActive: false,
       cooldownExpiresAt: null,

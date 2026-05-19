@@ -3,7 +3,7 @@
  *
  * Form for configuring and launching a backtest run.
  * Shows the full strategy config (same fields as StrategyForm) plus the
- * backtest-specific extras: date range, initial capital, and slippage.
+ * backtest-specific extras: date range, initial capital, and spread buffer.
  * Picking a saved config populates all strategy fields; they remain
  * editable before submitting.
  *
@@ -44,7 +44,7 @@ export default function BacktestForm({ onSubmit, isLoading }: Props) {
   const [startDate, setStartDate] = useState(daysAgoString(365));
   const [endDate, setEndDate] = useState(daysAgoString(1));
   const [initialCapital, setInitialCapital] = useState(100_000);
-  const [slippageBps, setSlippageBps] = useState(5);
+  const [spreadBufferBps, setSpreadBufferBps] = useState(5);
 
   // Per-strategy risk budget (matches StrategyForm)
   const [riskBudget, setRiskBudget] = useState<RiskBudgetState>(defaultRiskBudgetState);
@@ -131,12 +131,11 @@ export default function BacktestForm({ onSubmit, isLoading }: Props) {
       endDate: new Date(endDate).toISOString(),
       initialCapital,
       dataGranularity: "bar",
-      slippageBps,
       commissionPerShare: 0.005,
       strategyId: selectedStrategy?.id,
-      strategyVersion: selectedStrategy?.version,
       riskConfig: {
         gapBufferBps,
+        spreadBufferBps,
         maxIntradayDrawdownPct: maxIntradayDrawdownPct / 100,
         cashReservePct: cashReservePct / 100,
       },
@@ -149,11 +148,19 @@ export default function BacktestForm({ onSubmit, isLoading }: Props) {
 
       {/* Strategy type + config picker */}
       <div className="flex flex-col gap-3 rounded-md border border-zinc-200 p-3 dark:border-zinc-700">
-        <Field label="Strategy Type">
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-medium text-zinc-500">Strategy Type</span>
+            {definition?.algorithmVersion != null && (
+              <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                v{definition.algorithmVersion}
+              </span>
+            )}
+          </div>
           <select className={inputClass} value="pairs_trading" disabled>
             <option value="pairs_trading">Pairs Trading</option>
           </select>
-        </Field>
+        </div>
         <Field label="Configuration">
           {configsLoading ? (
             <div className="h-8 animate-pulse rounded-md bg-zinc-100 dark:bg-zinc-800" />
@@ -173,7 +180,7 @@ export default function BacktestForm({ onSubmit, isLoading }: Props) {
       </div>
 
       {/* Strategy config fields */}
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-2 gap-3 rounded-md border border-zinc-200 p-3 dark:border-zinc-700">
         <Field label="Leg 1">
           <input type="text" value={leg1} onChange={(e) => setLeg1(e.target.value.toUpperCase())} className={inputClass} required />
         </Field>
@@ -223,12 +230,11 @@ export default function BacktestForm({ onSubmit, isLoading }: Props) {
         <Field label="End Date">
           <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className={inputClass} required />
         </Field>
-        <Field label="Initial Capital ($)">
-          <input type="number" min="1000" step="1000" value={initialCapital} onChange={(e) => setInitialCapital(Number(e.target.value))} className={inputClass} />
-        </Field>
-        <Field label="Slippage (bps)">
-          <input type="number" min="0" max="100" step="1" value={slippageBps} onChange={(e) => setSlippageBps(Number(e.target.value))} className={inputClass} />
-        </Field>
+        <div className="col-span-2">
+          <Field label="Initial Capital ($)">
+            <input type="number" min="1000" step="1000" value={initialCapital} onChange={(e) => setInitialCapital(Number(e.target.value))} className={inputClass} />
+          </Field>
+        </div>
       </div>
 
       {/* Portfolio Allocation */}
@@ -257,6 +263,17 @@ export default function BacktestForm({ onSubmit, isLoading }: Props) {
                 step="1"
                 value={gapBufferBps}
                 onChange={(e) => setGapBufferBps(Number(e.target.value))}
+                className={inputClass}
+              />
+            </Field>
+            <Field label="Spread Buffer (bps)">
+              <input
+                type="number"
+                min="0"
+                max="100"
+                step="1"
+                value={spreadBufferBps}
+                onChange={(e) => setSpreadBufferBps(Number(e.target.value))}
                 className={inputClass}
               />
             </Field>

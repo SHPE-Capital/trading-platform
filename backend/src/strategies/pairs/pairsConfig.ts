@@ -42,6 +42,7 @@ export const DEFAULT_PAIRS_CONFIG: Omit<
 
   olsWindowMs: 14_400_000,     // 4-hour OLS window (2× the spread window)
   olsRecalcIntervalBars: 5,    // Recompute hedge ratio every 5 bars
+  cointSignificanceLevel: 0.05, // Block entry when EG test p > 5%
 
   executionAlgo: "market" as ExecutionAlgoType,
   // TODO: Change executionAlgo to "twap" or "vwap" for large-notional trades to reduce

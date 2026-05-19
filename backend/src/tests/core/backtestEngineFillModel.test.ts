@@ -112,15 +112,14 @@ function makeBuyStrategy(symbol: string, atTs: number, qty: number): IStrategy {
 }
 
 beforeEach(() => {
-  (BacktestLoader.prototype.loadBars as jest.Mock) = jest.fn();
+  (BacktestLoader.prototype.streamBars as jest.Mock) = jest.fn();
 });
 
 describe('BacktestEngine + fill model', () => {
   it('exposes the effective fill model in the result metadata', async () => {
-    (BacktestLoader.prototype.loadBars as jest.Mock).mockResolvedValue([
-      makeBar('SPY', 1_000, 100),
-      makeBar('SPY', 2_000, 101),
-    ]);
+    (BacktestLoader.prototype.streamBars as jest.Mock).mockImplementation(async function*() {
+      yield [makeBar('SPY', 1_000, 100), makeBar('SPY', 2_000, 101)];
+    });
     const cfg = makeConfig({
       slippageBps: 5,
       commissionPerShare: 0.005,
@@ -140,7 +139,9 @@ describe('BacktestEngine + fill model', () => {
       makeBar('SPY', 1_000, 1, 1_000),
       makeBar('SPY', 2_000, 1, 1_000),
     ];
-    (BacktestLoader.prototype.loadBars as jest.Mock).mockResolvedValue(bars);
+    (BacktestLoader.prototype.streamBars as jest.Mock).mockImplementation(async function*() {
+      yield bars;
+    });
 
     // Request 500 shares with a 10% participation cap on a 1_000-volume bar
     // → only 100 fills, the remainder expires (IOC).
@@ -164,7 +165,9 @@ describe('BacktestEngine + fill model', () => {
       makeBar('SPY', 1_000, 1, 1_000),
       makeBar('SPY', 2_000, 1, 0),
     ];
-    (BacktestLoader.prototype.loadBars as jest.Mock).mockResolvedValue(bars);
+    (BacktestLoader.prototype.streamBars as jest.Mock).mockImplementation(async function*() {
+      yield bars;
+    });
 
     const cfg = makeConfig({
       slippageBps: 0,
@@ -182,12 +185,14 @@ describe('BacktestEngine + fill model', () => {
 
 describe('BacktestEngine result metadata: data validation + assumptions', () => {
   it('exposes data_validation issues and metadata in the result', async () => {
-    (BacktestLoader.prototype.loadBars as jest.Mock).mockResolvedValue([
-      makeBar('SPY', 1_000, 100),
-      makeBar('SPY', 2_000, 100),
-      // Out-of-order bar — gets dropped, surfaces an error issue.
-      makeBar('SPY', 1_500, 100),
-    ]);
+    (BacktestLoader.prototype.streamBars as jest.Mock).mockImplementation(async function*() {
+      yield [
+        makeBar('SPY', 1_000, 100),
+        makeBar('SPY', 2_000, 100),
+        // Out-of-order bar — gets dropped, surfaces an error issue.
+        makeBar('SPY', 1_500, 100),
+      ];
+    });
     const cfg = makeConfig();
     const result = await new BacktestEngine().run(cfg, () => []);
     expect(result.data_validation).toBeDefined();
@@ -196,20 +201,21 @@ describe('BacktestEngine result metadata: data validation + assumptions', () => 
   });
 
   it('aborts when strictDataValidation is true and errors are present', async () => {
-    (BacktestLoader.prototype.loadBars as jest.Mock).mockResolvedValue([
-      makeBar('SPY', 1_000, 100),
-      makeBar('SPY', 2_000, 100),
-      makeBar('SPY', 1_500, 100), // out of order
-    ]);
+    (BacktestLoader.prototype.streamBars as jest.Mock).mockImplementation(async function*() {
+      yield [
+        makeBar('SPY', 1_000, 100),
+        makeBar('SPY', 2_000, 100),
+        makeBar('SPY', 1_500, 100), // out of order
+      ];
+    });
     const cfg = makeConfig({ strictDataValidation: true });
     await expect(new BacktestEngine().run(cfg, () => [])).rejects.toThrow(/validation/i);
   });
 
   it('flags insufficientReturnsForRatios when curve is too short for Sharpe/Sortino', async () => {
-    (BacktestLoader.prototype.loadBars as jest.Mock).mockResolvedValue([
-      makeBar('SPY', 1_000, 100),
-      makeBar('SPY', 2_000, 100),
-    ]);
+    (BacktestLoader.prototype.streamBars as jest.Mock).mockImplementation(async function*() {
+      yield [makeBar('SPY', 1_000, 100), makeBar('SPY', 2_000, 100)];
+    });
     const cfg = makeConfig();
     const result = await new BacktestEngine().run(cfg, () => []);
     expect(result.assumptions).toBeDefined();
@@ -218,10 +224,9 @@ describe('BacktestEngine result metadata: data validation + assumptions', () => 
   });
 
   it('reports benchmarkProvided=true when benchmarkCurve is supplied', async () => {
-    (BacktestLoader.prototype.loadBars as jest.Mock).mockResolvedValue([
-      makeBar('SPY', 1_000, 100),
-      makeBar('SPY', 2_000, 100),
-    ]);
+    (BacktestLoader.prototype.streamBars as jest.Mock).mockImplementation(async function*() {
+      yield [makeBar('SPY', 1_000, 100), makeBar('SPY', 2_000, 100)];
+    });
     const cfg = makeConfig({
       benchmarkCurve: [
         { ts: 1_000, value: 100 },

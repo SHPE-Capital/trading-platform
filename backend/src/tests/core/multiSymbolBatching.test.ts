@@ -125,7 +125,7 @@ function makeObservingStrategy(symbols: string[], observations: BatchObservation
 
 describe('BacktestEngine: multi-symbol timestamp batching', () => {
   beforeEach(() => {
-    (BacktestLoader.prototype.loadBars as jest.Mock) = jest.fn();
+    (BacktestLoader.prototype.streamBars as jest.Mock) = jest.fn();
   });
 
   it('strategies see ALL same-ts symbols updated before evaluation, regardless of ordering', async () => {
@@ -134,7 +134,7 @@ describe('BacktestEngine: multi-symbol timestamp batching', () => {
       bars.push(makeBar('SPY', 1_000 + i * 60_000, 100 + i));
       bars.push(makeBar('QQQ', 1_000 + i * 60_000, 300 + i));
     }
-    (BacktestLoader.prototype.loadBars as jest.Mock).mockResolvedValue(bars);
+    (BacktestLoader.prototype.streamBars as jest.Mock).mockImplementation(async function*() { yield bars; });
 
     const observations: BatchObservation[] = [];
     const engine = new BacktestEngine();
@@ -170,7 +170,7 @@ describe('BacktestEngine: multi-symbol timestamp batching', () => {
       if (a.symbol > b.symbol) return -1;
       return 0;
     });
-    (BacktestLoader.prototype.loadBars as jest.Mock).mockResolvedValue(shuffled);
+    (BacktestLoader.prototype.streamBars as jest.Mock).mockImplementation(async function*() { yield shuffled; });
 
     const observations: BatchObservation[] = [];
     const engine = new BacktestEngine();
@@ -186,12 +186,12 @@ describe('BacktestEngine: multi-symbol timestamp batching', () => {
 
 describe('BacktestEngine: deterministic clock', () => {
   beforeEach(() => {
-    (BacktestLoader.prototype.loadBars as jest.Mock) = jest.fn();
+    (BacktestLoader.prototype.streamBars as jest.Mock) = jest.fn();
   });
 
   it('does not mutate Date.now globally and restores after the run', async () => {
     const bars = [makeBar('SPY', 1_000), makeBar('SPY', 2_000)];
-    (BacktestLoader.prototype.loadBars as jest.Mock).mockResolvedValue(bars);
+    (BacktestLoader.prototype.streamBars as jest.Mock).mockImplementation(async function*() { yield bars; });
 
     const before = Date.now;
     await new BacktestEngine().run(makeConfig(['SPY']), () => []);
@@ -200,7 +200,7 @@ describe('BacktestEngine: deterministic clock', () => {
 
   it('restores Date.now even if the run throws', async () => {
     const before = Date.now;
-    (BacktestLoader.prototype.loadBars as jest.Mock).mockRejectedValue(new Error('boom'));
+    (BacktestLoader.prototype.streamBars as jest.Mock).mockImplementation(async function*() { throw new Error('boom'); });
     await expect(new BacktestEngine().run(makeConfig(['SPY']), () => [])).rejects.toThrow('boom');
     expect(Date.now).toBe(before);
   });

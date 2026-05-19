@@ -68,10 +68,8 @@ export interface RiskConfig {
   maxNetExposurePct?: number;
   /** Gap risk buffer in basis points — applied adversely at signal time for market orders */
   gapBufferBps: number;
-  /** Half-spread estimate in basis points — added to gap buffer */
+  /** Half-spread estimate in basis points — added to gap buffer for worst-case fill price */
   spreadBufferBps: number;
-  /** Market impact beyond spread in basis points — added to gap and spread buffers */
-  slippageBps: number;
 }
 
 // ------------------------------------------------------------------

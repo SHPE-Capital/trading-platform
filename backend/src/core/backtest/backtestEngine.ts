@@ -31,7 +31,7 @@ import { RiskEngine } from "../risk/riskEngine";
 import { ExecutionEngine } from "../execution/executionEngine";
 import { SimulatedExecutionSink } from "../execution/simulatedExecution";
 import { DEFAULT_FILL_MODEL, type FillModelConfig } from "../execution/fillModel";
-import { validateBars } from "./dataValidation";
+import { validateBars, type ValidationIssue } from "./dataValidation";
 import { computeAnalytics } from "./performanceAnalytics";
 import { BacktestLoader } from "./backtestLoader";
 import { BACKTEST_RISK_CONFIG } from "../../config/defaults";
@@ -101,124 +101,195 @@ export class BacktestEngine {
 
     // Register strategies and any per-strategy capital budgets
     const strategies = strategyFactory({ symbolState, portfolioState, orderState, eventBus });
+    // Derive strategyVersion from the first strategy that declares one, so the DB
+    // column is populated even when the caller doesn't set it explicitly in config.
+    const effectiveStrategyVersion =
+      config.strategyVersion ?? strategies.find((s) => s.version != null)?.version;
     for (const strategy of strategies) {
       const budget = (strategy.config as BaseStrategyConfig).riskBudget;
       if (budget) riskEngine.registerStrategyBudget({ ...budget, strategyId: strategy.id });
       orchestrator.registerStrategy(strategy);
     }
 
-    // Load and validate historical bars.
-    const rawBars = await this.loader.loadBars(
-      config.strategyConfig.symbols,
-      config.startDate,
-      config.endDate,
-      "1Min",
-    );
-    const validation = validateBars(rawBars, config.strategyConfig.symbols, "raw");
-
-    if (!validation.ok && config.strictDataValidation) {
-      throw new Error(
-        `BacktestEngine: data validation failed in strict mode (${
-          validation.issues.filter((i) => i.severity === "error").length
-        } errors)`,
-      );
-    }
-    if (!validation.ok) {
-      logger.warn("BacktestEngine: dropping invalid bars after validation", {
-        invalid: validation.metadata.invalidBarsDropped,
-        duplicates: validation.metadata.duplicateBarsDropped,
-      });
-    }
-    const bars = validation.bars;
+    // Estimate total 1-minute timestamp batches from the date range.
+    // Base: 252 trading days/yr × 390 min/day ≈ 269.75 batches per calendar day.
+    // Multiplied by 3 to stay above actual bar counts in all observed cases:
+    const daysInRange =
+      (new Date(config.endDate).getTime() - new Date(config.startDate).getTime()) / 86_400_000;
+    const estimatedBatches = Math.max(1, Math.round(daysInRange * (252 * 390) / 365 * 3));
+    const estimatedTotalBars = estimatedBatches * config.strategyConfig.symbols.length;
+    // Sample at most 5000 equity curve points. sampleEvery is in terms of
+    // timestamp batches (not individual bars) to keep the curve aligned with
+    // the simulated wall clock.
+    const sampleEvery = Math.max(1, Math.floor(estimatedBatches / 5000));
 
     const equityCurve: PortfolioSnapshot[] = [];
     orchestrator.start();
 
-    const totalBars = bars.length;
-    // Sample at most 5000 equity curve points to prevent OOM on long backtests.
-    // We still emit one snapshot per *timestamp batch* (not per bar) to keep
-    // the equity curve aligned with the simulated wall clock.
-    const sampleEvery = Math.max(1, Math.floor(totalBars / 5000));
-
-    // Group bars by timestamp so we process all same-ts symbols together —
-    // this eliminates the cross-symbol same-bar lookahead asymmetry that the
-    // alphabetical tiebreaker only partially mitigated. Bars are already
-    // sorted (ts asc, symbol asc) by BacktestLoader.
-    const batches: Bar[][] = [];
-    let currentBatch: Bar[] = [];
-    let currentTs: number | null = null;
-    for (const bar of bars) {
-      if (currentTs === null || bar.ts === currentTs) {
-        currentBatch.push(bar);
-        currentTs = bar.ts;
-      } else {
-        batches.push(currentBatch);
-        currentBatch = [bar];
-        currentTs = bar.ts;
-      }
-    }
-    if (currentBatch.length > 0) batches.push(currentBatch);
+    // Streaming validation state — accumulated across windows from streamBars.
+    const validationAcc = {
+      issues: [] as ValidationIssue[],
+      totalBarsInput: 0,
+      totalBarsAccepted: 0,
+      duplicateBarsDropped: 0,
+      invalidBarsDropped: 0,
+      largeGapsBySymbol: {} as Record<string, number>,
+      medianSpacingMsBySymbol: {} as Record<string, number>,
+      seenSymbols: new Set<string>(),
+      hasRawWarning: false,
+    };
 
     // Inject simulated clock so any code that calls nowMs() during the run
-    // sees the simulated time rather than wall-clock time. The override is
-    // updated for every batch and cleared in the finally block.
+    // sees the simulated time rather than wall-clock time. Cleared in finally.
     let simulatedNow = startedAt;
     setClockOverride(() => simulatedNow);
 
+    let processedBars = 0;
+    let batchIndex = 0;
+
     try {
-      let processedBars = 0;
-      for (let i = 0; i < batches.length; i++) {
-        const batch = batches[i];
-        const ts = batch[0].ts;
-        simulatedNow = ts;
+      for await (const window of this.loader.streamBars(
+        config.strategyConfig.symbols,
+        config.startDate,
+        config.endDate,
+        "1Min",
+      )) {
+        // Validate this window. Cross-window ordering issues can't occur:
+        // streamBars' safe-horizon guarantee means no batch ever spans windows.
+        const v = validateBars(window, config.strategyConfig.symbols, "raw");
 
-        // Phase 1: flush queued orders against each bar in this batch BEFORE
-        // exposing the new bars to strategies. The sink subscribes to
-        // BAR_RECEIVED in its constructor and runs before the orchestrator's
-        // handler, so publishing the BAR_RECEIVED events in phase 2 alone
-        // would already produce per-bar flush semantics — but we want
-        // strategies to see the full cross-section at this ts, with state
-        // already updated. We split flush from publish below.
-        for (const bar of batch) {
-          simulatedSink.processBarOpen(bar);
+        for (const issue of v.issues) {
+          // Deduplicate the raw-adjustment warning that validateBars emits per call.
+          if (issue.message === v.metadata.rawAdjustmentWarning) {
+            if (!validationAcc.hasRawWarning) {
+              validationAcc.issues.push(issue);
+              validationAcc.hasRawWarning = true;
+            }
+            continue;
+          }
+          validationAcc.issues.push(issue);
         }
-
-        // Phase 2: update symbol state and portfolio marks for every bar in
-        // the batch BEFORE evaluating any strategy. This is the multi-symbol
-        // no-lookahead phase.
-        for (const bar of batch) {
-          symbolState.onBar(bar);
-          portfolioState.updatePrice(bar.symbol, bar.close);
+        validationAcc.totalBarsInput += v.metadata.totalBarsInput;
+        validationAcc.totalBarsAccepted += v.metadata.totalBarsAccepted;
+        validationAcc.duplicateBarsDropped += v.metadata.duplicateBarsDropped;
+        validationAcc.invalidBarsDropped += v.metadata.invalidBarsDropped;
+        for (const [s, c] of Object.entries(v.metadata.largeGapsBySymbol)) {
+          validationAcc.largeGapsBySymbol[s] = (validationAcc.largeGapsBySymbol[s] ?? 0) + c;
         }
+        for (const [s, m] of Object.entries(v.metadata.medianSpacingMsBySymbol)) {
+          validationAcc.medianSpacingMsBySymbol[s] ??= m;
+        }
+        for (const bar of v.bars) validationAcc.seenSymbols.add(bar.symbol);
 
-        // Phase 3: publish a synthetic BAR_RECEIVED for each bar in the
-        // batch. The simulated sink will see an empty queue (we already
-        // flushed in phase 1) so this is a strict no-op for fills. The
-        // orchestrator's handler will call _evaluateStrategies for each
-        // symbol — strategies see a coherent cross-section because all
-        // symbol states were already updated in phase 2.
-        for (const bar of batch) {
-          eventBus.publish({
-            id: newId(),
-            type: "BAR_RECEIVED",
-            ts: bar.ts,
-            mode: "backtest",
-            simulatedTs: bar.ts,
-            payload: bar,
+        if (!v.ok && config.strictDataValidation) {
+          throw new Error(
+            `BacktestEngine: data validation failed in strict mode (${
+              v.issues.filter((i) => i.severity === "error").length
+            } errors)`,
+          );
+        }
+        if (!v.ok) {
+          logger.warn("BacktestEngine: dropping invalid bars after validation", {
+            invalid: v.metadata.invalidBarsDropped,
+            duplicates: v.metadata.duplicateBarsDropped,
           });
         }
 
-        if (i % sampleEvery === 0) {
-          const snap = portfolioState.getSnapshot();
-          equityCurve.push(snap);
-          onProgress?.({ ts, equity: snap.equity, barIndex: processedBars, totalBars });
+        const bars = v.bars;
+
+        // Group this window's validated bars into timestamp batches.
+        // streamBars guarantees no batch spans two windows.
+        const batches: Bar[][] = [];
+        let currentBatch: Bar[] = [];
+        let currentTs: number | null = null;
+        for (const bar of bars) {
+          if (currentTs === null || bar.ts === currentTs) {
+            currentBatch.push(bar);
+            currentTs = bar.ts;
+          } else {
+            batches.push(currentBatch);
+            currentBatch = [bar];
+            currentTs = bar.ts;
+          }
         }
-        processedBars += batch.length;
+        if (currentBatch.length > 0) batches.push(currentBatch);
+
+        for (const batch of batches) {
+          simulatedNow = batch[0].ts;
+
+          // Phase 1: flush queued orders against each bar in this batch BEFORE
+          // exposing the new bars to strategies. The sink subscribes to
+          // BAR_RECEIVED in its constructor and runs before the orchestrator's
+          // handler, so publishing the BAR_RECEIVED events in phase 2 alone
+          // would already produce per-bar flush semantics — but we want
+          // strategies to see the full cross-section at this ts, with state
+          // already updated. We split flush from publish below.
+          for (const bar of batch) simulatedSink.processBarOpen(bar);
+
+          // Phase 2: update symbol state and portfolio marks for every bar in
+          // the batch BEFORE evaluating any strategy. This is the multi-symbol
+          // no-lookahead phase.
+          for (const bar of batch) {
+            symbolState.onBar(bar);
+            portfolioState.updatePrice(bar.symbol, bar.close);
+          }
+
+          // Phase 3: publish a synthetic BAR_RECEIVED for each bar in the
+          // batch. The simulated sink will see an empty queue (we already
+          // flushed in phase 1) so this is a strict no-op for fills. The
+          // orchestrator's handler will call _evaluateStrategies for each
+          // symbol — strategies see a coherent cross-section because all
+          // symbol states were already updated in phase 2.
+          for (const bar of batch) {
+            eventBus.publish({
+              id: newId(),
+              type: "BAR_RECEIVED",
+              ts: bar.ts,
+              mode: "backtest",
+              simulatedTs: bar.ts,
+              payload: bar,
+            });
+          }
+
+          if (batchIndex % sampleEvery === 0) {
+            const snap = portfolioState.getSnapshot();
+            equityCurve.push(snap);
+            onProgress?.({ ts: simulatedNow, equity: snap.equity, barIndex: processedBars, totalBars: estimatedTotalBars });
+          }
+          processedBars += batch.length;
+          batchIndex++;
+        }
       }
     } finally {
       // Always clear the clock override — even if the run threw partway through.
       setClockOverride(null);
     }
+
+    // Finalize validation — add "no bars" warnings for any expected symbol without data.
+    for (const sym of config.strategyConfig.symbols) {
+      if (!validationAcc.seenSymbols.has(sym)) {
+        validationAcc.issues.push({
+          severity: "warning" as const,
+          symbol: sym,
+          message: "Requested symbol has no bars in the period",
+        });
+      }
+    }
+    const validation = {
+      issues: validationAcc.issues,
+      metadata: {
+        totalBarsInput: validationAcc.totalBarsInput,
+        totalBarsAccepted: validationAcc.totalBarsAccepted,
+        duplicateBarsDropped: validationAcc.duplicateBarsDropped,
+        invalidBarsDropped: validationAcc.invalidBarsDropped,
+        largeGapsBySymbol: validationAcc.largeGapsBySymbol,
+        medianSpacingMsBySymbol: validationAcc.medianSpacingMsBySymbol,
+        adjustment: "raw" as const,
+        rawAdjustmentWarning: validationAcc.hasRawWarning
+          ? "Bars use raw (unadjusted) prices: corporate actions (splits/dividends) are not applied. Long-horizon backtests across action dates may show artificial jumps."
+          : undefined,
+      },
+    };
 
     // Terminal cleanup: expire any IOC market intents still queued.
     simulatedSink.expireAllPending();
@@ -279,7 +350,9 @@ export class BacktestEngine {
 
     const result: BacktestResult = {
       id: config.id,
-      config,
+      config: effectiveStrategyVersion != null
+        ? { ...config, strategyVersion: effectiveStrategyVersion }
+        : config,
       status: "completed",
       started_at: startedAt,
       completed_at: completedAt,
@@ -288,7 +361,7 @@ export class BacktestEngine {
       equity_curve: equityCurve,
       orders: orderState.getAllOrders(),
       fills,
-      event_count: bars.length,
+      event_count: processedBars,
       data_validation: {
         issues: validation.issues,
         metadata: validation.metadata,
@@ -305,7 +378,7 @@ export class BacktestEngine {
 
     logger.info("BacktestEngine: completed", {
       id: config.id,
-      bars: bars.length,
+      bars: processedBars,
       totalReturn: (result.metrics.totalReturnPct * 100).toFixed(2) + "%",
     });
 

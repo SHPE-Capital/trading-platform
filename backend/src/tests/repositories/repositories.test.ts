@@ -64,7 +64,9 @@ function buildChain(overrides: Record<string, jest.Mock> = {}) {
     eq: jest.fn().mockReturnThis(),
     order: jest.fn().mockReturnThis(),
     limit: jest.fn().mockReturnThis(),
+    filter: jest.fn().mockReturnThis(),
     single: jest.fn().mockResolvedValue({ data: null, error: null }),
+    maybeSingle: jest.fn().mockResolvedValue({ data: null, error: null }),
     ...overrides,
   };
   // Make update().eq() chain work: update returns the chain
@@ -389,28 +391,33 @@ describe('updateStrategyRun', () => {
 // ---------------------------------------------------------------------------
 describe('getAllStrategyRuns', () => {
   it('returns empty array on error', async () => {
-    const chain = buildChain({
+    const runsChain = buildChain({
       order: jest.fn().mockResolvedValue({ data: null, error: { message: 'err' } }),
     });
-    chain.select.mockReturnValue(chain);
-    mockFrom.mockReturnValue(chain);
+    runsChain.select.mockReturnValue(runsChain);
+    // strategies fetch also wired — won't be reached on error but mockFrom must handle it
+    mockFrom.mockReturnValue(runsChain);
     const result = await getAllStrategyRuns();
     expect(result).toEqual([]);
   });
 
-  it('returns array on success', async () => {
-    // DB returns snake_case rows; repository maps them to camelCase StrategyRun objects
+  it('returns array on success with name resolved from strategies table', async () => {
+    // name column no longer exists on strategy_runs; name is resolved via strategies join
     const dbRow = {
       id: 'run-1', strategy_id: 'strat-1', strategy_type: 'pairs_trading',
-      name: 'test', config: {}, status: 'running', execution_mode: 'paper',
+      config: { name: 'Config Name' }, status: 'running', execution_mode: 'paper',
       started_at: new Date(1_000_000).toISOString(),
       total_signals: 0, total_orders: 0, realized_pnl: 0,
     };
-    const chain = buildChain({
+    const runsChain = buildChain({
       order: jest.fn().mockResolvedValue({ data: [dbRow], error: null }),
     });
-    chain.select.mockReturnValue(chain);
-    mockFrom.mockReturnValue(chain);
+    runsChain.select.mockReturnValue(runsChain);
+    // strategies chain: select resolves immediately with a matching strategy row
+    const strategiesChain = { select: jest.fn().mockResolvedValue({ data: [{ id: 'strat-1', name: 'My Strategy' }], error: null }) };
+    mockFrom.mockImplementation((table: string) =>
+      table === 'strategy_runs' ? runsChain : strategiesChain,
+    );
     const result = await getAllStrategyRuns();
     expect(result).toHaveLength(1);
     expect(result[0]).toEqual(expect.objectContaining({
@@ -418,7 +425,26 @@ describe('getAllStrategyRuns', () => {
       strategyId: 'strat-1',
       strategyType: 'pairs_trading',
       status: 'running',
+      name: 'My Strategy',
     }));
+  });
+
+  it('falls back to config.name when strategy_id does not resolve', async () => {
+    const dbRow = {
+      id: 'run-2', strategy_id: 'unknown-id', strategy_type: 'pairs_trading',
+      config: { name: 'Config Name' }, status: 'stopped', execution_mode: 'paper',
+      started_at: null, total_signals: 0, total_orders: 0, realized_pnl: 0,
+    };
+    const runsChain = buildChain({
+      order: jest.fn().mockResolvedValue({ data: [dbRow], error: null }),
+    });
+    runsChain.select.mockReturnValue(runsChain);
+    const strategiesChain = { select: jest.fn().mockResolvedValue({ data: [], error: null }) };
+    mockFrom.mockImplementation((table: string) =>
+      table === 'strategy_runs' ? runsChain : strategiesChain,
+    );
+    const result = await getAllStrategyRuns();
+    expect(result[0].name).toBe('Config Name');
   });
 });
 
@@ -426,52 +452,65 @@ describe('getAllStrategyRuns', () => {
 // getStrategyRunById
 // ---------------------------------------------------------------------------
 describe('getStrategyRunById', () => {
-  it('returns null when the row is not found (PGRST116)', async () => {
-    const chain = buildChain({
-      single: jest.fn().mockResolvedValue({ data: null, error: { code: 'PGRST116', message: 'not found' } }),
+  function mockRunsAndStrategies(runResult: { data: unknown; error: unknown }, strategyName?: string) {
+    const runsChain = buildChain({ single: jest.fn().mockResolvedValue(runResult) });
+    runsChain.select.mockReturnValue(runsChain);
+    runsChain.eq.mockReturnValue(runsChain);
+    const strategyChain = buildChain({
+      maybeSingle: jest.fn().mockResolvedValue({
+        data: strategyName ? { name: strategyName } : null,
+        error: null,
+      }),
     });
-    chain.select.mockReturnValue(chain);
-    chain.eq.mockReturnValue(chain);
-    mockFrom.mockReturnValue(chain);
-    const result = await getStrategyRunById('missing-id');
-    expect(result).toBeNull();
+    strategyChain.select.mockReturnValue(strategyChain);
+    strategyChain.eq.mockReturnValue(strategyChain);
+    mockFrom.mockImplementation((table: string) =>
+      table === 'strategy_runs' ? runsChain : strategyChain,
+    );
+  }
+
+  it('returns null when the row is not found (PGRST116)', async () => {
+    mockRunsAndStrategies({ data: null, error: { code: 'PGRST116', message: 'not found' } });
+    expect(await getStrategyRunById('missing-id')).toBeNull();
   });
 
-  it('returns a mapped StrategyRun on success', async () => {
+  it('returns a mapped StrategyRun with name from strategies table', async () => {
     const dbRow = {
       id: 'run-1', strategy_id: 'strat-1', strategy_type: 'pairs_trading',
-      name: 'test', config: {}, status: 'running', execution_mode: 'paper',
+      config: { name: 'Config Name' }, status: 'running', execution_mode: 'paper',
       started_at: '1970-01-01T00:16:40.000Z',
       total_signals: 5, total_orders: 2, realized_pnl: 100,
     };
-    const chain = buildChain({
-      single: jest.fn().mockResolvedValue({ data: dbRow, error: null }),
-    });
-    chain.select.mockReturnValue(chain);
-    chain.eq.mockReturnValue(chain);
-    mockFrom.mockReturnValue(chain);
+    mockRunsAndStrategies({ data: dbRow, error: null }, 'My Strategy');
     const result = await getStrategyRunById('run-1');
     expect(result).toMatchObject({
       id: 'run-1',
       strategyId: 'strat-1',
       startedAt: 1_000_000,
       totalSignals: 5,
+      name: 'My Strategy',
     });
+  });
+
+  it('falls back to config.name when strategy is not found', async () => {
+    const dbRow = {
+      id: 'run-1', strategy_id: 'unknown', strategy_type: 'pairs_trading',
+      config: { name: 'Config Name' }, status: 'running', execution_mode: 'paper',
+      started_at: '1970-01-01T00:16:40.000Z',
+      total_signals: 0, total_orders: 0, realized_pnl: 0,
+    };
+    mockRunsAndStrategies({ data: dbRow, error: null });
+    const result = await getStrategyRunById('run-1');
+    expect(result?.name).toBe('Config Name');
   });
 
   it('returns undefined startedAt when started_at is null', async () => {
     const dbRow = {
       id: 'run-2', strategy_id: 'strat-1', strategy_type: 'pairs_trading',
-      name: 'test', config: {}, status: 'running', execution_mode: 'paper',
-      started_at: null,
-      total_signals: 0, total_orders: 0, realized_pnl: 0,
+      config: { name: 'test' }, status: 'running', execution_mode: 'paper',
+      started_at: null, total_signals: 0, total_orders: 0, realized_pnl: 0,
     };
-    const chain = buildChain({
-      single: jest.fn().mockResolvedValue({ data: dbRow, error: null }),
-    });
-    chain.select.mockReturnValue(chain);
-    chain.eq.mockReturnValue(chain);
-    mockFrom.mockReturnValue(chain);
+    mockRunsAndStrategies({ data: dbRow, error: null }, 'test');
     const result = await getStrategyRunById('run-2');
     expect(result).not.toBeNull();
     expect(result!.startedAt).toBeUndefined();

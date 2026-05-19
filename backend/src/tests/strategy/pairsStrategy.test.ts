@@ -369,6 +369,44 @@ describe('cooldown suppression', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Bug 1: entry guard — never enter when z is already at or past stop-loss
+// ---------------------------------------------------------------------------
+describe('entry stop-loss guard (bug 1)', () => {
+  it('z at exactly stopLossZScore → no entry signal', () => {
+    const strategy = makeStrategy();
+    warmUp(strategy);
+
+    // z = stopLossZScore (4.0) — should be blocked
+    const AT_STOP: ZScoreResult = { zScore: 4.0, mean: 0, std: 0.1, value: 0.4 };
+    mockZScore.mockReturnValueOnce(AT_STOP);
+    currentTs += 1000;
+    expect(strategy.evaluate(makeContext(100, 100))).toBeNull();
+
+    const s = (strategy as unknown as { state: PairsInternalState }).state;
+    expect(s.positionState).toBe('flat');
+  });
+
+  it('z beyond stopLossZScore → no entry signal', () => {
+    const strategy = makeStrategy();
+    warmUp(strategy);
+
+    const BEYOND: ZScoreResult = { zScore: -5.0, mean: 0, std: 0.1, value: -0.5 };
+    mockZScore.mockReturnValueOnce(BEYOND);
+    currentTs += 1000;
+    expect(strategy.evaluate(makeContext(100, 100))).toBeNull();
+  });
+
+  it('z just inside entry range → entry fires normally', () => {
+    const strategy = makeStrategy();
+    warmUp(strategy);
+
+    mockZScore.mockReturnValueOnce(ENTRY_LONG_Z); // z=-2.5, inside [-4, +4]
+    currentTs += 1000;
+    expect(strategy.evaluate(makeContext(100, 100))).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Quantity sizing
 // ---------------------------------------------------------------------------
 describe('quantity sizing', () => {
@@ -392,14 +430,35 @@ describe('quantity sizing', () => {
     expect(signal!.qty).toBe(9); // floor(5000/501) = floor(9.98) = 9
   });
 
-  it('leg1 price $0 → qty=0 (divide-by-zero guard)', () => {
+  it('leg1 price $0 → null signal (qty guard blocks entry, state stays flat)', () => {
     const strategy = makeStrategy();
     warmUp(strategy);
 
     mockZScore.mockReturnValueOnce(ENTRY_LONG_Z);
     currentTs += 1000;
-    // price1=0 → latestLeg1Price=0 → _computeQty guard returns 0
+    // price1=0 → _computeQty returns 0 → _buildEntrySignal returns null before state mutation
     const signal = strategy.evaluate(makeContext(0, 100));
-    expect(signal!.qty).toBe(0);
+    expect(signal).toBeNull();
+
+    const s = (strategy as unknown as { state: PairsInternalState }).state;
+    expect(s.positionState).toBe('flat');
+  });
+
+  it('tiny hedge ratio rounds leg2Qty to 0 → null signal, positionState stays flat', () => {
+    const tinyHedgeCfg = createPairsConfig('A', 'B', {
+      ...testConfig,
+      fixedHedgeRatio: 0.001, // floor(10 * 0.001) = 0
+    });
+    const strategy = new PairsStrategy(tinyHedgeCfg);
+    strategy.start();
+    warmUp(strategy);
+
+    mockZScore.mockReturnValueOnce(ENTRY_LONG_Z);
+    currentTs += 1000;
+    const signal = strategy.evaluate(makeContext(500, 500)); // leg1Qty=10, leg2Qty=floor(10*0.001)=0
+    expect(signal).toBeNull();
+
+    const s = (strategy as unknown as { state: PairsInternalState }).state;
+    expect(s.positionState).toBe('flat');
   });
 });

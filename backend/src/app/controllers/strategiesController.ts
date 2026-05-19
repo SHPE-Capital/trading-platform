@@ -118,7 +118,7 @@ export async function startStrategyRun(req: Request, res: Response): Promise<voi
     id: runId,
     strategyId: (config.id as UUID | undefined) ?? runId,
     strategyType: strategyType as StrategyType,
-    strategyVersion: def?.version,
+    strategyVersion: strategy.version,
     name: (config.name as string | undefined) ?? `${strategyType} run`,
     config: config as unknown as StrategyRun["config"],
     status: "running",
@@ -178,7 +178,14 @@ export async function stopStrategyRun(req: Request, res: Response): Promise<void
 /** GET /api/strategies/configs */
 export async function listStrategies(_req: Request, res: Response): Promise<void> {
   try {
-    res.json(await getAllStrategies());
+    const rows = await getAllStrategies();
+    // Enrich each row with the current algorithm version from the class — this is
+    // the single source of truth and does not depend on any stored DB column.
+    const enriched = rows.map((s) => ({
+      ...s,
+      algorithmVersion: STRATEGY_DEFINITIONS[s.strategy_type]?.algorithmVersion,
+    }));
+    res.json(enriched);
   } catch (err) {
     logger.error("listStrategies error", { err });
     res.status(500).json({ error: "Failed to fetch strategies" });
@@ -213,8 +220,11 @@ export async function createStrategy(req: Request, res: Response): Promise<void>
     return;
   }
   try {
-    const strategy = await insertStrategy({ strategy_type, version: def.version, name, config });
-    res.status(201).json(strategy);
+    const strategy = await insertStrategy({ strategy_type, name, config });
+    // Enrich the response with the current algorithm version so the frontend has
+    // it immediately without a second round-trip.
+    const enriched = { ...strategy, algorithmVersion: def.algorithmVersion };
+    res.status(201).json(enriched);
   } catch (err) {
     logger.error("createStrategy error", { err });
     res.status(500).json({ error: "Failed to create strategy" });

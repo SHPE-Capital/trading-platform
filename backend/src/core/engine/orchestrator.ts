@@ -2,12 +2,11 @@
  * core/engine/orchestrator.ts
  *
  * The main trading engine orchestrator. Wires together the EventBus,
- * SymbolStateManager, StrategyRunner, RiskEngine, ExecutionEngine, and
- * OrderManagerService (OMS).
+ * SymbolStateManager, PortfolioStateManager, OrderStateManager, RiskEngine,
+ * ExecutionEngine, and CapitalReservationManager.
  *
  * Signal routing is event-driven: STRATEGY_SIGNAL_CREATED → ORDER_INTENT_CREATED
- * → risk check + capital reservation + execution. The OMS (orderManager) is kept
- * as a public field for external callers that need direct queue access.
+ * → risk check + capital reservation + execution.
  *
  * This class is mode-agnostic: the same orchestrator runs in live, backtest,
  * and replay modes. What differs is the event source and execution sink
@@ -23,9 +22,8 @@ import { PortfolioStateManager } from "../state/portfolioState";
 import { OrderStateManager } from "../state/orderState";
 import { RiskEngine } from "../risk/riskEngine";
 import { ExecutionEngine } from "../execution/executionEngine";
-import { OrderManagerService } from "../oms/orderManager";
 import { CapitalReservationManager } from "../oms/capitalReservation";
-import { OrderIntentQueue } from "../oms/orderQueue";
+import { getStrategyPriority } from "../oms/priorityConfig";
 import { logger } from "../../utils/logger";
 import { nowMs } from "../../utils/time";
 import { newId } from "../../utils/ids";
@@ -51,9 +49,6 @@ export class Orchestrator {
   /** intentId → reservationId, for releasing on any terminal order event */
   private readonly _reservationByIntent = new Map<UUID, UUID>();
 
-  /** The Order Management System — available for external callers that need direct queue access */
-  public readonly orderManager: OrderManagerService;
-
   constructor(
     public readonly eventBus: EventBus,
     public readonly symbolState: SymbolStateManager,
@@ -62,20 +57,7 @@ export class Orchestrator {
     public readonly riskEngine: RiskEngine,
     public readonly executionEngine: ExecutionEngine,
     private readonly mode: ExecutionMode,
-  ) {
-    const capitalMgr = new CapitalReservationManager();
-    const queue = new OrderIntentQueue();
-    this.orderManager = new OrderManagerService(
-      capitalMgr,
-      queue,
-      riskEngine,
-      executionEngine,
-      portfolioState,
-      symbolState,
-      eventBus,
-      mode,
-    );
-  }
+  ) {}
 
   /**
    * Registers a strategy. If the orchestrator is already running, starts the
@@ -208,8 +190,6 @@ export class Orchestrator {
     if (!this.running) return;
     this.running = false;
 
-    this.orderManager.clear();
-
     for (const strategy of this.strategies.values()) {
       strategy.stop();
       this.eventBus.publish({
@@ -236,6 +216,11 @@ export class Orchestrator {
     return this.running;
   }
 
+  /** Total capital currently reserved across all pending orders */
+  get reservedCapital(): number {
+    return this.capitalReservation.getReservedTotal();
+  }
+
   // ------------------------------------------------------------------
   // Private event handlers
   // ------------------------------------------------------------------
@@ -245,12 +230,14 @@ export class Orchestrator {
     // Mark-to-market: refresh unrealized PnL on every quote so equity tracks
     // price moves even when no new fills occur.
     this.portfolioState.updatePrice(event.payload.symbol, event.payload.midPrice);
+    this._proactivePortfolioCheck(event.mode);
     this._evaluateStrategies(event.payload.symbol);
   }
 
   private _onTrade(event: TradeReceivedEvent): void {
     this.symbolState.onTrade(event.payload);
     this.portfolioState.updatePrice(event.payload.symbol, event.payload.price);
+    this._proactivePortfolioCheck(event.mode);
     this._evaluateStrategies(event.payload.symbol);
   }
 
@@ -259,11 +246,40 @@ export class Orchestrator {
     // Mark-to-market against the bar close so the equity snapshot taken right
     // after this handler returns reflects the current price.
     this.portfolioState.updatePrice(event.payload.symbol, event.payload.close);
+    this._proactivePortfolioCheck(event.mode);
     this._evaluateStrategies(event.payload.symbol);
   }
 
+  /**
+   * Runs a proactive portfolio risk check after any price update (bar, quote, or trade).
+   * Guards against unrealized losses accumulating silently between fills.
+   * No-op when the kill switch is already active to prevent repeated firing.
+   */
+  private _proactivePortfolioCheck(mode: ExecutionMode): void {
+    if (this.riskEngine.getConfig().killSwitchActive) return;
+    const snapshot = this.portfolioState.getSnapshot();
+    const violation = this.riskEngine.checkPortfolio(snapshot);
+    if (violation) {
+      if (violation.engageKillSwitch) {
+        this.riskEngine.setKillSwitch(true);
+        this._closeAllPositions();
+      }
+      this.eventBus.publish({
+        id: newId(), type: "PORTFOLIO_RISK_VIOLATION", ts: nowMs(), mode,
+        check: violation.check,
+        reason: violation.reason,
+        engageKillSwitch: violation.engageKillSwitch,
+        grossExposurePct: violation.grossExposurePct,
+        netExposurePct: violation.netExposurePct,
+      });
+    }
+  }
+
   private _evaluateStrategies(symbol: string): void {
-    for (const strategy of this.strategies.values()) {
+    if (this.riskEngine.getConfig().killSwitchActive) return;
+    const sorted = [...this.strategies.values()]
+      .sort((a, b) => getStrategyPriority(b.type) - getStrategyPriority(a.type));
+    for (const strategy of sorted) {
       if (!strategy.config.symbols.includes(symbol)) continue;
       try {
         const signal = strategy.evaluate({
@@ -297,46 +313,96 @@ export class Orchestrator {
   /**
    * Converts emitted StrategySignals into ORDER_INTENT_CREATED events.
    *
-   * Two-sided market-making signals (signal.meta.kind === "maker_quotes")
-   * are handled separately: one limit intent per leg of meta.makerQuotes.
-   * This keeps existing single-direction strategies untouched while
-   * letting market makers post a bid and ask in a single dispatch.
+   * Builds all legs for the signal via `_buildSignalLegs`, performs a combined
+   * capital pre-flight check for multi-leg signals, then emits one event per leg.
+   * Maker-quote signals are routed to `_onMakerQuoteSignal` instead.
    */
   private _onStrategySignal(event: any): void {
     const signal = event.payload;
     if (!signal) return;
 
-    // Maker-quote signals (e.g. Avellaneda-Stoikov): emit one limit intent
-    // per leg of meta.makerQuotes. Top-level qty/direction are ignored.
-    if (signal.meta && signal.meta.kind === "maker_quotes") {
+    if (signal.meta?.kind === "maker_quotes") {
       this._onMakerQuoteSignal(signal, event.mode);
       return;
     }
 
-    if (signal.qty <= 0) return;
+    const legs = this._buildSignalLegs(signal);
+    if (legs.length === 0) return;
+
+    // Pre-flight: for multi-leg signals, verify the combined worst-case cost fits available
+    // capital before emitting any ORDER_INTENT_CREATED events. The event bus is synchronous
+    // so nothing else runs between this check and the individual reserve calls inside
+    // _onOrderIntent — a passing pre-flight guarantees all legs can reserve.
+    if (legs.length > 1) {
+      const portfolio = this.portfolioState.getSnapshot();
+
+      // Full per-leg risk pre-flight — drop all legs if any would be rejected.
+      const riskFailure = this._preflightLegs(legs, portfolio);
+      if (riskFailure) {
+        this.eventBus.publish({
+          id: newId(), type: "RISK_REJECTED", ts: nowMs(), mode: event.mode,
+          strategyId: signal.strategyId,
+          reason: `Multi-leg pre-flight failed on ${riskFailure.symbol} [${riskFailure.failedCheck}]: ${riskFailure.reason}`,
+          rejectedIntent: riskFailure.intent,
+        });
+        return;
+      }
+
+      // Combined capital pre-flight — buy legs only, accounting for existing reservations.
+      let combined = 0;
+      let allBuyPricesKnown = true;
+      for (const leg of legs) {
+        // Sell legs reserve $0 in capital — only count buy legs against available cash.
+        if (leg.side !== "buy") continue;
+        const mid = this.symbolState.get(leg.symbol)?.latestMid ?? null;
+        const wcp = this.riskEngine.estimateWorstCasePrice(leg.side, leg, mid);
+        if (wcp === null) { allBuyPricesKnown = false; break; }
+        combined += leg.qty * wcp;
+      }
+      if (allBuyPricesKnown && combined > this.capitalReservation.getAvailableCash(portfolio.cash)) {
+        this.eventBus.publish({
+          id: newId(), type: "CAPITAL_UNAVAILABLE", ts: nowMs(), mode: event.mode,
+          intentId: legs[0].id, strategyId: signal.strategyId,
+          required: combined,
+          available: this.capitalReservation.getAvailableCash(portfolio.cash),
+        });
+        return;
+      }
+    }
+
+    for (const leg of legs) {
+      this.eventBus.publish({
+        id: newId(), type: "ORDER_INTENT_CREATED", ts: nowMs(), mode: event.mode,
+        strategyId: signal.strategyId, payload: leg,
+      });
+    }
+  }
+
+  /**
+   * Builds the ordered list of OrderIntents for a signal. Returns an empty array
+   * if the signal is invalid (zero qty, unknown direction, or zero-qty counterpart).
+   * Dropping BOTH legs when the counterpart rounds to zero prevents naked legs.
+   *
+   * Extend this method to support N-leg signals (e.g. basket trades) — callers
+   * (including the future TWAP/VWAP scheduler) push additional intents before returning.
+   */
+  private _buildSignalLegs(signal: any): import("../../types/orders").OrderIntent[] {
+    if (signal.qty <= 0) return [];
 
     let side: "buy" | "sell";
     if (signal.direction === "long" || signal.direction === "close_short") side = "buy";
     else if (signal.direction === "short" || signal.direction === "close_long") side = "sell";
-    else return;
+    else return [];
 
-    const primaryIntent: import("../../types/orders").OrderIntent = {
-      id: newId(),
-      strategyId: signal.strategyId,
-      symbol: signal.symbol,
-      side,
-      qty: signal.qty,
-      orderType: "market" as const,
-      timeInForce: "ioc" as const,
-      reason: signal.triggerLabel,
-      ts: nowMs(),
-      meta: signal.meta,
+    const primary: import("../../types/orders").OrderIntent = {
+      id: newId(), strategyId: signal.strategyId, symbol: signal.symbol,
+      side, qty: signal.qty, orderType: "market", timeInForce: "ioc",
+      reason: signal.triggerLabel, ts: nowMs(), meta: signal.meta,
     };
 
-    // Fix #8: compute counterpart FIRST. If counterpart qty rounds to zero, drop
-    // BOTH legs — otherwise we'd execute a naked leg that no longer hedges anything.
-    let cIntent: import("../../types/orders").OrderIntent | null = null;
-    if (signal.meta && signal.meta.counterpartSymbol && signal.meta.counterpartDirection) {
+    const legs: import("../../types/orders").OrderIntent[] = [primary];
+
+    if (signal.meta?.counterpartSymbol && signal.meta?.counterpartDirection) {
       let cSide: "buy" | "sell" | null = null;
       const cDir = signal.meta.counterpartDirection as string;
       if (cDir === "long" || cDir === "close_short") cSide = "buy";
@@ -346,47 +412,48 @@ export class Orchestrator {
         const cQty = Math.floor(signal.qty * ((signal.meta.hedgeRatio as number) || 1));
         if (cQty <= 0) {
           logger.warn("Orchestrator: dropping pair signal — counterpart qty rounded to zero", {
-            strategyId: signal.strategyId,
-            symbol: signal.symbol,
-            counterpart: signal.meta.counterpartSymbol,
-            hedgeRatio: signal.meta.hedgeRatio,
+            strategyId: signal.strategyId, symbol: signal.symbol,
+            counterpart: signal.meta.counterpartSymbol, hedgeRatio: signal.meta.hedgeRatio,
           });
-          return;
+          return [];
         }
-        cIntent = {
-          id: newId(),
-          strategyId: signal.strategyId,
-          symbol: signal.meta.counterpartSymbol as string,
-          side: cSide,
-          qty: cQty,
-          orderType: "market" as const,
-          timeInForce: "ioc" as const,
-          reason: (signal.triggerLabel || "") + "_counterpart",
-          ts: nowMs(),
-          meta: signal.meta,
-        };
+        legs.push({
+          id: newId(), strategyId: signal.strategyId,
+          symbol: signal.meta.counterpartSymbol as string, side: cSide,
+          qty: cQty, orderType: "market", timeInForce: "ioc",
+          reason: (signal.triggerLabel || "") + "_counterpart", ts: nowMs(), meta: signal.meta,
+        });
       }
     }
 
-    this.eventBus.publish({
-      id: newId(),
-      type: "ORDER_INTENT_CREATED",
-      ts: nowMs(),
-      mode: event.mode,
-      strategyId: signal.strategyId,
-      payload: primaryIntent,
-    });
+    return legs;
+  }
 
-    if (cIntent) {
-      this.eventBus.publish({
-        id: newId(),
-        type: "ORDER_INTENT_CREATED",
-        ts: nowMs(),
-        mode: event.mode,
-        strategyId: signal.strategyId,
-        payload: cIntent,
-      });
+  /**
+   * Runs a side-effect-free risk pre-flight check on every leg of a multi-leg signal.
+   * Returns the first failure (intent + check name + reason) so the caller can emit a
+   * RISK_REJECTED event and drop the whole group before any ORDER_INTENT_CREATED fires.
+   * Uses `preflightCheck` rather than `check` so the cooldown timestamp is not consumed.
+   */
+  private _preflightLegs(
+    legs: import("../../types/orders").OrderIntent[],
+    portfolio: import("../../types/portfolio").PortfolioSnapshot,
+  ): { intent: import("../../types/orders").OrderIntent; failedCheck: string; reason: string; symbol: string } | null {
+    for (const leg of legs) {
+      const symState = this.symbolState.get(leg.symbol);
+      const mid = symState?.latestMid ?? symState?.latestBar?.close ?? undefined;
+      const quoteTs = symState?.latestQuote?.ts ?? symState?.latestBar?.ts ?? undefined;
+      const result = this.riskEngine.preflightCheck(leg, portfolio, mid, quoteTs);
+      if (!result.passed) {
+        return {
+          intent: leg,
+          failedCheck: result.failedCheck ?? "UNKNOWN",
+          reason: result.reason ?? "Risk check failed",
+          symbol: leg.symbol,
+        };
+      }
     }
+    return null;
   }
 
   /**
@@ -444,7 +511,8 @@ export class Orchestrator {
     const portfolio = this.portfolioState.getSnapshot();
 
     // Stage 1: signal-time risk checks (kill switch, cooldown, position/cash/concentration)
-    const riskResult = this.riskEngine.check(intent, portfolio, mid ?? undefined);
+    const quoteTs = symState?.latestQuote?.ts ?? symState?.latestBar?.ts ?? undefined;
+    const riskResult = this.riskEngine.check(intent, portfolio, mid ?? undefined, quoteTs);
     if (!riskResult.passed) {
       this.eventBus.publish({
         id: newId(), type: "RISK_REJECTED", ts: nowMs(), mode: this.mode,
@@ -554,10 +622,29 @@ export class Orchestrator {
 
     this.orderState.applyFill(event.orderId, event.fill);
     this.portfolioState.applyFill(event.fill);
+
+    const snapshot = this.portfolioState.getSnapshot();
     this.eventBus.publish({
       id: newId(), type: "PORTFOLIO_UPDATED", ts: nowMs(), mode: this.mode,
-      payload: this.portfolioState.getSnapshot(),
+      payload: snapshot,
     });
+
+    const wasKillSwitchActive = this.riskEngine.getConfig().killSwitchActive;
+    const violation = this.riskEngine.checkPortfolio(snapshot);
+    if (violation) {
+      if (violation.engageKillSwitch) {
+        this.riskEngine.setKillSwitch(true);
+        if (!wasKillSwitchActive) this._closeAllPositions();
+      }
+      this.eventBus.publish({
+        id: newId(), type: "PORTFOLIO_RISK_VIOLATION", ts: nowMs(), mode: this.mode,
+        check: violation.check,
+        reason: violation.reason,
+        engageKillSwitch: violation.engageKillSwitch,
+        grossExposurePct: violation.grossExposurePct,
+        netExposurePct: violation.netExposurePct,
+      });
+    }
   }
 
   private _onOrderFilled(event: OrderFilledEvent): void {
@@ -580,9 +667,13 @@ export class Orchestrator {
       payload: snapshot,
     });
 
+    const wasKillSwitchActive = this.riskEngine.getConfig().killSwitchActive;
     const violation = this.riskEngine.checkPortfolio(snapshot);
     if (violation) {
-      if (violation.engageKillSwitch) this.riskEngine.setKillSwitch(true);
+      if (violation.engageKillSwitch) {
+        this.riskEngine.setKillSwitch(true);
+        if (!wasKillSwitchActive) this._closeAllPositions();
+      }
       this.eventBus.publish({
         id: newId(), type: "PORTFOLIO_RISK_VIOLATION", ts: nowMs(), mode: this.mode,
         check: violation.check,
@@ -591,6 +682,39 @@ export class Orchestrator {
         grossExposurePct: violation.grossExposurePct,
         netExposurePct: violation.netExposurePct,
       });
+    }
+  }
+
+  /**
+   * Emergency-closes all open positions by submitting market IOC orders directly
+   * to the execution engine, bypassing risk checks. Called when the kill switch
+   * first fires (either from a post-fill portfolio check or a proactive bar check).
+   * Errors are logged but do not throw — a failed close is better surfaced via
+   * monitoring than by crashing the engine loop.
+   */
+  private _closeAllPositions(): void {
+    const snapshot = this.portfolioState.getSnapshot();
+    for (const position of snapshot.positions) {
+      if (position.qty === 0) continue;
+      const side = position.qty > 0 ? "sell" : "buy";
+      const qty = Math.abs(position.qty);
+      const intent: import("../../types/orders").OrderIntent = {
+        id: newId(),
+        strategyId: "kill_switch",
+        symbol: position.symbol,
+        side,
+        qty,
+        orderType: "market",
+        timeInForce: "ioc",
+        reason: "KILL_SWITCH_EMERGENCY_CLOSE",
+        ts: nowMs(),
+      };
+      this.executionEngine.submit(intent).catch((err) =>
+        logger.error("Orchestrator: emergency close failed", {
+          symbol: position.symbol,
+          error: String(err),
+        }),
+      );
     }
   }
 
