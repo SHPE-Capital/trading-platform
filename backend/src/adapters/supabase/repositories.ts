@@ -315,6 +315,21 @@ export async function getAllStrategyRuns(): Promise<StrategyRun[]> {
 }
 
 
+/** Resolves the display name for a strategy run row.
+ *  Prefers the live strategy config name; falls back to config.name in the JSONB. */
+async function resolveRunName(
+  supabase: ReturnType<typeof getSupabaseClient>,
+  run: Record<string, unknown>,
+): Promise<string> {
+  const { data } = await supabase
+    .from("strategies")
+    .select("name")
+    .eq("id", run.strategy_id as string)
+    .maybeSingle();
+  return (data as { name?: string } | null)?.name
+    ?? (run.config as Record<string, unknown>).name as string;
+}
+
 /** Retrieves a single strategy run by ID. */
 export async function getStrategyRunById(id: UUID): Promise<StrategyRun | null> {
   const supabase = getSupabaseClient();
@@ -328,7 +343,8 @@ export async function getStrategyRunById(id: UUID): Promise<StrategyRun | null> 
     logger.error("getStrategyRunById failed", { error: error.message, id });
     return null;
   }
-  return mapStrategyRun(data as Record<string, unknown>);
+  const r = data as Record<string, unknown>;
+  return mapStrategyRun({ ...r, name: await resolveRunName(supabase, r) });
 }
 
 /**
@@ -350,7 +366,9 @@ export async function findRunningStartupRun(startupKey: string): Promise<Strateg
     logger.error("findRunningStartupRun failed", { error: error.message });
     return null;
   }
-  return data ? mapStrategyRun(data as Record<string, unknown>) : null;
+  if (!data) return null;
+  const r = data as Record<string, unknown>;
+  return mapStrategyRun({ ...r, name: await resolveRunName(supabase, r) });
 }
 
 // ------------------------------------------------------------------

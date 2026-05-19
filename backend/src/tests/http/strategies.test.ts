@@ -110,12 +110,12 @@ describe("Strategies HTTP API", () => {
   // Strategy config CRUD
   // -------------------------------------------------------------------------
   describe("GET /api/strategies/configs", () => {
-    test("returns 200 with array of saved configs", async () => {
+    test("returns 200 with array of saved configs enriched with algorithmVersion", async () => {
       const configs = [{ id: "cfg-1", name: "My Pairs", strategy_type: "pairs_trading" }];
       mockGetAllStrategies.mockResolvedValue(configs);
       const res = await request(app).get("/api/strategies/configs");
       expect(res.status).toBe(200);
-      expect(res.body).toEqual(configs);
+      expect(res.body).toEqual([expect.objectContaining({ id: "cfg-1", name: "My Pairs", algorithmVersion: 2 })]);
     });
   });
 
