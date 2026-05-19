@@ -2,12 +2,11 @@
  * core/engine/orchestrator.ts
  *
  * The main trading engine orchestrator. Wires together the EventBus,
- * SymbolStateManager, StrategyRunner, RiskEngine, ExecutionEngine, and
- * OrderManagerService (OMS).
+ * SymbolStateManager, PortfolioStateManager, OrderStateManager, RiskEngine,
+ * ExecutionEngine, and CapitalReservationManager.
  *
  * Signal routing is event-driven: STRATEGY_SIGNAL_CREATED → ORDER_INTENT_CREATED
- * → risk check + capital reservation + execution. The OMS (orderManager) is kept
- * as a public field for external callers that need direct queue access.
+ * → risk check + capital reservation + execution.
  *
  * This class is mode-agnostic: the same orchestrator runs in live, backtest,
  * and replay modes. What differs is the event source and execution sink
@@ -231,12 +230,14 @@ export class Orchestrator {
     // Mark-to-market: refresh unrealized PnL on every quote so equity tracks
     // price moves even when no new fills occur.
     this.portfolioState.updatePrice(event.payload.symbol, event.payload.midPrice);
+    this._proactivePortfolioCheck(event.mode);
     this._evaluateStrategies(event.payload.symbol);
   }
 
   private _onTrade(event: TradeReceivedEvent): void {
     this.symbolState.onTrade(event.payload);
     this.portfolioState.updatePrice(event.payload.symbol, event.payload.price);
+    this._proactivePortfolioCheck(event.mode);
     this._evaluateStrategies(event.payload.symbol);
   }
 
@@ -245,30 +246,33 @@ export class Orchestrator {
     // Mark-to-market against the bar close so the equity snapshot taken right
     // after this handler returns reflects the current price.
     this.portfolioState.updatePrice(event.payload.symbol, event.payload.close);
-
-    // Proactive drawdown check on every bar — guards against unrealized losses
-    // accumulating silently between fills. Guard prevents repeated firing after
-    // kill switch is already active.
-    if (!this.riskEngine.getConfig().killSwitchActive) {
-      const snapshot = this.portfolioState.getSnapshot();
-      const violation = this.riskEngine.checkPortfolio(snapshot);
-      if (violation) {
-        if (violation.engageKillSwitch) {
-          this.riskEngine.setKillSwitch(true);
-          this._closeAllPositions();
-        }
-        this.eventBus.publish({
-          id: newId(), type: "PORTFOLIO_RISK_VIOLATION", ts: nowMs(), mode: this.mode,
-          check: violation.check,
-          reason: violation.reason,
-          engageKillSwitch: violation.engageKillSwitch,
-          grossExposurePct: violation.grossExposurePct,
-          netExposurePct: violation.netExposurePct,
-        });
-      }
-    }
-
+    this._proactivePortfolioCheck(event.mode);
     this._evaluateStrategies(event.payload.symbol);
+  }
+
+  /**
+   * Runs a proactive portfolio risk check after any price update (bar, quote, or trade).
+   * Guards against unrealized losses accumulating silently between fills.
+   * No-op when the kill switch is already active to prevent repeated firing.
+   */
+  private _proactivePortfolioCheck(mode: ExecutionMode): void {
+    if (this.riskEngine.getConfig().killSwitchActive) return;
+    const snapshot = this.portfolioState.getSnapshot();
+    const violation = this.riskEngine.checkPortfolio(snapshot);
+    if (violation) {
+      if (violation.engageKillSwitch) {
+        this.riskEngine.setKillSwitch(true);
+        this._closeAllPositions();
+      }
+      this.eventBus.publish({
+        id: newId(), type: "PORTFOLIO_RISK_VIOLATION", ts: nowMs(), mode,
+        check: violation.check,
+        reason: violation.reason,
+        engageKillSwitch: violation.engageKillSwitch,
+        grossExposurePct: violation.grossExposurePct,
+        netExposurePct: violation.netExposurePct,
+      });
+    }
   }
 
   private _evaluateStrategies(symbol: string): void {
@@ -618,10 +622,29 @@ export class Orchestrator {
 
     this.orderState.applyFill(event.orderId, event.fill);
     this.portfolioState.applyFill(event.fill);
+
+    const snapshot = this.portfolioState.getSnapshot();
     this.eventBus.publish({
       id: newId(), type: "PORTFOLIO_UPDATED", ts: nowMs(), mode: this.mode,
-      payload: this.portfolioState.getSnapshot(),
+      payload: snapshot,
     });
+
+    const wasKillSwitchActive = this.riskEngine.getConfig().killSwitchActive;
+    const violation = this.riskEngine.checkPortfolio(snapshot);
+    if (violation) {
+      if (violation.engageKillSwitch) {
+        this.riskEngine.setKillSwitch(true);
+        if (!wasKillSwitchActive) this._closeAllPositions();
+      }
+      this.eventBus.publish({
+        id: newId(), type: "PORTFOLIO_RISK_VIOLATION", ts: nowMs(), mode: this.mode,
+        check: violation.check,
+        reason: violation.reason,
+        engageKillSwitch: violation.engageKillSwitch,
+        grossExposurePct: violation.grossExposurePct,
+        netExposurePct: violation.netExposurePct,
+      });
+    }
   }
 
   private _onOrderFilled(event: OrderFilledEvent): void {
