@@ -93,18 +93,26 @@ export interface PairsStrategyConfig {
   maxHoldingTimeMs: number;
 
   /**
-   * Duration of the rolling window used for OLS hedge ratio estimation (ms).
+   * Duration of the rolling window used for OLS/cointegration estimation (ms).
    * Should be longer than rollingWindowMs so the ratio is stable across
    * multiple spread cycles. Ignored when hedgeRatioMethod = "fixed".
    */
   olsWindowMs: number;
 
   /**
-   * How often to recompute the OLS hedge ratio, in number of bars received.
+   * How often to recompute the hedge ratio and cointegration test, in bars.
    * Recomputing every bar is unnecessary and expensive; every 5–10 bars is typical.
    * Ignored when hedgeRatioMethod = "fixed".
    */
   olsRecalcIntervalBars: number;
+
+  /**
+   * Significance level for the Engle-Granger cointegration test.
+   * Entry signals are blocked when the pair fails the test at this level.
+   * Supported values: 0.01, 0.05, 0.10. Defaults to 0.05.
+   * Ignored when hedgeRatioMethod = "fixed".
+   */
+  cointSignificanceLevel?: number;
 
   /**
    * Minimum number of spread observations required before trading.
@@ -142,6 +150,10 @@ export interface PairsInternalState {
   spreadWindow: RollingTimeWindow<number>;
   /** Current estimated hedge ratio */
   currentHedgeRatio: number;
+  /** Last Engle-Granger DF test statistic (null until first OLS recalc) */
+  lastCointStat: number | null;
+  /** Whether the pair passed the cointegration test at last recalc */
+  isCointegrated: boolean;
   /** Number of completed round-trip trades */
   completedTrades: number;
   /** Whether the cooldown period is active */

@@ -115,7 +115,7 @@ describe("Strategies HTTP API", () => {
       mockGetAllStrategies.mockResolvedValue(configs);
       const res = await request(app).get("/api/strategies/configs");
       expect(res.status).toBe(200);
-      expect(res.body).toEqual([expect.objectContaining({ id: "cfg-1", name: "My Pairs", algorithmVersion: 2 })]);
+      expect(res.body).toEqual([expect.objectContaining({ id: "cfg-1", name: "My Pairs", algorithmVersion: 3 })]);
     });
   });
 
