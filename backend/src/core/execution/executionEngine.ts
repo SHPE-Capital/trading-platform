@@ -42,13 +42,13 @@ export class ExecutionEngine {
    * @returns Promise resolving to the submitted Order
    */
   async submit(intent: OrderIntent): Promise<Order> {
-    logger.info("ExecutionEngine: submitting order", {
-      symbol: intent.symbol,
-      side: intent.side,
-      qty: intent.qty,
-      type: intent.orderType,
-      executionAlgo: intent.executionAlgo ?? "market",
-    });
+    // logger.info("ExecutionEngine: submitting order", {
+    //   symbol: intent.symbol,
+    //   side: intent.side,
+    //   qty: intent.qty,
+    //   type: intent.orderType,
+    //   executionAlgo: intent.executionAlgo ?? "market",
+    // });
     const algo = this._algoRouter(intent.executionAlgo ?? "market");
     return algo.execute(intent, this.sink);
   }

@@ -70,11 +70,11 @@ export class CapitalReservationManager {
         ts: nowMs(),
       };
       this._reservations.set(reservationId, reservation);
-      logger.info("CapitalReservationManager: sell intent does not require cash reservation", {
-        reservationId,
-        intentId: intent.id,
-        strategyId: intent.strategyId,
-      });
+      // logger.info("CapitalReservationManager: sell intent does not require cash reservation", {
+      //   reservationId,
+      //   intentId: intent.id,
+      //   strategyId: intent.strategyId,
+      // });
       return { reservationId, amount: 0 };
     }
 
@@ -110,13 +110,13 @@ export class CapitalReservationManager {
     };
 
     this._reservations.set(reservationId, reservation);
-    logger.info("CapitalReservationManager: reserved capital", {
-      reservationId,
-      amount,
-      intentId: intent.id,
-      strategyId: intent.strategyId,
-      totalReserved: this.getReservedTotal(),
-    });
+    // logger.info("CapitalReservationManager: reserved capital", {
+    //   reservationId,
+    //   amount,
+    //   intentId: intent.id,
+    //   strategyId: intent.strategyId,
+    //   totalReserved: this.getReservedTotal(),
+    // });
 
     return { reservationId, amount };
   }
@@ -201,12 +201,12 @@ export class CapitalReservationManager {
       return;
     }
     this._reservations.delete(reservationId);
-    logger.info("CapitalReservationManager: released reservation", {
-      reservationId,
-      amount: reservation.amount,
-      intentId: reservation.intentId,
-      totalReserved: this.getReservedTotal(),
-    });
+    // logger.info("CapitalReservationManager: released reservation", {
+    //   reservationId,
+    //   amount: reservation.amount,
+    //   intentId: reservation.intentId,
+    //   totalReserved: this.getReservedTotal(),
+    // });
   }
 
   /**
