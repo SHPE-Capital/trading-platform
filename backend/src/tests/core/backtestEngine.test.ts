@@ -27,7 +27,7 @@ jest.mock('../../config/env', () => ({
 
 jest.mock('../../core/backtest/backtestLoader', () => ({
   BacktestLoader: jest.fn().mockImplementation(() => ({
-    loadBars: jest.fn().mockResolvedValue([]),
+    streamBars: jest.fn().mockImplementation(async function*() { yield []; }),
   })),
 }));
 
@@ -54,7 +54,7 @@ function makeConfig(overrides: Partial<BacktestConfig> = {}): BacktestConfig {
       enabled: true,
     },
     startDate: '2024-01-01T00:00:00Z',
-    endDate: '2024-01-31T00:00:00Z',
+    endDate: '2024-01-02T00:00:00Z',
     initialCapital: 100_000,
     dataGranularity: 'bar',
     slippageBps: 5,
@@ -112,7 +112,7 @@ function makeFill(symbol: string, side: 'buy' | 'sell', qty: number, price: numb
 
 function makeEngineWithBars(bars: ReturnType<typeof makeBar>[]) {
   MockLoader.mockImplementation(
-    () => ({ loadBars: jest.fn().mockResolvedValue(bars) } as unknown as BacktestLoader),
+    () => ({ streamBars: jest.fn().mockImplementation(async function*() { yield bars; }) } as unknown as BacktestLoader),
   );
   return new BacktestEngine();
 }
@@ -120,7 +120,7 @@ function makeEngineWithBars(bars: ReturnType<typeof makeBar>[]) {
 beforeEach(() => {
   MockLoader.mockClear();
   // Default: no bars
-  MockLoader.mockImplementation(() => ({ loadBars: jest.fn().mockResolvedValue([]) } as unknown as BacktestLoader));
+  MockLoader.mockImplementation(() => ({ streamBars: jest.fn().mockImplementation(async function*() { yield []; }) } as unknown as BacktestLoader));
 });
 
 describe('run(): result structure', () => {

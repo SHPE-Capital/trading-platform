@@ -137,7 +137,7 @@ function makeMakerQuoteStrategy(
 }
 
 beforeEach(() => {
-  (BacktestLoader.prototype.loadBars as jest.Mock) = jest.fn();
+  (BacktestLoader.prototype.streamBars as jest.Mock) = jest.fn();
 });
 
 describe('BacktestEngine + maker-quote signals + fill model', () => {
@@ -149,7 +149,7 @@ describe('BacktestEngine + maker-quote signals + fill model', () => {
       makeBar('SPY', 1_000, 100),
       makeBar('SPY', 2_000, 100),
     ];
-    (BacktestLoader.prototype.loadBars as jest.Mock).mockResolvedValue(bars);
+    (BacktestLoader.prototype.streamBars as jest.Mock).mockImplementation(async function*() { yield bars; });
 
     const cfg = makeConfig({
       slippageBps: 0,
@@ -175,7 +175,7 @@ describe('BacktestEngine + maker-quote signals + fill model', () => {
       makeBar('SPY', 1_000, 100),
       makeBar('SPY', 2_000, 100),
     ];
-    (BacktestLoader.prototype.loadBars as jest.Mock).mockResolvedValue(bars);
+    (BacktestLoader.prototype.streamBars as jest.Mock).mockImplementation(async function*() { yield bars; });
 
     const cfg = makeConfig({
       slippageBps: 0,
@@ -204,7 +204,7 @@ describe('BacktestEngine + maker-quote signals + fill model', () => {
       makeBar('SPY', 1_000, 100),
       makeBar('SPY', 2_000, 100),
     ];
-    (BacktestLoader.prototype.loadBars as jest.Mock).mockResolvedValue(bars);
+    (BacktestLoader.prototype.streamBars as jest.Mock).mockImplementation(async function*() { yield bars; });
 
     const cfg = makeConfig({
       slippageBps: 0,
