@@ -619,11 +619,26 @@ export async function findMatchingBacktestResult(config: BacktestConfig): Promis
   }
 
   const { data, error } = await query;
-  if (error || !data || data.length === 0) return null;
+  if (error) {
+    logger.error("findMatchingBacktestResult: DB query error", { error });
+    return null;
+  }
+  if (!data || data.length === 0) {
+    logger.info("findMatchingBacktestResult: no completed rows found in DB");
+    return null;
+  }
 
   const key = backtestConfigKey(config);
+  logger.info("findMatchingBacktestResult: comparing against DB rows", {
+    rowCount: data.length,
+    searchKey: key,
+    firstStoredKey: backtestConfigKey(data[0].config as BacktestConfig),
+  });
   const match = data.find((row) => backtestConfigKey(row.config as BacktestConfig) === key);
-  if (!match) return null;
+  if (!match) {
+    logger.info("findMatchingBacktestResult: no key match found");
+    return null;
+  }
 
   return getBacktestResultById(match.id as string);
 }

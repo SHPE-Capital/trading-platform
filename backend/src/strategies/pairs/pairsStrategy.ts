@@ -39,7 +39,8 @@ import type {
 export class PairsStrategy extends BaseStrategy {
   readonly type: StrategyType = "pairs_trading";
   // v2: removed slippageBps from risk-engine fill buffer (now only gapBufferBps + spreadBufferBps)
-  readonly version = 2;
+  static readonly VERSION = 2;
+  readonly version = PairsStrategy.VERSION;
 
   private readonly state: PairsInternalState;
 
@@ -181,10 +182,10 @@ export class PairsStrategy extends BaseStrategy {
     }
 
     if (result.rSquared < 0.5) {
-      logger.warn("PairsStrategy: low OLS R² — pair may not be cointegrated", {
-        id: this.id,
-        rSquared: result.rSquared.toFixed(3),
-      });
+      // logger.warn("PairsStrategy: low OLS R² — pair may not be cointegrated", {
+      //   id: this.id,
+      //   rSquared: result.rSquared.toFixed(3),
+      // });
     }
 
     this.state.currentHedgeRatio = result.beta;
@@ -270,12 +271,12 @@ export class PairsStrategy extends BaseStrategy {
     this.state.positionState = direction;
     this.state.positionOpenedAt = nowMs();
 
-    logger.info("PairsStrategy: entry signal", {
-      id: this.id,
-      direction,
-      zScore: zScore.toFixed(3),
-      spread: spread.toFixed(4),
-    });
+    // logger.info("PairsStrategy: entry signal", {
+    //   id: this.id,
+    //   direction,
+    //   zScore: zScore.toFixed(3),
+    //   spread: spread.toFixed(4),
+    // });
 
     const meta: PairsSignalMeta = {
       zScore,
@@ -322,11 +323,11 @@ export class PairsStrategy extends BaseStrategy {
     this.state.cooldownActive = true;
     this.state.cooldownExpiresAt = nowMs() + this.pairsConfig.cooldownMs;
 
-    logger.info("PairsStrategy: exit signal", {
-      id: this.id,
-      signalType,
-      zScore: zScore.toFixed(3),
-    });
+    // logger.info("PairsStrategy: exit signal", {
+    //   id: this.id,
+    //   signalType,
+    //   zScore: zScore.toFixed(3),
+    // });
 
     const meta: PairsSignalMeta = {
       zScore,
