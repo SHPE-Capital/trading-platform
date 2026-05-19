@@ -66,7 +66,7 @@ export default function BacktestPage() {
               <div className="flex items-center justify-between text-sm text-zinc-400">
                 <span>Running backtest…</span>
                 <span>
-                  {progress.pct}% — {progress.barIndex.toLocaleString()} / {progress.totalBars.toLocaleString()} bars
+                  {progress.pct}% — {progress.barIndex.toLocaleString()} / ~{progress.totalBars.toLocaleString()} bars
                 </span>
               </div>
               <div className="h-1.5 rounded-full bg-zinc-200 dark:bg-zinc-700">

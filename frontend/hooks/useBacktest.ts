@@ -81,14 +81,22 @@ export function useBacktest(): UseBacktestResult {
 
       es.addEventListener("progress", (e: MessageEvent) => {
         const { barIndex, totalBars } = JSON.parse(e.data as string) as { barIndex: number; totalBars: number };
-        setProgress({ barIndex, totalBars, pct: Math.round((barIndex / totalBars) * 100) });
+        // Cap at 99 — the bar reaches 100% only when the complete event fires.
+        setProgress({ barIndex, totalBars, pct: Math.min(99, Math.round((barIndex / totalBars) * 100)) });
       });
 
-      es.addEventListener("complete", () => {
+      es.addEventListener("complete", (e: MessageEvent) => {
         es.close();
         esRef.current = null;
-        // Result is in the backend in-memory cache — single fetch, no polling needed
-        fetchBacktest(backtestId)
+        // For deduplicated runs the server sends { backtestId: <canonical DB id> }
+        // which differs from the ephemeral config.id we started with. Using the
+        // canonical id guarantees the fetch hits the DB even after the cache expires.
+        let resultId = backtestId;
+        try {
+          const data = JSON.parse(e.data as string) as { backtestId?: string };
+          if (data.backtestId) resultId = data.backtestId;
+        } catch {}
+        fetchBacktest(resultId)
           .then((result) => { setSelectedResult(result); return fetchData(); })
           .catch((err) => { setError(err instanceof Error ? err.message : "Failed to load result"); })
           .finally(() => { setIsRunning(false); setProgress(null); });
