@@ -148,11 +148,19 @@ export default function BacktestForm({ onSubmit, isLoading }: Props) {
 
       {/* Strategy type + config picker */}
       <div className="flex flex-col gap-3 rounded-md border border-zinc-200 p-3 dark:border-zinc-700">
-        <Field label="Strategy Type">
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-medium text-zinc-500">Strategy Type</span>
+            {definition?.algorithmVersion != null && (
+              <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                v{definition.algorithmVersion}
+              </span>
+            )}
+          </div>
           <select className={inputClass} value="pairs_trading" disabled>
             <option value="pairs_trading">Pairs Trading</option>
           </select>
-        </Field>
+        </div>
         <Field label="Configuration">
           {configsLoading ? (
             <div className="h-8 animate-pulse rounded-md bg-zinc-100 dark:bg-zinc-800" />

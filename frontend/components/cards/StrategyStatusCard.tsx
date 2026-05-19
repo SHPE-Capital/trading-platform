@@ -37,7 +37,14 @@ export default function StrategyStatusCard({ run, onStop }: Props) {
       <div className="flex items-start justify-between">
         <div>
           <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">{run.name}</p>
-          <p className="text-xs text-zinc-400">{run.strategyType}</p>
+          <div className="flex items-center gap-1.5">
+            <p className="text-xs text-zinc-400">{run.strategyType}</p>
+            {run.strategyVersion != null && (
+              <span className="rounded-full bg-zinc-100 px-1.5 py-0.5 text-xs font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                v{run.strategyVersion}
+              </span>
+            )}
+          </div>
         </div>
         <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium capitalize ${badgeClass}`}>
           {displayStatus}

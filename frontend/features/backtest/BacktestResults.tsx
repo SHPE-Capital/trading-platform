@@ -12,7 +12,6 @@
 
 import PnLChart from "../../components/charts/PnLChart";
 import type { BacktestResult } from "../../types/api";
-import type { PortfolioSnapshot, PerformanceMetrics } from "../../types/portfolio";
 import { formatPercent, formatCurrency } from "../../utils/formatting";
 import { formatDuration, formatTimestamp } from "../../utils/dates";
 
@@ -47,6 +46,11 @@ export default function BacktestResults({ result, onRerun, showChart = true }: P
           )}
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          {(result.strategy_version ?? result.config.strategyVersion) != null && (
+            <span className="rounded-full bg-zinc-100 px-2.5 py-0.5 text-xs font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+              v{result.strategy_version ?? result.config.strategyVersion}
+            </span>
+          )}
           <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium capitalize ${result.status === "completed" ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>
             {result.status}
           </span>

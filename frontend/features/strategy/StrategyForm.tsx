@@ -122,7 +122,13 @@ export default function StrategyForm({ onSubmit, isLoading }: Props) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    await onSubmit(buildConfig());
+    const config = buildConfig();
+    // Pass the saved config's id so the backend sets strategy_id correctly,
+    // which lets getAllStrategyRuns JOIN to get the always-current strategy name.
+    const payload = selectedId !== "new"
+      ? { ...config, id: selectedId } as unknown as Omit<PairsStrategyConfig, "id">
+      : config;
+    await onSubmit(payload);
   };
 
   const handleSaveNew = async () => {
@@ -154,7 +160,14 @@ export default function StrategyForm({ onSubmit, isLoading }: Props) {
       {/* Strategy type + config picker */}
       <div className="flex flex-col gap-3 rounded-md border border-zinc-200 p-3 dark:border-zinc-700">
         <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-zinc-500">Strategy Type</label>
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-medium text-zinc-500">Strategy Type</span>
+            {definition?.algorithmVersion != null && (
+              <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                v{definition.algorithmVersion}
+              </span>
+            )}
+          </div>
           <select className={inputClass} value="pairs_trading" disabled>
             <option value="pairs_trading">Pairs Trading</option>
           </select>
@@ -178,19 +191,33 @@ export default function StrategyForm({ onSubmit, isLoading }: Props) {
             </select>
           )}
         </div>
-      </div>
 
-      {/* Config name (shown when an existing strategy is selected) */}
-      {selectedId !== "new" && (
-        <Field label="Config Name">
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            className={inputClass}
-          />
-        </Field>
-      )}
+        {/* Config name editor — inside the picker box */}
+        {selectedId !== "new" && !isSavingNew && (
+          <Field label="Config Name">
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className={inputClass}
+            />
+          </Field>
+        )}
+
+        {/* New config name — inside the picker box when saving as new */}
+        {isSavingNew && (
+          <Field label="New Config Name">
+            <input
+              type="text"
+              placeholder={name}
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              className={inputClass}
+              autoFocus
+            />
+          </Field>
+        )}
+      </div>
 
       <div className="grid grid-cols-2 gap-3 rounded-md border border-zinc-200 p-3 dark:border-zinc-700">
         <Field label="Leg 1 Symbol">
@@ -319,18 +346,10 @@ export default function StrategyForm({ onSubmit, isLoading }: Props) {
 
         {isSavingNew ? (
           <div className="flex gap-2">
-            <input
-              type="text"
-              placeholder={name}
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              className={`${inputClass} flex-1`}
-              autoFocus
-            />
             <button
               type="button"
               onClick={handleSaveNew}
-              className="rounded-md bg-zinc-800 px-3 py-1.5 text-sm text-white hover:bg-zinc-700 dark:bg-zinc-200 dark:text-zinc-900"
+              className="flex-1 rounded-md bg-zinc-800 px-3 py-1.5 text-sm text-white hover:bg-zinc-700 dark:bg-zinc-200 dark:text-zinc-900"
             >
               Save
             </button>
