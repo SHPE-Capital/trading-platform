@@ -47,11 +47,56 @@ class BacktestStreamManager {
   }
 
   /** Signal successful completion. Channel is removed after a grace period. */
-  complete(id: string): void {
+  complete(id: string, data: Record<string, unknown> = {}): void {
     const emitter = this.channels.get(id);
     if (!emitter) return;
-    emitter.emit("complete");
+    emitter.emit("complete", data);
     setTimeout(() => this.channels.delete(id), 10_000).unref();
+  }
+
+  /**
+   * Relay all events from an existing run's channel to a new channel.
+   * Used when a duplicate in-flight request arrives: the second client gets
+   * the same progress stream and the same final complete/error payload as the
+   * first, without starting a second engine run.
+   *
+   * If the original channel is already gone (run finished before relay was
+   * called), completes the new channel immediately with empty data.
+   */
+  relay(newId: string, existingId: string): void {
+    const existing = this.channels.get(existingId);
+    const newEmitter = this.channels.get(newId);
+    if (!newEmitter) return;
+
+    if (!existing) {
+      // Original run already finished — complete the new channel immediately.
+      this.complete(newId);
+      return;
+    }
+
+    const onProgress = (point: BacktestProgressPoint) => newEmitter.emit("progress", point);
+
+    const cleanup = () => {
+      existing.off("progress", onProgress);
+      existing.off("complete", onComplete);
+      existing.off("run-error", onError);
+    };
+
+    const onComplete = (data: Record<string, unknown>) => {
+      cleanup();
+      newEmitter.emit("complete", data);
+      setTimeout(() => this.channels.delete(newId), 10_000).unref();
+    };
+
+    const onError = (message: string) => {
+      cleanup();
+      newEmitter.emit("run-error", message);
+      setTimeout(() => this.channels.delete(newId), 10_000).unref();
+    };
+
+    existing.on("progress", onProgress);
+    existing.once("complete", onComplete);
+    existing.once("run-error", onError);
   }
 
   /** Signal a run failure. Channel is removed after a grace period. */
@@ -84,9 +129,9 @@ class BacktestStreamManager {
       res.write(`event: progress\ndata: ${JSON.stringify(point)}\n\n`);
     };
 
-    const onComplete = () => {
+    const onComplete = (data: Record<string, unknown>) => {
       clearInterval(heartbeat);
-      res.write(`event: complete\ndata: {}\n\n`);
+      res.write(`event: complete\ndata: ${JSON.stringify(data ?? {})}\n\n`);
       res.end();
     };
 
