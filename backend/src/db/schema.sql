@@ -9,6 +9,7 @@
 --   002_backtest_order_tables.sql
 --   003_orders_is_paper.sql
 --   004_strategy_configs.sql
+--   005_drop_strategies_version.sql
 --
 -- Update this file whenever a new migration is applied.
 -- ================================================================
@@ -33,14 +34,15 @@ CREATE INDEX idx_instruments_is_active ON instruments (is_active);
 
 -- ----------------------------------------------------------------
 -- strategies
--- version is incremented by the application on each config change.
--- The full config snapshot is always stored with each run/backtest
--- so history is preserved even though rows are mutable.
+-- Stores named, user-editable strategy configs. Does NOT store the
+-- algorithm version — that is a property of the code (e.g.
+-- PairsStrategy.VERSION) and is derived at runtime by the API layer.
+-- strategy_runs and backtest_results each carry their own
+-- strategy_version snapshot recording which version actually ran.
 -- ----------------------------------------------------------------
 CREATE TABLE strategies (
     id             UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     strategy_type  TEXT        NOT NULL,
-    version        INTEGER     NOT NULL DEFAULT 1,
     name           TEXT        NOT NULL,
     config         JSONB       NOT NULL,
     created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -58,10 +60,9 @@ CREATE INDEX idx_strategies_config        ON strategies USING GIN (config);
 -- ----------------------------------------------------------------
 CREATE TABLE strategy_runs (
     id               UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    strategy_id      UUID NOT NULL REFERENCES strategies (id) ON DELETE RESTRICT,
+    strategy_id      UUID NOT NULL,
     strategy_version INTEGER,
     strategy_type    TEXT NOT NULL,
-    name             TEXT NOT NULL,
     config           JSONB NOT NULL,
     status           TEXT NOT NULL DEFAULT 'idle',
     execution_mode   TEXT NOT NULL DEFAULT 'paper',

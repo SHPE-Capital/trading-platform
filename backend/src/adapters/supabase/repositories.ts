@@ -254,7 +254,6 @@ export async function insertStrategyRun(run: StrategyRun): Promise<void> {
     strategy_id: run.strategyId,
     strategy_type: run.strategyType,
     strategy_version: run.strategyVersion ?? null,
-    name: run.name,
     config: run.config,
     status: run.status,
     execution_mode: run.executionMode,
@@ -294,15 +293,25 @@ export async function updateStrategyRun(runId: UUID, updates: Partial<StrategyRu
  */
 export async function getAllStrategyRuns(): Promise<StrategyRun[]> {
   const supabase = getSupabaseClient();
-  const { data, error } = await supabase
-    .from("strategy_runs")
-    .select("*")
-    .order("started_at", { ascending: false });
-  if (error) {
-    logger.error("getAllStrategyRuns failed", { error: error.message });
+  const [runsResult, strategiesResult] = await Promise.all([
+    supabase.from("strategy_runs").select("*").order("started_at", { ascending: false }),
+    supabase.from("strategies").select("id, name"),
+  ]);
+  if (runsResult.error) {
+    logger.error("getAllStrategyRuns failed", { error: runsResult.error.message });
     return [];
   }
-  return (data ?? []).map((row) => mapStrategyRun(row as Record<string, unknown>));
+  // strategy_runs.strategy_id has no FK constraint in the DB, so not all IDs
+  // resolve to a strategy config. Fall back to config.name (captured at launch).
+  const nameById = new Map<string, string>(
+    (strategiesResult.data ?? []).map((s) => [s.id as string, s.name as string]),
+  );
+  return (runsResult.data ?? []).map((row) => {
+    const r = row as Record<string, unknown>;
+    const name = nameById.get(r.strategy_id as string)
+      ?? (r.config as Record<string, unknown>).name as string;
+    return mapStrategyRun({ ...r, name });
+  });
 }
 
 
@@ -370,10 +379,8 @@ export async function getStrategyById(id: UUID): Promise<Strategy | null> {
   return data as Strategy;
 }
 
-/** version is required — caller passes STRATEGY_DEFINITIONS[type].version */
 export async function insertStrategy(input: {
   strategy_type: string;
-  version: number;
   name: string;
   config: Record<string, unknown>;
 }): Promise<Strategy> {
