@@ -13,10 +13,12 @@ import { config } from "../config";
 /**
  * Makes an authenticated GET request to the backend API.
  * @param path - API path (e.g. "/portfolio/snapshot")
+ * @param baseUrl - Override the API host. Defaults to the trading runtime;
+ *                  backtest calls pass config.backtestApiBaseUrl instead.
  * @returns Parsed JSON response
  */
-export async function apiGet<T>(path: string): Promise<T> {
-  const res = await fetch(`${config.apiBaseUrl}${path}`, {
+export async function apiGet<T>(path: string, baseUrl: string = config.apiBaseUrl): Promise<T> {
+  const res = await fetch(`${baseUrl}${path}`, {
     headers: { "Content-Type": "application/json" },
   });
   if (!res.ok) {
@@ -30,10 +32,16 @@ export async function apiGet<T>(path: string): Promise<T> {
  * Makes an authenticated POST request to the backend API.
  * @param path - API path
  * @param body - Request body (will be JSON-serialized)
+ * @param baseUrl - Override the API host. Defaults to the trading runtime;
+ *                  backtest calls pass config.backtestApiBaseUrl instead.
  * @returns Parsed JSON response
  */
-export async function apiPost<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${config.apiBaseUrl}${path}`, {
+export async function apiPost<T>(
+  path: string,
+  body: unknown,
+  baseUrl: string = config.apiBaseUrl,
+): Promise<T> {
+  const res = await fetch(`${baseUrl}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),

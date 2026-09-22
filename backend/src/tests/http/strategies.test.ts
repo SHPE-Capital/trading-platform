@@ -1,6 +1,7 @@
 import request from "supertest";
 import { createApp } from "../../app/index";
 import * as repositories from "../../adapters/supabase/repositories";
+import { PairsStrategy } from "../../strategies/pairs/pairsStrategy";
 
 jest.mock("../../adapters/supabase/repositories");
 
@@ -115,7 +116,11 @@ describe("Strategies HTTP API", () => {
       mockGetAllStrategies.mockResolvedValue(configs);
       const res = await request(app).get("/api/strategies/configs");
       expect(res.status).toBe(200);
-      expect(res.body).toEqual([expect.objectContaining({ id: "cfg-1", name: "My Pairs", algorithmVersion: 3 })]);
+      // Derived at runtime from the strategy class, so assert against the constant
+      // rather than a literal — a VERSION bump is a deliberate change, not a break.
+      expect(res.body).toEqual([
+        expect.objectContaining({ id: "cfg-1", name: "My Pairs", algorithmVersion: PairsStrategy.VERSION }),
+      ]);
     });
   });
 

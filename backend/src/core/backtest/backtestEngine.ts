@@ -36,7 +36,7 @@ import { computeAnalytics } from "./performanceAnalytics";
 import { BacktestLoader } from "./backtestLoader";
 import { BACKTEST_RISK_CONFIG } from "../../config/defaults";
 import { logger } from "../../utils/logger";
-import { nowMs, setClockOverride } from "../../utils/time";
+import { nowMs, setClockOverride, isClockLockedForLive } from "../../utils/time";
 import { newId } from "../../utils/ids";
 import type { BacktestConfig, BacktestResult } from "../../types/backtest";
 import type { PortfolioSnapshot } from "../../types/portfolio";
@@ -62,6 +62,18 @@ export class BacktestEngine {
     }) => IStrategy[],
     onProgress?: (point: BacktestProgressPoint) => void,
   ): Promise<BacktestResult> {
+    // A backtest installs a simulated clock and runs a long CPU-bound loop.
+    // Doing either inside a trading process corrupts live timestamps and
+    // starves the event loop that owns the broker WebSocket. Refuse early,
+    // before any state is built or any market data is fetched.
+    if (isClockLockedForLive()) {
+      throw new Error(
+        "BacktestEngine cannot run in a live or paper trading process. " +
+          "Run backtests in the API-only process (npm run dev:api, port 8082) " +
+          "or via npm run dev:backtest.",
+      );
+    }
+
     const startedAt = nowMs();
     logger.info("BacktestEngine: starting", { id: config.id, name: config.name });
 

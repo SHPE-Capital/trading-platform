@@ -49,7 +49,7 @@ import type { OrderSubmittedEvent, OrderFilledEvent, OrderCanceledEvent } from "
 import type { StrategyRun } from "../types/strategy";
 import type { Symbol } from "../types/common";
 import { newId } from "../utils/ids";
-import { nowMs } from "../utils/time";
+import { nowMs, lockClockForLive } from "../utils/time";
 import { logger } from "../utils/logger";
 
 export interface RuntimeConfig {
@@ -211,6 +211,12 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
   });
 
   orchestrator.start();
+
+  // This process is now trading. Claim the clock so that a backtest started
+  // here — via the REST API this runtime also mounts, or any other path —
+  // fails loudly instead of silently feeding simulated time to the live
+  // orchestrator, risk checks, and quote timestamps.
+  lockClockForLive(mode);
 
   // ------------------------------------------------------------------
   // Persistence hooks — fire-and-forget; DB errors never crash the engine

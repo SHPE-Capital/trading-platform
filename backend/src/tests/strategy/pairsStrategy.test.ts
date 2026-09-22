@@ -35,10 +35,11 @@ jest.mock('../../utils/time', () => ({
 // Mock computeZScore so we control exactly which z-score the strategy sees
 jest.mock('../../services/indicators/zscore', () => ({
   computeZScore: jest.fn(),
+  computeZScoreFromStats: jest.fn(),
 }));
 
 import { nowMs } from '../../utils/time';
-import { computeZScore } from '../../services/indicators/zscore';
+import { computeZScoreFromStats } from '../../services/indicators/zscore';
 import { PairsStrategy } from '../../strategies/pairs/pairsStrategy';
 import { createPairsConfig } from '../../strategies/pairs/pairsConfig';
 import { SymbolStateManager } from '../../core/state/symbolState';
@@ -49,7 +50,7 @@ import type { PairsInternalState } from '../../strategies/pairs/pairsTypes';
 import type { ZScoreResult } from '../../services/indicators/zscore';
 
 const mockNowMs = nowMs as jest.Mock;
-const mockZScore = computeZScore as jest.Mock;
+const mockZScore = computeZScoreFromStats as jest.Mock;
 
 let currentTs = 1_000_000;
 

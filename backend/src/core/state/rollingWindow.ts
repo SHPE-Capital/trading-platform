@@ -25,7 +25,7 @@ export interface TimedValue<T> {
 }
 
 export class RollingTimeWindow<T> {
-  private items: TimedValue<T>[] = [];
+  protected items: TimedValue<T>[] = [];
 
   /**
    * Creates a new rolling time window.
@@ -124,5 +124,98 @@ export class RollingTimeWindow<T> {
    */
   getWindowMs(): number {
     return this.windowMs;
+  }
+}
+
+/**
+ * A rolling window of numbers that maintains its own running sum and sum of
+ * squares, so mean and standard deviation are O(1) instead of O(n).
+ *
+ * The generic RollingTimeWindow requires callers to pull the whole window out
+ * with getValues() — which allocates a fresh array — and scan it. For the pairs
+ * spread window that happens once per bar, so a year of minute bars over a
+ * multi-day window costs hundreds of millions of operations and just as many
+ * short-lived allocations. Tracking the two accumulators incrementally removes
+ * both: each value is added once when it arrives and subtracted once when it
+ * ages out.
+ *
+ * Numerical note: computing variance from a running sum of squares can lose
+ * precision when the values are large relative to their spread — exactly the
+ * pairs case, where a spread near -80 may vary by less than a dollar. To bound
+ * that drift the accumulators are recomputed exactly from the retained items
+ * every REBUILD_INTERVAL pushes, which keeps the amortised cost O(1) while
+ * capping accumulated floating-point error.
+ */
+export class RollingNumericWindow extends RollingTimeWindow<number> {
+  private _sum = 0;
+  private _sumSq = 0;
+  private _pushesSinceRebuild = 0;
+
+  /** Pushes between exact recomputations of the accumulators. */
+  private static readonly REBUILD_INTERVAL = 4096;
+
+  override push(item: TimedValue<number>): void {
+    this._sum += item.value;
+    this._sumSq += item.value * item.value;
+    // super.push appends then calls this.evict, which subtracts anything aged out.
+    super.push(item);
+
+    if (++this._pushesSinceRebuild >= RollingNumericWindow.REBUILD_INTERVAL) {
+      this._rebuild();
+    }
+  }
+
+  override evict(nowTs: number): void {
+    const cutoff = nowTs - this.getWindowMs();
+    // Count the expiring prefix and remove its contribution. Amortised O(1):
+    // every item is visited here exactly once, on its way out.
+    let removed = 0;
+    while (removed < this.items.length && this.items[removed].ts < cutoff) {
+      const v = this.items[removed].value;
+      this._sum -= v;
+      this._sumSq -= v * v;
+      removed++;
+    }
+    super.evict(nowTs);
+  }
+
+  override clear(): void {
+    super.clear();
+    this._sum = 0;
+    this._sumSq = 0;
+    this._pushesSinceRebuild = 0;
+  }
+
+  /** Arithmetic mean of the window, or null when empty. */
+  mean(): number | null {
+    const n = this.items.length;
+    if (n === 0) return null;
+    return this._sum / n;
+  }
+
+  /**
+   * Sample standard deviation (n-1 denominator), matching computeStdDev.
+   * Returns null when fewer than 2 observations are present.
+   */
+  stdDev(): number | null {
+    const n = this.items.length;
+    if (n < 2) return null;
+    const mean = this._sum / n;
+    // Clamp: rounding can push a zero-variance window marginally negative.
+    const variance = Math.max(0, (this._sumSq - n * mean * mean) / (n - 1));
+    return Math.sqrt(variance);
+  }
+
+  /** Recomputes the accumulators exactly from the retained items. */
+  private _rebuild(): void {
+    let sum = 0;
+    let sumSq = 0;
+    for (const item of this.items) {
+      sum += item.value;
+      sumSq += item.value * item.value;
+    }
+    this._sum = sum;
+    this._sumSq = sumSq;
+    this._pushesSinceRebuild = 0;
   }
 }

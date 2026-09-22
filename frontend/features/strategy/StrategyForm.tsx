@@ -38,6 +38,8 @@ export default function StrategyForm({ onSubmit, isLoading }: Props) {
   const [hedgeRatioMethod, setHedgeRatioMethod] = useState<"fixed" | "rolling_ols">("fixed");
   const [olsWindowMins, setOlsWindowMins] = useState(240);
   const [olsRecalcIntervalBars, setOlsRecalcIntervalBars] = useState(5);
+  const [maxHoldingMins, setMaxHoldingMins] = useState(1_440);
+  const [cooldownMins, setCooldownMins] = useState(1);
 
   // Risk budget
   const [riskBudget, setRiskBudget] = useState<RiskBudgetState>(defaultRiskBudgetState);
@@ -61,6 +63,8 @@ export default function StrategyForm({ onSubmit, isLoading }: Props) {
       setHedgeRatioMethod((d.hedgeRatioMethod as "fixed" | "rolling_ols" | undefined) ?? "fixed");
       setOlsWindowMins(Math.round(((d.olsWindowMs as number | undefined) ?? 14_400_000) / 60_000));
       setOlsRecalcIntervalBars((d.olsRecalcIntervalBars as number | undefined) ?? 5);
+      setMaxHoldingMins(Math.round(((d.maxHoldingTimeMs as number | undefined) ?? 86_400_000) / 60_000));
+      setCooldownMins(Math.round(((d.cooldownMs as number | undefined) ?? 60_000) / 60_000));
       setRiskBudget(defaultRiskBudgetState);
     } else {
       const s = strategies.find((s) => s.id === selectedId);
@@ -77,6 +81,8 @@ export default function StrategyForm({ onSubmit, isLoading }: Props) {
       setHedgeRatioMethod((c.hedgeRatioMethod as "fixed" | "rolling_ols" | undefined) ?? "fixed");
       setOlsWindowMins(Math.round(((c.olsWindowMs as number | undefined) ?? 14_400_000) / 60_000));
       setOlsRecalcIntervalBars((c.olsRecalcIntervalBars as number | undefined) ?? 5);
+      setMaxHoldingMins(Math.round(((c.maxHoldingTimeMs as number | undefined) ?? 86_400_000) / 60_000));
+      setCooldownMins(Math.round(((c.cooldownMs as number | undefined) ?? 60_000) / 60_000));
       setRiskBudget({
         maxCapitalPct: Math.round((rb?.maxCapitalPct ?? 0.20) * 100),
         maxOpenOrders: rb?.maxOpenOrders ?? null,
@@ -103,14 +109,14 @@ export default function StrategyForm({ onSubmit, isLoading }: Props) {
       symbols: [leg1, leg2],
       rollingWindowMs: rollingWindowMins * 60_000,
       maxPositionSizeUsd: 10_000,
-      cooldownMs: 60_000,
+      cooldownMs: cooldownMins * 60_000,
       enabled: true,
       hedgeRatioMethod,
       fixedHedgeRatio: 1,
       entryZScore,
       exitZScore,
       stopLossZScore: 4,
-      maxHoldingTimeMs: 86_400_000,
+      maxHoldingTimeMs: maxHoldingMins * 60_000,
       minObservations: 30,
       tradeNotionalUsd,
       priceSource: "mid",
@@ -120,8 +126,18 @@ export default function StrategyForm({ onSubmit, isLoading }: Props) {
     };
   };
 
+  /** Runs the duration guard and surfaces the message. True when safe to proceed. */
+  const durationsValid = (): boolean => {
+    const err = validateDurations({
+      rollingWindowMins, olsWindowMins, maxHoldingMins, cooldownMins, hedgeRatioMethod,
+    });
+    setSaveError(err);
+    return err === null;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!durationsValid()) return;
     const config = buildConfig();
     // Pass the saved config's id so the backend sets strategy_id correctly,
     // which lets getAllStrategyRuns JOIN to get the always-current strategy name.
@@ -134,6 +150,7 @@ export default function StrategyForm({ onSubmit, isLoading }: Props) {
   const handleSaveNew = async () => {
     const saveName = newName.trim() || name;
     setSaveError(null);
+    if (!durationsValid()) return;
     try {
       const created = await save(saveName, buildConfig() as Record<string, unknown>);
       setSelectedId(created.id);
@@ -146,6 +163,7 @@ export default function StrategyForm({ onSubmit, isLoading }: Props) {
 
   const handleSaveChanges = async () => {
     setSaveError(null);
+    if (!durationsValid()) return;
     try {
       await update(selectedId, name, buildConfig() as Record<string, unknown>);
     } catch (err) {
@@ -265,8 +283,33 @@ export default function StrategyForm({ onSubmit, isLoading }: Props) {
             type="number"
             step="5"
             min="5"
+            max={MAX_WINDOW_MINS}
             value={rollingWindowMins}
             onChange={(e) => setRollingWindowMins(Number(e.target.value))}
+            className={inputClass}
+          />
+          <FieldHint>{describeMinutes(rollingWindowMins)}</FieldHint>
+        </Field>
+        <Field label="Max Holding Time (minutes)">
+          <input
+            type="number"
+            step="60"
+            min="1"
+            max={MAX_WINDOW_MINS}
+            value={maxHoldingMins}
+            onChange={(e) => setMaxHoldingMins(Number(e.target.value))}
+            className={inputClass}
+          />
+          <FieldHint>{describeMinutes(maxHoldingMins)} — force-exit if the spread has not reverted</FieldHint>
+        </Field>
+        <Field label="Cooldown After Exit (minutes)">
+          <input
+            type="number"
+            step="1"
+            min="0"
+            max={MAX_WINDOW_MINS}
+            value={cooldownMins}
+            onChange={(e) => setCooldownMins(Number(e.target.value))}
             className={inputClass}
           />
         </Field>
@@ -303,10 +346,12 @@ export default function StrategyForm({ onSubmit, isLoading }: Props) {
               type="number"
               step="30"
               min="30"
+              max={MAX_WINDOW_MINS}
               value={olsWindowMins}
               onChange={(e) => setOlsWindowMins(Number(e.target.value))}
               className={inputClass}
             />
+            <FieldHint>{describeMinutes(olsWindowMins)}</FieldHint>
           </Field>
           <Field label="Recalc Every N Bars">
             <input
@@ -385,6 +430,66 @@ export default function StrategyForm({ onSubmit, isLoading }: Props) {
 
 const inputClass =
   "w-full rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-sm text-zinc-900 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50";
+
+/**
+ * Upper bound for any duration field, in minutes (~1 year).
+ *
+ * These inputs are in MINUTES but the backend config is in MILLISECONDS, so
+ * pasting a millisecond value into one of them silently produces a window
+ * 60,000x too large. That happened in production: a 604,800,000 entry became a
+ * 1,150-year window, which disabled rolling-window eviction entirely and turned
+ * the z-score into an O(n) scan over the whole backtest.
+ */
+const MAX_WINDOW_MINS = 527_040;
+
+/** Renders a minutes count as a human-scale duration so mis-typed values stand out. */
+function describeMinutes(mins: number): string {
+  if (!Number.isFinite(mins) || mins <= 0) return "—";
+  if (mins < 60) return `${mins} min`;
+  if (mins < 1_440) return `${(mins / 60).toFixed(1).replace(/\.0$/, "")} hours`;
+  if (mins < 43_200) return `${(mins / 1_440).toFixed(1).replace(/\.0$/, "")} days`;
+  return `${(mins / 43_200).toFixed(1).replace(/\.0$/, "")} months`;
+}
+
+/**
+ * Validates every duration field before submit. Returns an error message, or
+ * null when all values are sane.
+ */
+function validateDurations(v: {
+  rollingWindowMins: number;
+  olsWindowMins: number;
+  maxHoldingMins: number;
+  cooldownMins: number;
+  hedgeRatioMethod: string;
+}): string | null {
+  const fields: Array<[string, number, number]> = [
+    ["Spread Window", v.rollingWindowMins, 5],
+    ["Max Holding Time", v.maxHoldingMins, 1],
+    ["Cooldown After Exit", v.cooldownMins, 0],
+  ];
+  if (v.hedgeRatioMethod === "rolling_ols") {
+    fields.push(["OLS Window", v.olsWindowMins, 30]);
+  }
+
+  for (const [label, value, min] of fields) {
+    if (!Number.isFinite(value)) return `${label} must be a number.`;
+    if (value < min) return `${label} must be at least ${min} minutes.`;
+    if (value > MAX_WINDOW_MINS) {
+      return `${label} of ${value.toLocaleString()} minutes is about ${describeMinutes(value)}. ` +
+        `These fields are in minutes, not milliseconds — the maximum is ${MAX_WINDOW_MINS.toLocaleString()} (1 year).`;
+    }
+  }
+
+  if (v.hedgeRatioMethod === "rolling_ols" && v.olsWindowMins <= v.rollingWindowMins) {
+    return "OLS Window should be longer than the Spread Window so the hedge ratio stays stable across spread cycles.";
+  }
+  return null;
+}
+
+/** Small caption under an input. */
+function FieldHint({ children }: { children: React.ReactNode }) {
+  return <span className="text-[11px] text-zinc-400">{children}</span>;
+}
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (

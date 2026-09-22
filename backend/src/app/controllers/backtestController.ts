@@ -27,6 +27,7 @@ import { backtestStreamManager } from "../../core/backtest/backtestStreamManager
 import { logger } from "../../utils/logger";
 import { newId } from "../../utils/ids";
 import type { BacktestConfig, BacktestResult } from "../../types/backtest";
+import type { AppContext } from "../context";
 
 // In-memory cache so GET /api/backtests/:id is served instantly for a run that just
 // completed, without a DB round trip. Entries expire after 10 minutes.
@@ -37,6 +38,32 @@ const resultCache = new Map<string, { result: BacktestResult; expiresAt: number 
 // the channel ID of the in-progress run. Used both to prevent duplicate engine
 // runs and to relay progress events to duplicate SSE clients.
 const inFlightKeys = new Map<string, string>(); // configKey → channelId
+
+/**
+ * Rejects a backtest request that arrived on a process running the trading engine.
+ *
+ * Trading runtimes mount this same REST API (see runtime/bootstrap.ts), so without
+ * this guard a backtest started from the UI runs in-process: it installs a simulated
+ * clock over the live one — corrupting quote timestamps, risk cooldowns, and
+ * rolling-window eviction — and blocks the event loop that owns the broker WebSocket.
+ *
+ * @param req - Express Request; engine handles are read from app.locals.ctx
+ * @param res - Express Response; receives 409 when the guard trips
+ * @returns true when the request was rejected and the caller must stop
+ */
+function rejectIfTradingProcess(req: Request, res: Response): boolean {
+  const { orchestrator, executionMode } = (req.app?.locals?.ctx ?? {}) as AppContext;
+  if (!orchestrator) return false;
+
+  res.status(409).json({
+    error: "Backtests cannot run on a trading process",
+    detail:
+      `This server is running the ${executionMode ?? "live"} trading engine. ` +
+      `Send backtest requests to the API-only process (port 8082) instead — ` +
+      `set NEXT_PUBLIC_BACKTEST_API_BASE_URL to point there.`,
+  });
+  return true;
+}
 
 function cacheResult(result: BacktestResult): void {
   if (!result?.id) return;
@@ -120,6 +147,8 @@ export function streamBacktest(req: Request, res: Response): void {
  * @param res - Express Response: { backtestId: string, message: string }
  */
 export async function runBacktest(req: Request, res: Response): Promise<void> {
+  if (rejectIfTradingProcess(req, res)) return;
+
   const { force, ...body } = req.body as Omit<BacktestConfig, "id"> & { force?: boolean };
 
   if (!body.strategyConfig || !body.startDate || !body.endDate) {

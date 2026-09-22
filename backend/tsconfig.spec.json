@@ -1,0 +1,23 @@
+{
+  // TypeScript config used only by ts-jest.
+  //
+  // The base tsconfig excludes *.test.ts and turns on declaration + declarationMap
+  // emit, which is right for `npm run build` but wasteful under Jest: every test
+  // file would be type-checked against the full program and emit .d.ts output that
+  // nothing consumes. This config includes the tests, drops the declaration emit,
+  // and enables isolatedModules so ts-jest transpiles each file in isolation
+  // instead of building a whole-program type graph per worker.
+  //
+  // Type safety is not lost — `npm run typecheck` runs tsc over src AND tests.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "isolatedModules": true,
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false,
+    "inlineSourceMap": true,
+    "inlineSources": true
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}

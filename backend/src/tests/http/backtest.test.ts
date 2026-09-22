@@ -51,6 +51,53 @@ describe("Backtest HTTP API", () => {
     expect(response.body.message).toContain("Backtest queued");
   });
 
+  // ---------------------------------------------------------------------------
+  // Process isolation: trading runtimes mount this same API, so the route must
+  // refuse to run an engine in a process that also holds the live orchestrator.
+  // ---------------------------------------------------------------------------
+  describe("process isolation guard", () => {
+    const validPayload = {
+      name: "Guarded Run",
+      startDate: "2023-01-01",
+      endDate: "2023-01-07",
+      initialCapital: 100000,
+      strategyConfig: { type: "pairs_trading", leg1Symbol: "XOM", leg2Symbol: "CVX" },
+    };
+
+    test("returns 409 and never starts the engine on a trading process", async () => {
+      const tradingApp = createApp({
+        orchestrator: {} as never,
+        executionMode: "paper",
+      });
+
+      const response = await request(tradingApp)
+        .post("/api/backtests/run")
+        .send(validPayload);
+
+      expect(response.status).toBe(409);
+      expect(response.body.error).toContain("cannot run on a trading process");
+      expect(response.body.detail).toContain("paper");
+      expect(BacktestEngine.prototype.run).not.toHaveBeenCalled();
+    });
+
+    test("still accepts the same request on the API-only process", async () => {
+      (BacktestEngine.prototype.run as jest.Mock).mockResolvedValue({
+        id: "api-only-run",
+        status: "completed",
+        metrics: {},
+        final_portfolio: {},
+        orders: [],
+        fills: [],
+      });
+
+      const response = await request(createApp())
+        .post("/api/backtests/run")
+        .send(validPayload);
+
+      expect(response.status).toBe(202);
+    });
+  });
+
   test("POST /api/backtests/run — handles missing fields with 400", async () => {
     const response = await request(app)
       .post("/api/backtests/run")

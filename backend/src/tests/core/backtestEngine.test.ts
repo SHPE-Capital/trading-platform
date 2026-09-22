@@ -33,6 +33,7 @@ jest.mock('../../core/backtest/backtestLoader', () => ({
 
 import { BacktestLoader } from '../../core/backtest/backtestLoader';
 import { BacktestEngine } from '../../core/backtest/backtestEngine';
+import { lockClockForLive, unlockClockForLive } from '../../utils/time';
 import type { BacktestConfig } from '../../types/backtest';
 import type { PortfolioSnapshot } from '../../types/portfolio';
 import type { Fill } from '../../types/orders';
@@ -121,6 +122,34 @@ beforeEach(() => {
   MockLoader.mockClear();
   // Default: no bars
   MockLoader.mockImplementation(() => ({ streamBars: jest.fn().mockImplementation(async function*() { yield []; }) } as unknown as BacktestLoader));
+});
+
+describe('run(): refuses to execute in a trading process', () => {
+  afterEach(() => {
+    unlockClockForLive();
+  });
+
+  it('throws before loading any bars when the live clock lock is held', async () => {
+    lockClockForLive('paper');
+    const engine = makeEngineWithBars([makeBar('SPY', 1_000)]);
+
+    await expect(engine.run(makeConfig(), () => [])).rejects.toThrow(
+      /cannot run in a live or paper trading process/,
+    );
+
+    // The guard is the first statement in run(), so no market data is fetched.
+    expect(MockLoader.mock.results[0].value.streamBars).not.toHaveBeenCalled();
+  });
+
+  it('runs normally once the lock is released', async () => {
+    lockClockForLive('paper');
+    unlockClockForLive();
+
+    const engine = makeEngineWithBars([]);
+    const result = await engine.run(makeConfig(), () => []);
+
+    expect(result.status).toBe('completed');
+  });
 });
 
 describe('run(): result structure', () => {

@@ -73,10 +73,11 @@ export function useBacktest(): UseBacktestResult {
       const { backtestId } = await runBacktest(config, force);
       await fetchData();
 
-      // Open SSE stream for real-time progress.
-      // appConfig.apiBaseUrl (e.g. http://localhost:8080/api) + path = full endpoint URL.
+      // Open SSE stream for real-time progress. Must target the same process that
+      // runs the job — backtestStreamManager is in-process, so a stream opened
+      // against the trading runtime would never receive events from the API process.
       // isRunning stays true here — the SSE handlers below own the transition to false.
-      const es = new EventSource(`${appConfig.apiBaseUrl}/backtests/${backtestId}/stream`);
+      const es = new EventSource(`${appConfig.backtestApiBaseUrl}/backtests/${backtestId}/stream`);
       esRef.current = es;
 
       es.addEventListener("progress", (e: MessageEvent) => {

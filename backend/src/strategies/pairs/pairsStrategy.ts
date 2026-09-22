@@ -23,13 +23,14 @@
  */
 
 import { BaseStrategy } from "../base/strategy";
-import { RollingTimeWindow } from "../../core/state/rollingWindow";
-import { computeZScore } from "../../services/indicators/zscore";
+import { RollingTimeWindow, RollingNumericWindow } from "../../core/state/rollingWindow";
+import { computeZScoreFromStats } from "../../services/indicators/zscore";
 import { computeEngleGranger } from "../../services/indicators/cointegration";
 import { logger } from "../../utils/logger";
 import { nowMs } from "../../utils/time";
 import type { EvaluationContext } from "../base/strategy";
 import type { StrategySignal, StrategyType } from "../../types/strategy";
+import { DEFAULT_COINT_HYSTERESIS } from "./pairsConfig";
 import type {
   PairsStrategyConfig,
   PairsInternalState,
@@ -39,7 +40,8 @@ import type {
 export class PairsStrategy extends BaseStrategy {
   readonly type: StrategyType = "pairs_trading";
   // v3: replaced R² gate with Engle-Granger cointegration test; fixed entry-above-stop and state-before-qty bugs
-  static readonly VERSION = 3;
+  // v4: added hysteresis deadband around the cointegration threshold to stop state flapping
+  static readonly VERSION = 4;
   readonly version = PairsStrategy.VERSION;
 
   private readonly state: PairsInternalState;
@@ -126,14 +128,21 @@ export class PairsStrategy extends BaseStrategy {
     }
 
     // Need enough observations
-    const values = this.state.spreadWindow.getValues();
-    if (values.length < this.pairsConfig.minObservations) {
+    if (this.state.spreadWindow.size() < this.pairsConfig.minObservations) {
       if (this._debugEnabled) this._debug.insufficientObservations++;
       return null;
     }
 
-    // Compute z-score
-    const zResult = computeZScore(values);
+    // Score against the window's incrementally maintained accumulators rather
+    // than copying the window out and rescanning it on every bar.
+    const windowMean = this.state.spreadWindow.mean();
+    const windowStd = this.state.spreadWindow.stdDev();
+    if (windowMean === null || windowStd === null) {
+      if (this._debugEnabled) this._debug.zScoreNull++;
+      return null;
+    }
+
+    const zResult = computeZScoreFromStats(spread, windowMean, windowStd);
     if (zResult === null) {
       if (this._debugEnabled) this._debug.zScoreNull++;
       return null;
@@ -184,15 +193,19 @@ export class PairsStrategy extends BaseStrategy {
 
     const wasCointegrated = this.state.isCointegrated;
     this.state.lastCointStat = result.testStatistic;
-    this.state.isCointegrated = result.isCointegrated;
+    this.state.isCointegrated = this._applyCointHysteresis(
+      wasCointegrated,
+      result.testStatistic,
+      result.criticalValue,
+    );
 
-    if (wasCointegrated && !result.isCointegrated) {
+    if (wasCointegrated && !this.state.isCointegrated) {
       logger.warn("PairsStrategy: pair lost cointegration", {
         id: this.id,
         testStatistic: result.testStatistic.toFixed(3),
         criticalValue: result.criticalValue,
       });
-    } else if (!wasCointegrated && result.isCointegrated) {
+    } else if (!wasCointegrated && this.state.isCointegrated) {
       logger.info("PairsStrategy: pair regained cointegration", {
         id: this.id,
         testStatistic: result.testStatistic.toFixed(3),
@@ -201,11 +214,24 @@ export class PairsStrategy extends BaseStrategy {
     }
 
     // Only update hedge ratio when the pair is cointegrated
-    if (result.isCointegrated) {
+    if (this.state.isCointegrated) {
       this.state.currentHedgeRatio = result.beta;
     }
 
     return this.state.currentHedgeRatio;
+  }
+
+  private _applyCointHysteresis(
+    wasCointegrated: boolean,
+    testStatistic: number,
+    criticalValue: number,
+  ): boolean {
+    return applyCointHysteresis(
+      wasCointegrated,
+      testStatistic,
+      criticalValue,
+      this.pairsConfig.cointHysteresis ?? DEFAULT_COINT_HYSTERESIS,
+    );
   }
 
   private _checkExitSignals(
@@ -394,7 +420,7 @@ export class PairsStrategy extends BaseStrategy {
       positionOpenedAt: null,
       lastZScore: null,
       lastSpread: null,
-      spreadWindow: new RollingTimeWindow(this.pairsConfig.rollingWindowMs),
+      spreadWindow: new RollingNumericWindow(this.pairsConfig.rollingWindowMs),
       currentHedgeRatio: this.pairsConfig.fixedHedgeRatio,
       lastCointStat: null,
       isCointegrated: false,
@@ -430,4 +456,38 @@ export class PairsStrategy extends BaseStrategy {
     console.log(`  completedTrades (state):   ${this.state.completedTrades}`);
     console.log();
   }
+}
+
+/**
+ * Applies a symmetric deadband around the Engle-Granger critical value so a pair
+ * sitting essentially on the threshold does not flip verdict on every recalculation.
+ *
+ * Without it, a test statistic hovering at the critical value (e.g. -3.34 against
+ * a -3.3377 threshold) crosses back and forth on third-decimal noise. That floods
+ * the log and, worse, stutters the hedge ratio, because beta is only refreshed
+ * while the pair is considered cointegrated.
+ *
+ * Entering cointegration requires clearing the threshold by the full band; leaving
+ * it requires falling short by the same margin. Between those two points the
+ * previous verdict stands. More negative tau means stronger evidence of a
+ * stationary, mean-reverting spread.
+ *
+ * @param wasCointegrated - Verdict from the previous recalculation
+ * @param testStatistic - Dickey-Fuller tau for this recalculation
+ * @param criticalValue - MacKinnon critical value for the configured level
+ * @param band - Deadband width; 0 restores the old bare-threshold behaviour
+ * @returns The verdict to adopt now
+ */
+export function applyCointHysteresis(
+  wasCointegrated: boolean,
+  testStatistic: number,
+  criticalValue: number,
+  band: number,
+): boolean {
+  if (wasCointegrated) {
+    // Stay cointegrated until tau rises clearly above the threshold.
+    return testStatistic < criticalValue + band;
+  }
+  // Become cointegrated only once tau drops clearly below the threshold.
+  return testStatistic < criticalValue - band;
 }
