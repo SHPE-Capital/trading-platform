@@ -9,6 +9,19 @@
  */
 
 import { config } from "../config";
+import { getAccessToken } from "../lib/supabaseClient";
+
+/**
+ * Builds request headers, attaching the Supabase access token when the member
+ * is signed in. Read fresh per call so a background token refresh is picked up
+ * without the caller knowing one happened.
+ */
+async function authHeaders(): Promise<Record<string, string>> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const token = await getAccessToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  return headers;
+}
 
 /**
  * Makes an authenticated GET request to the backend API.
@@ -19,7 +32,7 @@ import { config } from "../config";
  */
 export async function apiGet<T>(path: string, baseUrl: string = config.apiBaseUrl): Promise<T> {
   const res = await fetch(`${baseUrl}${path}`, {
-    headers: { "Content-Type": "application/json" },
+    headers: await authHeaders(),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }));
@@ -43,7 +56,7 @@ export async function apiPost<T>(
 ): Promise<T> {
   const res = await fetch(`${baseUrl}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: await authHeaders(),
     body: JSON.stringify(body),
   });
   if (!res.ok) {
@@ -62,7 +75,7 @@ export async function apiPost<T>(
 export async function apiPut<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${config.apiBaseUrl}${path}`, {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: await authHeaders(),
     body: JSON.stringify(body),
   });
   if (!res.ok) {
@@ -80,7 +93,7 @@ export async function apiPut<T>(path: string, body: unknown): Promise<T> {
 export async function apiDelete<T>(path: string): Promise<T> {
   const res = await fetch(`${config.apiBaseUrl}${path}`, {
     method: "DELETE",
-    headers: { "Content-Type": "application/json" },
+    headers: await authHeaders(),
   });
   if (!res.ok) {
     const errBody = await res.json().catch(() => ({ error: res.statusText }));

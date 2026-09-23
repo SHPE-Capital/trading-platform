@@ -31,6 +31,7 @@ import {
   systemInitialState,
 } from "../state/systemStore";
 import { DataProvider } from "../context/DataContext";
+import { AuthProvider } from "../context/AuthContext";
 
 export default function Providers({ children }: { children: React.ReactNode }) {
   const [strategyState, strategyDispatch] = useReducer(strategyReducer, strategyInitialState);
@@ -38,6 +39,7 @@ export default function Providers({ children }: { children: React.ReactNode }) {
   const [systemState, systemDispatch] = useReducer(systemReducer, systemInitialState);
 
   return (
+    <AuthProvider>
     <SystemStateContext.Provider value={systemState}>
       <SystemDispatchContext.Provider value={systemDispatch}>
         <PortfolioStateContext.Provider value={portfolioState}>
@@ -53,5 +55,6 @@ export default function Providers({ children }: { children: React.ReactNode }) {
         </PortfolioStateContext.Provider>
       </SystemDispatchContext.Provider>
     </SystemStateContext.Provider>
+    </AuthProvider>
   );
 }
