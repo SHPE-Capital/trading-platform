@@ -68,6 +68,12 @@ export class BacktestLoader {
     const buffers: Bar[][] = symbols.map(() => []);
     const done: boolean[] = symbols.map(() => false);
 
+    // The safe-horizon logic below reads each buffer's LAST bar as its latest
+    // timestamp, so every page must be ascending. Alpaca and the bar cache both
+    // return sorted pages; sorting anyway keeps one out-of-order page from
+    // stalling the drain loop.
+    const byTs = (a: Bar, b: Bar) => a.ts - b.ts;
+
     // Prime all symbols with their first page concurrently.
     await Promise.all(
       iters.map(async (it, i) => {
@@ -75,7 +81,7 @@ export class BacktestLoader {
         if (r.done) {
           done[i] = true;
         } else {
-          buffers[i].push(...r.value);
+          buffers[i].push(...r.value.sort(byTs));
           logger.info("BacktestLoader: first page loaded", {
             symbol: symbols[i], count: buffers[i].length, timeframe,
           });
@@ -87,14 +93,16 @@ export class BacktestLoader {
       // Fetch next pages for any empty non-exhausted buffer before computing
       // the horizon, so every active symbol has at least one bar to anchor
       // the safe window against. Multiple empty buffers are refilled in parallel.
+      let refilled = false;
       await Promise.all(
         iters.map(async (it, i) => {
           if (done[i] || buffers[i].length > 0) return;
+          refilled = true;
           const r = await it.next();
           if (r.done) {
             done[i] = true;
           } else {
-            buffers[i].push(...r.value);
+            buffers[i].push(...r.value.sort(byTs));
             logger.info("BacktestLoader: page loaded", {
               symbol: symbols[i], count: buffers[i].length,
             });
@@ -125,6 +133,13 @@ export class BacktestLoader {
           a.ts !== b.ts ? a.ts - b.ts : a.symbol < b.symbol ? -1 : a.symbol > b.symbol ? 1 : 0,
         );
         yield window;
+      } else if (!refilled) {
+        // Nothing drained and nothing fetched: the next iteration would see the
+        // exact same state. Without this the loop spins synchronously forever —
+        // no await ever yields, so not even a timeout can interrupt it.
+        throw new Error(
+          "BacktestLoader: stream stalled — a later page returned bars earlier than the previous page's last bar",
+        );
       }
     }
   }
