@@ -14,6 +14,7 @@ import type {
   PendingApproval,
   ProposalComment,
   ProposalDetail,
+  ProposalSummary,
   StrategyProposal,
   StrategyVersion,
   CommentKind,
@@ -51,9 +52,14 @@ export async function fetchPendingApprovals(): Promise<PendingApproval[]> {
   return apiGet<PendingApproval[]>("/proposals?status=open");
 }
 
-/** Settled proposals, for the history tabs. */
-export async function fetchProposalsByStatus(status: ProposalStatus): Promise<StrategyProposal[]> {
-  return apiGet<StrategyProposal[]>(`/proposals?status=${status}`);
+/** Settled proposals of one status, for the history tab. */
+export async function fetchProposalsByStatus(status: ProposalStatus): Promise<ProposalSummary[]> {
+  return apiGet<ProposalSummary[]>(`/proposals?status=${status}`);
+}
+
+/** Every proposal regardless of status, newest first — the "All" tab. */
+export async function fetchAllProposals(): Promise<ProposalSummary[]> {
+  return apiGet<ProposalSummary[]>("/proposals?status=all");
 }
 
 /** Everything the review page renders, in one request. */

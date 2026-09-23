@@ -117,6 +117,8 @@ export default function ProposalPage({ params }: { params: Promise<{ id: string 
     useProposal(id);
 
   const [commentBody, setCommentBody] = useState("");
+  const [changesText, setChangesText] = useState("");
+  const [showRequestChanges, setShowRequestChanges] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
   const [showReject, setShowReject] = useState(false);
   const [capitalOverride, setCapitalOverride] = useState("");
@@ -135,13 +137,28 @@ export default function ProposalPage({ params }: { params: Promise<{ id: string 
     );
   }
 
-  const { proposal, strategy, headVersion, versions, backtests, timeline, viewer } = detail;
+  const { proposal, strategy, headVersion, versions, backtests, comments, timeline, viewer } = detail;
   const budget = headVersion?.config?.riskBudget as { maxCapitalPct?: number } | undefined;
   const proposedPct = budget?.maxCapitalPct;
+
+  // True when a lead's feedback postdates the current head version — i.e. the
+  // author hasn't pushed a fix for it yet. Clears itself the moment they do,
+  // since a new version moves headVersion.createdAt past the comment. See 0010.
+  const changesRequested =
+    proposal.status === "open" &&
+    headVersion != null &&
+    comments.some((c) => c.kind === "request_changes" && c.createdAt >= headVersion.createdAt);
 
   const handleApprove = async () => {
     const pct = capitalOverride.trim() === "" ? undefined : Number(capitalOverride) / 100;
     await approve(pct);
+  };
+
+  const handleRequestChanges = async () => {
+    if (!changesText.trim()) return;
+    await comment(changesText, "request_changes");
+    setChangesText("");
+    setShowRequestChanges(false);
   };
 
   return (
@@ -170,9 +187,15 @@ export default function ProposalPage({ params }: { params: Promise<{ id: string 
             {proposal.description}
           </p>
         )}
+        {changesRequested && (
+          <p className="mt-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-400">
+            <span className="font-medium">Changes requested.</span> Push a new version of the
+            strategy addressing the feedback below — it re-attaches here automatically.
+          </p>
+        )}
         {proposal.status === "rejected" && proposal.rejectionReason && (
           <p className="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-400">
-            <span className="font-medium">Changes requested:</span> {proposal.rejectionReason}
+            <span className="font-medium">Rejected:</span> {proposal.rejectionReason}
           </p>
         )}
         {proposal.status === "approved" && (
@@ -342,10 +365,12 @@ export default function ProposalPage({ params }: { params: Promise<{ id: string 
                 {isActing ? "Working…" : "Approve & start"}
               </button>
 
-              {!showReject ? (
+              {/* Soft: stays open, just posts feedback. The author pushes a new
+                  version to address it — that re-attaches here automatically. */}
+              {!showRequestChanges ? (
                 <button
                   disabled={isActing}
-                  onClick={() => setShowReject(true)}
+                  onClick={() => setShowRequestChanges(true)}
                   className="mt-2 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
                 >
                   Request changes
@@ -353,20 +378,72 @@ export default function ProposalPage({ params }: { params: Promise<{ id: string 
               ) : (
                 <div className="mt-2">
                   <textarea
+                    id="changes-text"
+                    rows={3}
+                    value={changesText}
+                    onChange={(e) => setChangesText(e.target.value)}
+                    placeholder="What needs to change? The proposal stays open."
+                    className="w-full rounded-md border border-zinc-200 bg-white p-2 text-xs text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
+                  />
+                  <div className="mt-2 flex gap-2">
+                    <button
+                      disabled={isActing || !changesText.trim()}
+                      onClick={handleRequestChanges}
+                      className="flex-1 rounded-md bg-zinc-900 px-3 py-2 text-sm font-medium text-white hover:bg-zinc-700 disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-900"
+                    >
+                      Send feedback
+                    </button>
+                    <button
+                      disabled={isActing}
+                      onClick={() => { setShowRequestChanges(false); setChangesText(""); }}
+                      className="rounded-md px-3 py-2 text-sm text-zinc-500 hover:text-zinc-700"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Terminal: closes the proposal. A new version won't reattach —
+                  the author has to open a fresh proposal. Kept separate and
+                  understated so it isn't reached for by accident. */}
+              {!showReject ? (
+                <button
+                  disabled={isActing}
+                  onClick={() => setShowReject(true)}
+                  className="mt-4 w-full text-xs text-zinc-400 hover:text-red-600 disabled:opacity-50 dark:text-zinc-500 dark:hover:text-red-400"
+                >
+                  Reject this proposal
+                </button>
+              ) : (
+                <div className="mt-4 border-t border-zinc-200 pt-3 dark:border-zinc-800">
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                    Closes the proposal for good — a new version won&apos;t reattach.
+                  </p>
+                  <textarea
                     id="reject-reason"
                     rows={3}
                     value={rejectReason}
                     onChange={(e) => setRejectReason(e.target.value)}
-                    placeholder="What needs to change?"
-                    className="w-full rounded-md border border-zinc-200 bg-white p-2 text-xs text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
+                    placeholder="Why is this being rejected outright?"
+                    className="mt-2 w-full rounded-md border border-zinc-200 bg-white p-2 text-xs text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
                   />
-                  <button
-                    disabled={isActing || !rejectReason.trim()}
-                    onClick={() => reject(rejectReason)}
-                    className="mt-2 w-full rounded-md bg-zinc-900 px-3 py-2 text-sm font-medium text-white hover:bg-zinc-700 disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-900"
-                  >
-                    Send back
-                  </button>
+                  <div className="mt-2 flex gap-2">
+                    <button
+                      disabled={isActing || !rejectReason.trim()}
+                      onClick={() => reject(rejectReason)}
+                      className="flex-1 rounded-md bg-red-700 px-3 py-2 text-sm font-medium text-white hover:bg-red-800 disabled:opacity-50"
+                    >
+                      Reject
+                    </button>
+                    <button
+                      disabled={isActing}
+                      onClick={() => { setShowReject(false); setRejectReason(""); }}
+                      className="rounded-md px-3 py-2 text-sm text-zinc-500 hover:text-zinc-700"
+                    >
+                      Cancel
+                    </button>
+                  </div>
                 </div>
               )}
             </div>

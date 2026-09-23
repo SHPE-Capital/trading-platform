@@ -116,6 +116,45 @@ export interface PendingApproval {
   backtestCount: number;
   latestBacktestAt: EpochMs | null;
   commentCount: number;
+  /**
+   * True when the most recent `request_changes` comment is newer than the head
+   * version — i.e. a lead's feedback hasn't been addressed by a new version yet.
+   * Clears itself the moment the author pushes one; see 0010.
+   */
+  changesRequested: boolean;
+}
+
+/**
+ * A row of the proposal_summaries view — proposal_approvals' superset covering
+ * every status, for the approvals page's "All" tab.
+ */
+export interface ProposalSummary {
+  proposalId: UUID;
+  title: string;
+  description: string | null;
+  status: ProposalStatus;
+  requestedAt: EpochMs;
+  updatedAt: EpochMs;
+  strategyId: UUID;
+  strategyName: string;
+  strategyType: StrategyType;
+  headVersionId: UUID;
+  versionNumber: number;
+  changeSummary: string | null;
+  requestedById: UUID;
+  requestedByName: string | null;
+  requestedByEmail: string;
+  approvedBy: UUID | null;
+  approvedByName: string | null;
+  approvedAt: EpochMs | null;
+  approvedCapitalPct: number | null;
+  rejectedBy: UUID | null;
+  rejectedByName: string | null;
+  rejectedAt: EpochMs | null;
+  rejectionReason: string | null;
+  backtestCount: number;
+  commentCount: number;
+  changesRequested: boolean;
 }
 
 // ------------------------------------------------------------------

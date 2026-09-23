@@ -48,6 +48,12 @@ export interface BacktestConfig {
   commissionPerShare: number;
   /** Set when the user picked a saved strategy; written to backtest_results.strategy_id */
   strategyId?: string;
+  /**
+   * The strategy_versions row this run is testing — set alongside strategyId
+   * when that strategy has version history. Lets a proposal find this backtest
+   * via "backtests for this exact version" once it's saved.
+   */
+  strategyVersionId?: string;
   description?: string;
   /** Annualized risk-free rate for Sharpe/Sortino (default 0) */
   riskFreeRateAnnual?: number;

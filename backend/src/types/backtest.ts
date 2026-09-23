@@ -51,6 +51,13 @@ export interface BacktestConfig {
   strategyId?: UUID;
   /** Algorithm version of the saved strategy at run time */
   strategyVersion?: number;
+  /**
+   * The strategy_versions row (config edit, not algorithm version) this run is
+   * testing — set when the user picked a saved strategy whose config history
+   * exists (0006). Written to backtest_results.strategy_version_id, which is
+   * what a proposal's "backtests for this version" lookup keys on.
+   */
+  strategyVersionId?: UUID;
   /** Optional description */
   description?: string;
   /**

@@ -73,6 +73,38 @@ export interface PendingApproval {
   backtestCount: number;
   latestBacktestAt: number | null;
   commentCount: number;
+  /** True when feedback (a request_changes comment) postdates the head version. */
+  changesRequested: boolean;
+}
+
+/** A row of the "All" tab — every proposal regardless of status. */
+export interface ProposalSummary {
+  proposalId: string;
+  title: string;
+  description: string | null;
+  status: ProposalStatus;
+  requestedAt: number;
+  updatedAt: number;
+  strategyId: string;
+  strategyName: string;
+  strategyType: string;
+  headVersionId: string;
+  versionNumber: number;
+  changeSummary: string | null;
+  requestedById: string;
+  requestedByName: string | null;
+  requestedByEmail: string;
+  approvedBy: string | null;
+  approvedByName: string | null;
+  approvedAt: number | null;
+  approvedCapitalPct: number | null;
+  rejectedBy: string | null;
+  rejectedByName: string | null;
+  rejectedAt: number | null;
+  rejectionReason: string | null;
+  backtestCount: number;
+  commentCount: number;
+  changesRequested: boolean;
 }
 
 export type CommentKind = "comment" | "suggestion" | "approve" | "request_changes";

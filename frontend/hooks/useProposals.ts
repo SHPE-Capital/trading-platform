@@ -14,6 +14,7 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   fetchPendingApprovals,
+  fetchAllProposals,
   fetchProposal,
   approveProposal,
   rejectProposal,
@@ -21,7 +22,7 @@ import {
   postComment,
 } from "../services/proposalsService";
 import { useAuth } from "../context/AuthContext";
-import type { PendingApproval, ProposalDetail, CommentKind } from "../types/review";
+import type { PendingApproval, ProposalSummary, ProposalDetail, CommentKind } from "../types/review";
 
 interface UsePendingApprovalsResult {
   approvals: PendingApproval[];
@@ -59,6 +60,44 @@ export function usePendingApprovals(): UsePendingApprovalsResult {
   }, [authLoading, load]);
 
   return { approvals, isLoading: isLoading || authLoading, error, refetch: load };
+}
+
+interface UseAllProposalsResult {
+  proposals: ProposalSummary[];
+  isLoading: boolean;
+  error: string | null;
+  refetch: () => void;
+}
+
+/** Every proposal regardless of status, newest first — the approvals page's "All" tab. */
+export function useAllProposals(): UseAllProposalsResult {
+  const { user, isLoading: authLoading } = useAuth();
+  const [proposals, setProposals] = useState<ProposalSummary[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    if (!user) {
+      setProposals([]);
+      setIsLoading(false);
+      return;
+    }
+    setIsLoading(true);
+    try {
+      setProposals(await fetchAllProposals());
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load proposals");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (!authLoading) void load();
+  }, [authLoading, load]);
+
+  return { proposals, isLoading: isLoading || authLoading, error, refetch: load };
 }
 
 interface UseProposalResult {

@@ -588,6 +588,11 @@ export async function insertBacktestResult(result: BacktestResult, savedBy: UUID
   // Persist the FK link to the strategy definition row if the config referenced one
   payload.strategy_id = result.config ? (result.config as { strategyId?: string }).strategyId ?? null : null;
   payload.strategy_version = result.config ? (result.config as { strategyVersion?: number }).strategyVersion ?? null : null;
+  // The exact config edit (0006) this run tested — distinct from strategy_version
+  // above, which is the algorithm's code version. This is what a proposal's
+  // "backtests for this version" lookup keys on.
+  payload.strategy_version_id =
+    result.config ? (result.config as { strategyVersionId?: string }).strategyVersionId ?? null : null;
 
   payload.owner_id = savedBy;
   payload.saved_at = new Date().toISOString();

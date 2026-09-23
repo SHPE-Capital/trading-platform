@@ -16,6 +16,7 @@
 import { useState, useEffect, useMemo } from "react";
 import type { BacktestConfig } from "../../types/api";
 import { useStrategyConfigs } from "../../hooks/useStrategyConfigs";
+import { useStrategyVersions } from "../../hooks/useStrategyVersions";
 import { daysAgoString } from "../../utils/dates";
 import RiskBudgetSection, { type RiskBudgetState, defaultRiskBudgetState } from "../shared/RiskBudgetSection";
 
@@ -28,6 +29,14 @@ export default function BacktestForm({ onSubmit, isLoading }: Props) {
   const { strategies, definition, isLoading: configsLoading } = useStrategyConfigs("pairs_trading");
 
   const [selectedId, setSelectedId] = useState<string>("new");
+
+  // Newest version of the selected saved config — tagged onto the run so a
+  // later explicit save links back to it (proposal pages look backtests up by
+  // strategy_version_id). Best-effort: if fields are edited below after
+  // picking a config, this still tags the run against that version even
+  // though the tested config may now differ slightly from what's saved.
+  const { versions: selectedVersions } = useStrategyVersions(selectedId !== "new" ? selectedId : null);
+  const latestVersionId = selectedVersions[0]?.id;
 
   // Strategy config fields (mirrors StrategyForm)
   const [leg1, setLeg1] = useState("SPY");
@@ -133,6 +142,7 @@ export default function BacktestForm({ onSubmit, isLoading }: Props) {
       dataGranularity: "bar",
       commissionPerShare: 0.005,
       strategyId: selectedStrategy?.id,
+      strategyVersionId: selectedStrategy ? latestVersionId : undefined,
       riskConfig: {
         gapBufferBps,
         spreadBufferBps,

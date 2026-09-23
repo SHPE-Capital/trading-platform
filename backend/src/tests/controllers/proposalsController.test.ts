@@ -38,6 +38,7 @@ import {
   createProposal,
   createVersion,
   addComment,
+  listProposalsHandler,
 } from '../../app/controllers/proposalsController';
 import type { StrategyProposal, StrategyVersion } from '../../types/review';
 
@@ -51,6 +52,8 @@ const mockInsertProposal = review.insertProposal as jest.Mock;
 const mockInsertVersion = review.insertStrategyVersion as jest.Mock;
 const mockUpdateHead = review.updateProposalHead as jest.Mock;
 const mockInsertComment = review.insertComment as jest.Mock;
+const mockListPending = review.listPendingApprovals as jest.Mock;
+const mockListSummaries = review.listProposalSummaries as jest.Mock;
 const mockInsertRun = repos.insertStrategyRun as jest.Mock;
 const mockGetStrategy = repos.getStrategyById as jest.Mock;
 const mockUpdateStrategy = repos.updateStrategy as jest.Mock;
@@ -459,5 +462,52 @@ describe('addComment', () => {
     );
 
     expect(res.statusCode).toBe(201);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Listing — the approvals page's "in progress" vs "all" toggle
+// ---------------------------------------------------------------------------
+describe('listProposalsHandler', () => {
+  it('defaults to the enriched open queue when status is omitted', async () => {
+    mockListPending.mockResolvedValue([{ proposalId: 'p1', changesRequested: false }]);
+
+    const res = mockRes();
+    await listProposalsHandler(mockReq({ query: {} }), res);
+
+    expect(mockListPending).toHaveBeenCalled();
+    expect(mockListSummaries).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(200);
+    expect(res.payload).toEqual([{ proposalId: 'p1', changesRequested: false }]);
+  });
+
+  it('status=all returns every proposal via the unfiltered summaries view', async () => {
+    mockListSummaries.mockResolvedValue([{ proposalId: 'p1' }, { proposalId: 'p2' }]);
+
+    const res = mockRes();
+    await listProposalsHandler(mockReq({ query: { status: 'all' } as never }), res);
+
+    expect(mockListSummaries).toHaveBeenCalledWith(undefined);
+    expect(res.statusCode).toBe(200);
+    expect(res.payload).toHaveLength(2);
+  });
+
+  it('status=rejected filters the summaries view by that status', async () => {
+    mockListSummaries.mockResolvedValue([{ proposalId: 'p3', status: 'rejected' }]);
+
+    const res = mockRes();
+    await listProposalsHandler(mockReq({ query: { status: 'rejected' } as never }), res);
+
+    expect(mockListSummaries).toHaveBeenCalledWith('rejected');
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('rejects an unknown status value', async () => {
+    const res = mockRes();
+    await listProposalsHandler(mockReq({ query: { status: 'bogus' } as never }), res);
+
+    expect(res.statusCode).toBe(400);
+    expect(mockListSummaries).not.toHaveBeenCalled();
+    expect(mockListPending).not.toHaveBeenCalled();
   });
 });

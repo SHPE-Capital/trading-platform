@@ -24,7 +24,7 @@ import {
   getProposalById,
   getOpenProposalForStrategy,
   listPendingApprovals,
-  listProposals,
+  listProposalSummaries,
   updateProposalHead,
   settleProposal,
   reopenProposal,
@@ -44,6 +44,8 @@ import type { CommentKind, ProposalStatus } from "../../types/review";
 
 /** Statuses a caller may filter the proposal list by. */
 const VALID_STATUSES: ProposalStatus[] = ["open", "approved", "rejected", "withdrawn"];
+/** Non-status query values the list endpoint also accepts. */
+const ALL_STATUSES = "all";
 
 // ------------------------------------------------------------------
 // Versions
@@ -130,14 +132,15 @@ export async function createVersion(req: Request, res: Response): Promise<void> 
 // ------------------------------------------------------------------
 
 /**
- * GET /api/proposals?status=open
- * Open proposals return the enriched review-queue rows; other statuses return
- * the plain proposal records.
+ * GET /api/proposals?status=open|approved|rejected|withdrawn|all
+ * "open" (or omitted) returns the enriched review-queue rows, oldest first —
+ * what a lead triages. "all" and every other status return the fuller
+ * proposal_summaries rows, newest first, for the approvals page's history tab.
  */
 export async function listProposalsHandler(req: Request, res: Response): Promise<void> {
-  const status = req.query.status as ProposalStatus | undefined;
-  if (status && !VALID_STATUSES.includes(status)) {
-    res.status(400).json({ error: `status must be one of ${VALID_STATUSES.join(", ")}` });
+  const status = req.query.status as ProposalStatus | typeof ALL_STATUSES | undefined;
+  if (status && status !== ALL_STATUSES && !VALID_STATUSES.includes(status)) {
+    res.status(400).json({ error: `status must be one of ${VALID_STATUSES.join(", ")}, or ${ALL_STATUSES}` });
     return;
   }
   try {
@@ -146,7 +149,7 @@ export async function listProposalsHandler(req: Request, res: Response): Promise
       res.json(pending);
       return;
     }
-    res.json(await listProposals(status));
+    res.json(await listProposalSummaries(status === ALL_STATUSES ? undefined : status));
   } catch (err) {
     logger.error("listProposals error", { err });
     res.status(500).json({ error: "Failed to fetch proposals" });

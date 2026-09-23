@@ -19,6 +19,7 @@ import type {
   StrategyVersion,
   StrategyProposal,
   PendingApproval,
+  ProposalSummary,
   ProposalComment,
   TimelineEvent,
   CommentKind,
@@ -224,6 +225,38 @@ function mapPendingApproval(row: Record<string, unknown>): PendingApproval {
     backtestCount: Number(row.backtest_count ?? 0),
     latestBacktestAt: msOrNull(row.latest_backtest_at),
     commentCount: Number(row.comment_count ?? 0),
+    changesRequested: Boolean(row.changes_requested),
+  };
+}
+
+function mapProposalSummary(row: Record<string, unknown>): ProposalSummary {
+  return {
+    proposalId: row.proposal_id as UUID,
+    title: row.title as string,
+    description: (row.description as string | null) ?? null,
+    status: row.status as ProposalStatus,
+    requestedAt: ms(row.requested_at),
+    updatedAt: ms(row.updated_at),
+    strategyId: row.strategy_id as UUID,
+    strategyName: row.strategy_name as string,
+    strategyType: row.strategy_type as ProposalSummary["strategyType"],
+    headVersionId: row.head_version_id as UUID,
+    versionNumber: row.version_number as number,
+    changeSummary: (row.change_summary as string | null) ?? null,
+    requestedById: row.requested_by_id as UUID,
+    requestedByName: (row.requested_by_name as string | null) ?? null,
+    requestedByEmail: row.requested_by_email as string,
+    approvedBy: (row.approved_by as UUID | null) ?? null,
+    approvedByName: (row.approved_by_name as string | null) ?? null,
+    approvedAt: msOrNull(row.approved_at),
+    approvedCapitalPct: (row.approved_capital_pct as number | null) ?? null,
+    rejectedBy: (row.rejected_by as UUID | null) ?? null,
+    rejectedByName: (row.rejected_by_name as string | null) ?? null,
+    rejectedAt: msOrNull(row.rejected_at),
+    rejectionReason: (row.rejection_reason as string | null) ?? null,
+    backtestCount: Number(row.backtest_count ?? 0),
+    commentCount: Number(row.comment_count ?? 0),
+    changesRequested: Boolean(row.changes_requested),
   };
 }
 
@@ -302,20 +335,24 @@ export async function listPendingApprovals(): Promise<PendingApproval[]> {
   return (data ?? []).map((r) => mapPendingApproval(r as Record<string, unknown>));
 }
 
-/** All proposals, newest first, optionally filtered by status. */
-export async function listProposals(status?: ProposalStatus): Promise<StrategyProposal[]> {
+/**
+ * Every proposal regardless of status, newest first, optionally filtered —
+ * backs the approvals page's "All" tab. Enriched the same way pending_approvals
+ * is (strategy name, version, requester), plus who settled it and how.
+ */
+export async function listProposalSummaries(status?: ProposalStatus): Promise<ProposalSummary[]> {
   const supabase = getSupabaseClient();
   let query = supabase
-    .from("strategy_proposals")
+    .from("proposal_summaries")
     .select("*")
     .order("requested_at", { ascending: false });
   if (status) query = query.eq("status", status);
   const { data, error } = await query;
   if (error) {
-    logger.error("listProposals failed", { error: error.message });
+    logger.error("listProposalSummaries failed", { error: error.message });
     return [];
   }
-  return (data ?? []).map((r) => mapProposal(r as Record<string, unknown>));
+  return (data ?? []).map((r) => mapProposalSummary(r as Record<string, unknown>));
 }
 
 /**
