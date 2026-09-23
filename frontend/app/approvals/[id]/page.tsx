@@ -15,6 +15,8 @@ import { use, useState } from "react";
 import Link from "next/link";
 import { useProposal } from "../../../hooks/useProposals";
 import { useAuth } from "../../../context/AuthContext";
+import ConfigDiffView from "../../../features/approvals/ConfigDiffView";
+import CapitalExposurePanel from "../../../features/approvals/CapitalExposurePanel";
 import type { ProposalStatus, TimelineEvent, CommentKind } from "../../../types/review";
 
 // ---------------------------------------------------------------------------
@@ -122,6 +124,8 @@ export default function ProposalPage({ params }: { params: Promise<{ id: string 
   const [rejectReason, setRejectReason] = useState("");
   const [showReject, setShowReject] = useState(false);
   const [capitalOverride, setCapitalOverride] = useState("");
+  /** Version the head is diffed against; null = the one just before the head. */
+  const [compareToId, setCompareToId] = useState<string | null>(null);
 
   if (isLoading) {
     return <p className="mx-auto max-w-4xl px-6 py-10 text-sm text-zinc-500">Loading…</p>;
@@ -137,9 +141,18 @@ export default function ProposalPage({ params }: { params: Promise<{ id: string 
     );
   }
 
-  const { proposal, strategy, headVersion, versions, backtests, comments, timeline, viewer } = detail;
+  const { proposal, strategy, headVersion, versions, backtests, comments, timeline, viewer, capitalExposure } = detail;
   const budget = headVersion?.config?.riskBudget as { maxCapitalPct?: number } | undefined;
   const proposedPct = budget?.maxCapitalPct;
+  const overridePct = capitalOverride.trim() === "" ? null : Number(capitalOverride) / 100;
+
+  // Diff base: the version the reviewer picked, else the one right before the head.
+  const previousVersion = headVersion
+    ? versions
+        .filter((v) => v.versionNumber < headVersion.versionNumber)
+        .sort((a, b) => b.versionNumber - a.versionNumber)[0] ?? null
+    : null;
+  const baseVersion = (compareToId && versions.find((v) => v.id === compareToId)) || previousVersion;
 
   // True when a lead's feedback postdates the current head version — i.e. the
   // author hasn't pushed a fix for it yet. Clears itself the moment they do,
@@ -248,15 +261,52 @@ export default function ProposalPage({ params }: { params: Promise<{ id: string 
             )}
           </section>
 
+          {/* what changed */}
+          {headVersion && (
+            <section className="mt-6">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">
+                  Changes in v{headVersion.versionNumber}
+                  {baseVersion && (
+                    <>
+                      {" "}
+                      <span className="font-normal text-zinc-500">vs v{baseVersion.versionNumber}</span>
+                    </>
+                  )}
+                </h2>
+                {compareToId && (
+                  <button
+                    onClick={() => setCompareToId(null)}
+                    className="text-xs text-zinc-500 underline hover:text-zinc-700 dark:hover:text-zinc-300"
+                  >
+                    Compare with previous version
+                  </button>
+                )}
+              </div>
+              {headVersion.changeSummary && (
+                <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">{headVersion.changeSummary}</p>
+              )}
+              <div className="mt-2">
+                <ConfigDiffView
+                  before={(baseVersion?.config as Record<string, unknown> | undefined) ?? null}
+                  after={headVersion.config as Record<string, unknown>}
+                  beforeLabel={baseVersion ? `v${baseVersion.versionNumber}` : "—"}
+                  afterLabel={`v${headVersion.versionNumber}`}
+                />
+              </div>
+            </section>
+          )}
+
           {/* proposed config */}
           <section className="mt-6">
-            <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Proposed config</h2>
-            {headVersion?.changeSummary && (
-              <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">{headVersion.changeSummary}</p>
-            )}
-            <pre className="mt-2 max-h-80 overflow-auto rounded-md border border-zinc-200 bg-white p-3 text-xs text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300">
+            <details>
+              <summary className="cursor-pointer text-sm font-semibold text-zinc-900 dark:text-zinc-50">
+                Full proposed config
+              </summary>
+              <pre className="mt-2 max-h-80 overflow-auto rounded-md border border-zinc-200 bg-white p-3 text-xs text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300">
 {JSON.stringify(headVersion?.config ?? {}, null, 2)}
-            </pre>
+              </pre>
+            </details>
           </section>
 
           {/* timeline */}
@@ -311,21 +361,41 @@ export default function ProposalPage({ params }: { params: Promise<{ id: string 
           <div className="rounded-md border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
             <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Versions</h3>
             <ul className="mt-2 flex flex-col gap-1 text-xs">
-              {versions.map((v) => (
-                <li
-                  key={v.id}
-                  className={`flex items-center justify-between ${
-                    v.id === proposal.headVersionId
-                      ? "font-medium text-zinc-900 dark:text-zinc-50"
-                      : "text-zinc-500 dark:text-zinc-400"
-                  }`}
-                >
-                  <span className="font-mono">v{v.versionNumber}</span>
-                  <span className="truncate pl-2">{v.createdByName ?? "—"}</span>
-                </li>
-              ))}
+              {versions.map((v) => {
+                const isHead = v.id === proposal.headVersionId;
+                const isBase = v.id === baseVersion?.id;
+                return (
+                  <li key={v.id}>
+                    <button
+                      type="button"
+                      disabled={isHead}
+                      onClick={() => setCompareToId(v.id)}
+                      title={isHead ? "The version being proposed" : `Diff v${headVersion?.versionNumber} against this version`}
+                      className={`flex w-full items-center justify-between rounded px-1 py-0.5 text-left ${
+                        isHead
+                          ? "font-medium text-zinc-900 dark:text-zinc-50"
+                          : "text-zinc-500 hover:bg-zinc-50 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                      } ${isBase ? "ring-1 ring-zinc-300 dark:ring-zinc-600" : ""}`}
+                    >
+                      <span className="font-mono">
+                        v{v.versionNumber}
+                        {isHead && <span className="ml-1 font-sans text-[10px] text-zinc-400">proposed</span>}
+                        {isBase && <span className="ml-1 font-sans text-[10px] text-zinc-400">compared</span>}
+                      </span>
+                      <span className="truncate pl-2">{v.createdByName ?? "—"}</span>
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           </div>
+
+          {capitalExposure && (
+            <CapitalExposurePanel
+              exposure={capitalExposure}
+              overridePct={overridePct !== null && Number.isFinite(overridePct) && overridePct > 0 ? overridePct : null}
+            />
+          )}
 
           {actionError && (
             <p className="rounded-md border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-400">

@@ -149,6 +149,25 @@ export interface ProposalViewer {
   canWithdraw: boolean;
 }
 
+/**
+ * What approving would add to the book: every live run's capital cap in the
+ * same execution mode, summed, next to the cap this proposal asks for.
+ */
+export interface CapitalExposure {
+  executionMode: string;
+  bookEquity: number | null;
+  liveRuns: {
+    runId: string;
+    name: string;
+    ownerName: string | null;
+    /** Null = uncapped. */
+    maxCapitalPct: number | null;
+  }[];
+  allocatedPct: number;
+  uncappedRuns: number;
+  proposedPct: number | null;
+}
+
 /** Everything the review page renders, from one request. */
 export interface ProposalDetail {
   proposal: StrategyProposal;
@@ -158,5 +177,7 @@ export interface ProposalDetail {
   backtests: ProposalBacktest[];
   comments: ProposalComment[];
   timeline: TimelineEvent[];
+  /** Present while the proposal is open. */
+  capitalExposure: CapitalExposure | null;
   viewer: ProposalViewer | null;
 }
