@@ -9,6 +9,7 @@ import {
   updateStrategyRun,
   updateStrategy,
   deleteStrategy,
+  StrategyAlreadyLiveError,
 } from "../../adapters/supabase/repositories";
 import { insertStrategyVersion } from "../../adapters/supabase/reviewRepositories";
 import { STRATEGY_DEFINITIONS, STRATEGY_FACTORY } from "../../config/strategyDefaults";
@@ -86,13 +87,11 @@ export async function startStrategyRun(req: Request, res: Response): Promise<voi
     return;
   }
 
-  const { orchestrator, marketDataAdapter, executionMode } = req.app.locals.ctx as AppContext;
-  if (!orchestrator) {
+  const { orchestrator, liveRuns, executionMode } = req.app.locals.ctx as AppContext;
+  if (!orchestrator || !liveRuns) {
     res.status(503).json({ error: "Orchestrator not available in this runtime mode" });
     return;
   }
-
-  const strategy = factory(config);
 
   const configId = config.id as string | undefined;
   if (configId && orchestrator.hasStrategyWithConfigId(configId)) {
@@ -100,46 +99,48 @@ export async function startStrategyRun(req: Request, res: Response): Promise<voi
     return;
   }
 
-  // Generate the run ID before registering so the orchestrator map key matches
-  // the run ID returned to the caller. This allows stopStrategyRun to use the
-  // URL :id (run ID) directly with hasStrategy/deregisterStrategy.
+  // The run ID doubles as the orchestrator registry key, so stopStrategyRun can
+  // use the URL :id directly. An unsaved config borrows it as its identity too:
+  // strategy.id is what risk budgets and rejection attribution key on, and an
+  // undefined one would make every such strategy share a single budget.
   const runId = newId();
+  const effectiveConfig = { ...config, id: configId ?? runId };
+  const strategy = factory(effectiveConfig);
 
-  // Register with the orchestrator — also calls strategy.start() if already running
-  orchestrator.registerStrategy(strategy, runId);
+  await liveRuns.prepare(strategy);
 
-  const symbols = Array.isArray(config.symbols) ? (config.symbols as string[]) : [];
-  if (marketDataAdapter && symbols.length > 0) {
-    marketDataAdapter.subscribe(symbols);
-  }
-
-  const now = nowMs();
   const run: StrategyRun = {
     id: runId,
-    strategyId: (config.id as UUID | undefined) ?? runId,
+    strategyId: effectiveConfig.id as UUID,
     strategyType: strategyType as StrategyType,
     strategyVersion: strategy.version,
     name: (config.name as string | undefined) ?? `${strategyType} run`,
-    config: config as unknown as StrategyRun["config"],
+    config: effectiveConfig as unknown as StrategyRun["config"],
     status: "running",
     executionMode: executionMode ?? "paper",
-    startedAt: now,
+    startedAt: nowMs(),
     totalSignals: 0,
     totalOrders: 0,
     realizedPnl: 0,
+    ...liveRuns.leaseFields(),
   };
 
+  // Persist (already leased to this runner) before trading: a crash in between
+  // leaves a leased running row that gets adopted, never a strategy trading
+  // with no row behind it.
   try {
     await insertStrategyRun(run);
   } catch (err) {
-    // DB write failed — roll back the in-memory registration so the engine
-    // state stays consistent with what is persisted.
-    orchestrator.deregisterStrategy(runId);
-    logger.error("startStrategyRun: DB persist failed, rolled back engine registration", { runId, err });
+    if (err instanceof StrategyAlreadyLiveError) {
+      res.status(409).json({ error: err.message });
+      return;
+    }
+    logger.error("startStrategyRun: DB persist failed — strategy not started", { runId, err });
     res.status(500).json({ error: "Failed to persist strategy run" });
     return;
   }
 
+  liveRuns.activate(runId, strategy);
   logger.info("startStrategyRun: strategy started", { runId, strategyId: strategy.id, strategyType });
   res.status(201).json(run);
 }
@@ -152,21 +153,23 @@ export async function startStrategyRun(req: Request, res: Response): Promise<voi
  */
 export async function stopStrategyRun(req: Request, res: Response): Promise<void> {
   const id = String(req.params.id) as UUID;
-  const { orchestrator } = req.app.locals.ctx as AppContext;
-  if (!orchestrator) {
+  const { orchestrator, liveRuns } = req.app.locals.ctx as AppContext;
+  if (!orchestrator || !liveRuns) {
     res.status(503).json({ error: "Orchestrator not available in this runtime mode" });
     return;
   }
 
-  if (orchestrator.hasStrategy(id)) {
-    orchestrator.deregisterStrategy(id);
-  } else {
-    // Orchestrator lost in-memory state (server restart). Skip deregister and
-    // fall through to mark the DB row stopped so the UI cleans up.
-    logger.warn("stopStrategyRun: strategy not in orchestrator — cleaning up stale DB state", { id });
+  if (!orchestrator.hasStrategy(id)) {
+    // Not traded here — either lost on restart or leased to another runner.
+    // Marking the row stopped is still right: the runner holding it sees the
+    // run leave "running" on its next heartbeat and stops trading it.
+    logger.warn("stopStrategyRun: strategy not in this runner — marking the run stopped", { id });
   }
 
+  // Row first, then the lease: releasing a still-"running" row would let another
+  // runner adopt it straight back.
   await updateStrategyRun(id, { status: "stopped", stoppedAt: nowMs() });
+  await liveRuns.deactivate(id);
   logger.info("stopStrategyRun: strategy stopped", { id });
   res.json({ message: `Strategy ${id} stopped` });
 }

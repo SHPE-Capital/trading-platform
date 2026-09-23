@@ -181,6 +181,16 @@ export interface StrategyRun {
   proposalId?: UUID;
   /** The member accountable for this run — the proposal's author. */
   ownerId?: UUID;
+
+  /** Runner currently trading this run (0004). Only the lease holder may trade it. */
+  leaseOwner?: string | null;
+  /** When the lease lapses unless heartbeated; a lapsed lease is adopted by another runner. */
+  leaseExpiresAt?: EpochMs | null;
+  lastHeartbeatAt?: EpochMs | null;
+  /** evaluate() errors in a row; the runner auto-disables the run at its limit. */
+  consecutiveErrors?: number;
+  /** Why the runner stopped this run on its own (e.g. repeated errors). */
+  disabledReason?: string | null;
 }
 
 // ------------------------------------------------------------------

@@ -15,6 +15,7 @@ import portfolioRoutes from "./portfolioRoutes";
 import backtestRoutes from "./backtestRoutes";
 import proposalsRoutes from "./proposalsRoutes";
 import authRoutes from "./authRoutes";
+import governanceRoutes from "./governanceRoutes";
 import replayRoutes from "./replayRoutes";
 import marketDataRoutes from "./marketDataRoutes";
 
@@ -26,6 +27,7 @@ router.use("/portfolio", portfolioRoutes);
 router.use("/backtests", backtestRoutes);
 router.use("/proposals", proposalsRoutes);
 router.use("/auth", authRoutes);
+router.use("/governance", governanceRoutes);
 router.use("/replay", replayRoutes);
 router.use("/market-data", marketDataRoutes);
 

@@ -30,6 +30,7 @@ import { logger } from "../../utils/logger";
 import { nowMs } from "../../utils/time";
 import type { EvaluationContext } from "../base/strategy";
 import type { StrategySignal, StrategyType } from "../../types/strategy";
+import type { Bar } from "../../types/market";
 import { DEFAULT_COINT_HYSTERESIS } from "./pairsConfig";
 import type {
   PairsStrategyConfig,
@@ -102,20 +103,9 @@ export class PairsStrategy extends BaseStrategy {
       if (this._debugEnabled) this._debug.missingPrices++;
       return null;
     }
-    this.state.latestLeg1Price = price1;
 
-    // Feed price history windows for OLS hedge ratio estimation
     const ts = nowMs();
-    this.state.olsLeg1Window.push({ ts, value: price1 });
-    this.state.olsLeg2Window.push({ ts, value: price2 });
-    this.state.barsSinceOlsRecalc++;
-
-    const hedgeRatio = this._getHedgeRatio();
-
-    // Compute spread and update window
-    const spread = price1 - hedgeRatio * price2;
-    this.state.spreadWindow.push({ ts, value: spread });
-    this.state.lastSpread = spread;
+    const { spread, hedgeRatio } = this._ingest(ts, price1, price2);
 
     // Enforce cooldown
     if (this.state.cooldownActive && this.state.cooldownExpiresAt !== null) {
@@ -167,9 +157,63 @@ export class PairsStrategy extends BaseStrategy {
     return signal;
   }
 
+  /** Longest window the strategy reads: the spread window, or the OLS window when it drives the hedge ratio. */
+  warmUpLookbackMs(): number {
+    const ols = this.pairsConfig.hedgeRatioMethod === "rolling_ols" ? this.pairsConfig.olsWindowMs : 0;
+    return Math.max(this.pairsConfig.rollingWindowMs, ols);
+  }
+
+  /**
+   * Rebuilds the spread and OLS windows from history. Samples exactly like
+   * evaluate() — one observation per leg-1 tick, paired with leg 2's latest
+   * price — but never reaches the entry/exit logic, so no signal is emitted
+   * and position state is untouched.
+   */
+  warmUp(bars: Bar[]): number {
+    const { leg1Symbol, leg2Symbol } = this.pairsConfig;
+    let price1: number | null = null;
+    let price2: number | null = null;
+    let primed = 0;
+
+    // Bars sharing a timestamp are applied together, so a leg-1 observation
+    // pairs with leg 2's close from the same minute rather than the one before.
+    let i = 0;
+    while (i < bars.length) {
+      const ts = bars[i].ts;
+      let leg1Ticked = false;
+      for (; i < bars.length && bars[i].ts === ts; i++) {
+        if (bars[i].symbol === leg1Symbol) {
+          price1 = bars[i].close;
+          leg1Ticked = true;
+        } else if (bars[i].symbol === leg2Symbol) {
+          price2 = bars[i].close;
+        }
+      }
+      if (leg1Ticked && price1 !== null && price2 !== null) {
+        this._ingest(ts, price1, price2);
+        primed++;
+      }
+    }
+    return primed;
+  }
+
   // ------------------------------------------------------------------
   // Private helpers
   // ------------------------------------------------------------------
+
+  /** Feeds one paired observation into the OLS and spread windows. */
+  private _ingest(ts: number, price1: number, price2: number): { spread: number; hedgeRatio: number } {
+    this.state.latestLeg1Price = price1;
+    this.state.olsLeg1Window.push({ ts, value: price1 });
+    this.state.olsLeg2Window.push({ ts, value: price2 });
+    this.state.barsSinceOlsRecalc++;
+
+    const hedgeRatio = this._getHedgeRatio();
+    const spread = price1 - hedgeRatio * price2;
+    this.state.spreadWindow.push({ ts, value: spread });
+    this.state.lastSpread = spread;
+    return { spread, hedgeRatio };
+  }
 
   private _getHedgeRatio(): number {
     if (this.pairsConfig.hedgeRatioMethod === "fixed") {

@@ -21,6 +21,7 @@ const NAV_LINKS = [
   { href: "/strategies", label: "Strategies"  },
   { href: "/portfolio",  label: "Portfolio"   },
   { href: "/approvals",  label: "Approvals"   },
+  { href: "/contention", label: "Contention"  },
   { href: "/backtest",   label: "Backtest"    },
   { href: "/replay",     label: "Replay"      },
 ] as const;

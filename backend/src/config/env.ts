@@ -70,6 +70,12 @@ export const env = {
   maxNotionalExposureUsd: optionalNumber("MAX_NOTIONAL_EXPOSURE_USD", 50_000),
   orderCooldownMs: optionalNumber("ORDER_COOLDOWN_MS", 5_000),
 
+  // Live runner (Part 05)
+  /** How long a runner's claim on a strategy run survives without a heartbeat. */
+  runLeaseSeconds: optionalNumber("RUN_LEASE_SECONDS", 90),
+  /** evaluate() errors in a row before a live strategy is auto-disabled. */
+  maxConsecutiveStrategyErrors: optionalNumber("MAX_CONSECUTIVE_STRATEGY_ERRORS", 5),
+
   // Feature flags
   enableLiveTrading: optionalBool("ENABLE_LIVE_TRADING", false),
   enableWebSocketPush: optionalBool("ENABLE_WEBSOCKET_PUSH", true),

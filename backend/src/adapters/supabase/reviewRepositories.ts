@@ -63,6 +63,17 @@ export async function getAppUserById(id: UUID): Promise<AppUser | null> {
   return data ? mapUser(data as Record<string, unknown>) : null;
 }
 
+/** Profiles for several members in one round trip; missing ids are simply absent. */
+export async function getAppUsersByIds(ids: UUID[]): Promise<AppUser[]> {
+  if (ids.length === 0) return [];
+  const { data, error } = await getSupabaseClient().from("app_users").select("*").in("id", ids);
+  if (error) {
+    logger.error("getAppUsersByIds failed", { error: error.message });
+    return [];
+  }
+  return (data ?? []).map((r) => mapUser(r as Record<string, unknown>));
+}
+
 // ------------------------------------------------------------------
 // Versions
 // ------------------------------------------------------------------

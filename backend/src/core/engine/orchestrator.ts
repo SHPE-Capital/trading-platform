@@ -42,12 +42,23 @@ import type {
   OrderIntentCreatedEvent,
 } from "../../types/events";
 
+export interface OrchestratorOptions {
+  /**
+   * Deregister a strategy after this many evaluate() errors in a row, so one
+   * member's bad push degrades their strategy instead of the shared runner.
+   * Unset = never (backtests keep their prior behavior).
+   */
+  maxConsecutiveErrors?: number;
+}
+
 export class Orchestrator {
   private strategies: Map<string, IStrategy> = new Map();
   private running = false;
   private readonly capitalReservation = new CapitalReservationManager();
   /** intentId → reservationId, for releasing on any terminal order event */
   private readonly _reservationByIntent = new Map<UUID, UUID>();
+  /** registry key → evaluate() errors in a row */
+  private readonly _consecutiveErrors = new Map<string, number>();
 
   constructor(
     public readonly eventBus: EventBus,
@@ -57,6 +68,7 @@ export class Orchestrator {
     public readonly riskEngine: RiskEngine,
     public readonly executionEngine: ExecutionEngine,
     private readonly mode: ExecutionMode,
+    private readonly options: OrchestratorOptions = {},
   ) {}
 
   /**
@@ -110,6 +122,7 @@ export class Orchestrator {
     if (!strategy) return false;
     strategy.stop();
     this.strategies.delete(strategyId);
+    this._consecutiveErrors.delete(strategyId);
     this.eventBus.publish({
       id: newId(), type: "STRATEGY_STOPPED", ts: nowMs(), mode: this.mode,
       strategyId: strategy.id,
@@ -277,37 +290,68 @@ export class Orchestrator {
 
   private _evaluateStrategies(symbol: string): void {
     if (this.riskEngine.getConfig().killSwitchActive) return;
-    const sorted = [...this.strategies.values()]
-      .sort((a, b) => getStrategyPriority(b.type) - getStrategyPriority(a.type));
-    for (const strategy of sorted) {
+    const sorted = [...this.strategies.entries()]
+      .sort(([, a], [, b]) => getStrategyPriority(b.type) - getStrategyPriority(a.type));
+    for (const [key, strategy] of sorted) {
       if (!strategy.config.symbols.includes(symbol)) continue;
+      // An earlier strategy's handler in this same pass may have deregistered it.
+      if (!this.strategies.has(key)) continue;
+      let signal: ReturnType<IStrategy["evaluate"]>;
       try {
-        const signal = strategy.evaluate({
+        signal = strategy.evaluate({
           symbolState: this.symbolState,
           portfolioState: this.portfolioState,
           orderState: this.orderState,
           symbol,
         });
-        if (signal) {
-          this.eventBus.publish({
-            id: newId(),
-            type: "STRATEGY_SIGNAL_CREATED",
-            ts: nowMs(),
-            mode: this.mode,
-            strategyId: strategy.id,
-            payload: signal,
-          });
-        }
       } catch (err) {
-        const error = String(err);
-        logger.error("Orchestrator: strategy.evaluate threw", { strategyId: strategy.id, error });
+        this._onEvaluateError(key, strategy, String(err));
+        continue;
+      }
+      this._onEvaluateSuccess(key, strategy);
+      if (signal) {
         this.eventBus.publish({
-          id: newId(), type: "STRATEGY_ERROR", ts: nowMs(), mode: this.mode,
-          strategyId: strategy.id, strategyName: strategy.config.name,
-          error, phase: "evaluate",
+          id: newId(),
+          type: "STRATEGY_SIGNAL_CREATED",
+          ts: nowMs(),
+          mode: this.mode,
+          strategyId: strategy.id,
+          payload: signal,
         });
       }
     }
+  }
+
+  private _onEvaluateError(key: string, strategy: IStrategy, error: string): void {
+    const count = (this._consecutiveErrors.get(key) ?? 0) + 1;
+    this._consecutiveErrors.set(key, count);
+    logger.error("Orchestrator: strategy.evaluate threw", { strategyId: strategy.id, key, error, consecutive: count });
+    this.eventBus.publish({
+      id: newId(), type: "STRATEGY_ERROR", ts: nowMs(), mode: this.mode,
+      strategyId: strategy.id, strategyName: strategy.config.name,
+      error, phase: "evaluate", runKey: key, consecutiveErrors: count,
+    });
+
+    const limit = this.options.maxConsecutiveErrors;
+    if (limit !== undefined && count >= limit) {
+      logger.error("Orchestrator: auto-disabling strategy after consecutive errors", {
+        strategyId: strategy.id, key, consecutiveErrors: count,
+      });
+      this.deregisterStrategy(key);
+      this.eventBus.publish({
+        id: newId(), type: "STRATEGY_AUTO_DISABLED", ts: nowMs(), mode: this.mode,
+        strategyId: strategy.id, runKey: key, consecutiveErrors: count, lastError: error,
+      });
+    }
+  }
+
+  private _onEvaluateSuccess(key: string, strategy: IStrategy): void {
+    if (!this._consecutiveErrors.has(key)) return;
+    this._consecutiveErrors.delete(key);
+    this.eventBus.publish({
+      id: newId(), type: "STRATEGY_RECOVERED", ts: nowMs(), mode: this.mode,
+      strategyId: strategy.id, runKey: key,
+    });
   }
 
   /**
@@ -343,6 +387,7 @@ export class Orchestrator {
           id: newId(), type: "RISK_REJECTED", ts: nowMs(), mode: event.mode,
           strategyId: signal.strategyId,
           reason: `Multi-leg pre-flight failed on ${riskFailure.symbol} [${riskFailure.failedCheck}]: ${riskFailure.reason}`,
+          failedCheck: riskFailure.failedCheck,
           rejectedIntent: riskFailure.intent,
         });
         return;
@@ -518,6 +563,7 @@ export class Orchestrator {
         id: newId(), type: "RISK_REJECTED", ts: nowMs(), mode: this.mode,
         strategyId: event.strategyId,
         reason: riskResult.reason ?? "Risk check failed",
+        failedCheck: riskResult.failedCheck ?? "UNKNOWN",
         rejectedIntent: intent,
       });
       return;
@@ -530,6 +576,7 @@ export class Orchestrator {
         id: newId(), type: "RISK_REJECTED", ts: nowMs(), mode: this.mode,
         strategyId: event.strategyId,
         reason: "No reference price available for worst-case estimate",
+        failedCheck: "NO_REFERENCE_PRICE",
         rejectedIntent: intent,
       });
       return;
@@ -545,6 +592,7 @@ export class Orchestrator {
         id: newId(), type: "RISK_REJECTED", ts: nowMs(), mode: this.mode,
         strategyId: event.strategyId,
         reason: budgetFail.reason,
+        failedCheck: budgetFail.failedCheck,
         rejectedIntent: intent,
       });
       return;

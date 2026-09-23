@@ -223,8 +223,12 @@ export async function getPortfolioEquityCurve(limit = 500): Promise<PortfolioSna
 // Strategy Runs
 // ------------------------------------------------------------------
 
+function msOrNull(value: unknown): number | null {
+  return value ? new Date(value as string).getTime() : null;
+}
+
 // Maps a raw Supabase row (snake_case) to the camelCase StrategyRun type.
-function mapStrategyRun(row: Record<string, unknown>): StrategyRun {
+export function mapStrategyRun(row: Record<string, unknown>): StrategyRun {
   return {
     id: row.id as UUID,
     strategyId: row.strategy_id as UUID,
@@ -243,6 +247,11 @@ function mapStrategyRun(row: Record<string, unknown>): StrategyRun {
     versionId: (row.version_id as UUID | undefined) ?? undefined,
     proposalId: (row.proposal_id as UUID | undefined) ?? undefined,
     ownerId: (row.owner_id as UUID | undefined) ?? undefined,
+    leaseOwner: (row.lease_owner as string | null | undefined) ?? null,
+    leaseExpiresAt: msOrNull(row.lease_expires_at),
+    lastHeartbeatAt: msOrNull(row.last_heartbeat_at),
+    consecutiveErrors: (row.consecutive_errors as number | undefined) ?? 0,
+    disabledReason: (row.disabled_reason as string | null | undefined) ?? null,
   };
 }
 
@@ -271,11 +280,30 @@ export async function insertStrategyRun(run: StrategyRun): Promise<void> {
     version_id: run.versionId ?? null,
     proposal_id: run.proposalId ?? null,
     owner_id: run.ownerId ?? null,
+    // A runner inserting its own run writes the lease in the same statement, so
+    // no other runner can adopt the row in the gap before a separate acquire.
+    ...(run.leaseOwner
+      ? {
+          lease_owner: run.leaseOwner,
+          lease_expires_at: run.leaseExpiresAt ? new Date(run.leaseExpiresAt).toISOString() : null,
+          last_heartbeat_at: new Date().toISOString(),
+        }
+      : {}),
   };
   const { error } = await supabase.from("strategy_runs").insert(payload);
   if (error) {
     logger.error("insertStrategyRun failed", { error: error.message });
+    // 23505 on strategy_runs_single_live (0004): this strategy already has a live run.
+    if (error.code === "23505") throw new StrategyAlreadyLiveError(run.strategyId);
     throw new Error(`insertStrategyRun failed: ${error.message}`);
+  }
+}
+
+/** Raised when inserting a second running run for a strategy that already has one. */
+export class StrategyAlreadyLiveError extends Error {
+  constructor(readonly strategyId: string) {
+    super(`Strategy ${strategyId} already has a running run — stop it before starting another`);
+    this.name = "StrategyAlreadyLiveError";
   }
 }
 
@@ -292,6 +320,8 @@ export async function updateStrategyRun(runId: UUID, updates: Partial<StrategyRu
   if (updates.totalOrders !== undefined)  payload.total_orders   = updates.totalOrders;
   if (updates.realizedPnl !== undefined)  payload.realized_pnl   = updates.realizedPnl;
   if (updates.meta !== undefined)         payload.meta           = updates.meta;
+  if (updates.consecutiveErrors !== undefined) payload.consecutive_errors = updates.consecutiveErrors;
+  if (updates.disabledReason !== undefined)    payload.disabled_reason    = updates.disabledReason;
   const { error } = await supabase.from("strategy_runs").update(payload).eq("id", runId);
   if (error) logger.error("updateStrategyRun failed", { error: error.message });
 }
@@ -322,6 +352,29 @@ export async function getAllStrategyRuns(): Promise<StrategyRun[]> {
   });
 }
 
+
+/** Every run currently marked running in one execution mode (paper or live book). */
+export async function getRunningRuns(executionMode: string): Promise<StrategyRun[]> {
+  const supabase = getSupabaseClient();
+  const [runsResult, strategiesResult] = await Promise.all([
+    supabase
+      .from("strategy_runs")
+      .select("*")
+      .eq("status", "running")
+      .eq("execution_mode", executionMode)
+      .order("started_at", { ascending: true }),
+    supabase.from("strategies").select("id, name"),
+  ]);
+  if (runsResult.error) throw new Error(`getRunningRuns failed: ${runsResult.error.message}`);
+  const nameById = new Map<string, string>(
+    (strategiesResult.data ?? []).map((s) => [s.id as string, s.name as string]),
+  );
+  return (runsResult.data ?? []).map((row) => {
+    const r = row as Record<string, unknown>;
+    const name = nameById.get(r.strategy_id as string) ?? (r.config as Record<string, unknown>).name as string;
+    return mapStrategyRun({ ...r, name });
+  });
+}
 
 /** Resolves the display name for a strategy run row.
  *  Prefers the live strategy config name; falls back to config.name in the JSONB. */

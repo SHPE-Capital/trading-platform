@@ -109,13 +109,23 @@ const orchestrator = {
   hasStrategyWithConfigId: jest.fn(),
 };
 
+/** The runtime's lease-holding registry, as the controller sees it. */
+const liveRuns = {
+  owner: 'paper:test-host:1:abc',
+  prepare: jest.fn(async () => {}),
+  activate: jest.fn(),
+  deactivate: jest.fn(async () => {}),
+  forget: jest.fn(),
+  leaseFields: jest.fn(() => ({ leaseOwner: 'paper:test-host:1:abc', leaseExpiresAt: 1 })),
+};
+
 function mockReq(overrides: Partial<Request> = {}, role: 'member' | 'lead' = 'lead'): Request {
   return {
     body: {},
     params: {},
     query: {},
     user: { id: 'user-lead', email: 'lead@shpe.test', role, displayName: 'Lead' },
-    app: { locals: { ctx: { orchestrator, executionMode: 'paper' } } },
+    app: { locals: { ctx: { orchestrator, liveRuns, executionMode: 'paper' } } },
     ...overrides,
   } as unknown as Request;
 }
@@ -140,7 +150,7 @@ beforeEach(() => {
 // Approve — the only path that puts a strategy live
 // ---------------------------------------------------------------------------
 describe('approveProposal', () => {
-  it('settles the proposal, registers the strategy, and writes one run', async () => {
+  it('settles the proposal, writes one leased run, then starts trading it', async () => {
     mockGetProposal.mockResolvedValue(makeProposal());
     mockGetVersion.mockResolvedValue(makeVersion());
     mockSettle.mockResolvedValue(makeProposal({ status: 'approved', approvedBy: 'user-lead' }));
@@ -150,8 +160,11 @@ describe('approveProposal', () => {
     await approveProposal(mockReq({ params: { id: 'prop-1' } as never }), res);
 
     expect(res.statusCode).toBe(201);
-    expect(orchestrator.registerStrategy).toHaveBeenCalledTimes(1);
     expect(mockInsertRun).toHaveBeenCalledTimes(1);
+    expect(liveRuns.activate).toHaveBeenCalledTimes(1);
+    // Warmed from history before trading, persisted before trading.
+    expect(liveRuns.prepare.mock.invocationCallOrder[0]).toBeLessThan(mockInsertRun.mock.invocationCallOrder[0]);
+    expect(mockInsertRun.mock.invocationCallOrder[0]).toBeLessThan(liveRuns.activate.mock.invocationCallOrder[0]);
 
     // The run must cite the exact version and the proposal that authorised it.
     const run = mockInsertRun.mock.calls[0][0];
@@ -160,6 +173,53 @@ describe('approveProposal', () => {
     // Accountability stays with the author, not the approving lead.
     expect(run.ownerId).toBe('user-author');
     expect(run.status).toBe('running');
+    // Inserted already leased to this runner, so no other runner can adopt it.
+    expect(run.leaseOwner).toBe(liveRuns.owner);
+  });
+
+  it('gives the strategy the strategies row as its identity', async () => {
+    mockGetProposal.mockResolvedValue(makeProposal());
+    // Versions saved from the form carry no id inside config.
+    mockGetVersion.mockResolvedValue(makeVersion({
+      config: { type: 'pairs_trading', name: 'Pairs: XOM/CVX', symbols: ['XOM', 'CVX'] } as never,
+    }));
+    mockSettle.mockResolvedValue(makeProposal({ status: 'approved' }));
+    mockInsertRun.mockResolvedValue(undefined);
+
+    await approveProposal(mockReq({ params: { id: 'prop-1' } as never }), mockRes());
+
+    // Otherwise strategy.id is undefined and every approved strategy shares one risk budget.
+    expect(mockInsertRun.mock.calls[0][0].config.id).toBe('strat-1');
+    const [, strategy] = liveRuns.activate.mock.calls[0] as unknown as [string, { id: string }];
+    expect(strategy.id).toBe('strat-1');
+  });
+
+  it('refuses to approve a strategy that is already live, before settling anything', async () => {
+    mockGetProposal.mockResolvedValue(makeProposal());
+    mockGetVersion.mockResolvedValue(makeVersion());
+    orchestrator.hasStrategyWithConfigId.mockReturnValueOnce(true);
+
+    const res = mockRes();
+    await approveProposal(mockReq({ params: { id: 'prop-1' } as never }), res);
+
+    expect(res.statusCode).toBe(409);
+    expect(mockSettle).not.toHaveBeenCalled();
+    expect(mockInsertRun).not.toHaveBeenCalled();
+  });
+
+  it('keeps the run live when only the approval note fails to post', async () => {
+    mockGetProposal.mockResolvedValue(makeProposal());
+    mockGetVersion.mockResolvedValue(makeVersion());
+    mockSettle.mockResolvedValue(makeProposal({ status: 'approved' }));
+    mockInsertRun.mockResolvedValue(undefined);
+    mockInsertComment.mockRejectedValueOnce(new Error('comments down'));
+
+    const res = mockRes();
+    await approveProposal(mockReq({ params: { id: 'prop-1' } as never, body: { note: 'lgtm' } }), res);
+
+    expect(res.statusCode).toBe(201);
+    expect(mockReopen).not.toHaveBeenCalled();
+    expect(liveRuns.forget).not.toHaveBeenCalled();
   });
 
   it('applies the approver capital override to the run config', async () => {
@@ -200,11 +260,11 @@ describe('approveProposal', () => {
     await approveProposal(mockReq({ params: { id: 'prop-1' } as never }), res);
 
     expect(res.statusCode).toBe(409);
-    expect(orchestrator.registerStrategy).not.toHaveBeenCalled();
+    expect(liveRuns.activate).not.toHaveBeenCalled();
     expect(mockInsertRun).not.toHaveBeenCalled();
   });
 
-  it('reopens the proposal and deregisters when the run fails to persist', async () => {
+  it('reopens the proposal and never starts trading when the run fails to persist', async () => {
     mockGetProposal.mockResolvedValue(makeProposal());
     mockGetVersion.mockResolvedValue(makeVersion());
     mockSettle.mockResolvedValue(makeProposal({ status: 'approved' }));
@@ -215,7 +275,7 @@ describe('approveProposal', () => {
 
     expect(res.statusCode).toBe(500);
     // Neither the engine nor the queue may be left claiming something that isn't true.
-    expect(orchestrator.deregisterStrategy).toHaveBeenCalledTimes(1);
+    expect(liveRuns.activate).not.toHaveBeenCalled();
     expect(mockReopen).toHaveBeenCalledWith('prop-1');
   });
 

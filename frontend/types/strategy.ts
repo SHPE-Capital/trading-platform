@@ -32,6 +32,14 @@ export interface StrategyRun {
   realizedPnl: number;
   /** Algorithm version snapshot at the time this run was started. */
   strategyVersion?: number;
+  /** Trading runtime currently holding this run's lease (only it trades the run). */
+  leaseOwner?: string | null;
+  /** When that lease lapses without a heartbeat (Unix ms). */
+  leaseExpiresAt?: number | null;
+  /** evaluate() errors in a row; the runner auto-disables the run at its limit. */
+  consecutiveErrors?: number;
+  /** Why the runner stopped this run on its own. */
+  disabledReason?: string | null;
 }
 
 /** A stored strategy definition row from the DB (strategies table) */

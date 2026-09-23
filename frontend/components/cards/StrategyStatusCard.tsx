@@ -8,8 +8,25 @@
  * Outputs: Rendered status card with run state badge, signal/order counts, and PnL.
  */
 
+"use client";
+
+import { useEffect, useState } from "react";
 import type { StrategyRun } from "../../types/strategy";
 import { formatCurrency } from "../../utils/formatting";
+
+/**
+ * Wall-clock time that advances while mounted. Reading Date.now() during render
+ * is impure; this also keeps a lease that lapses while the card is on screen
+ * from reading as held forever.
+ */
+function useNow(intervalMs: number): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), intervalMs);
+    return () => clearInterval(timer);
+  }, [intervalMs]);
+  return now;
+}
 
 interface Props {
   run: StrategyRun;
@@ -19,18 +36,24 @@ interface Props {
 const STATUS_BADGE: Record<string, string> = {
   idle:    "bg-zinc-100 text-zinc-600",
   running: "bg-green-100 text-green-700",
+  "running elsewhere": "bg-green-50 text-green-700",
   paused:  "bg-yellow-100 text-yellow-700",
   stopped: "bg-zinc-100 text-zinc-500",
   error:   "bg-red-100 text-red-700",
-  stale:   "bg-yellow-100 text-yellow-700",
+  "awaiting runner": "bg-yellow-100 text-yellow-700",
 };
 
 export default function StrategyStatusCard({ run, onStop }: Props) {
-  // A run is stale when the DB says "running" but the engine lost it (server
-  // restart). isLive is the authoritative source from the orchestrator.
-  const isStale = run.status === "running" && run.isLive === false;
-  const displayStatus = isStale ? "stale" : run.status;
+  const now = useNow(15_000);
+  // "running" in the DB but not registered in the process that served this
+  // list: either another runner holds its lease (live, just not here), or no
+  // runner does — a restart or crash, and a runner adopts it within a heartbeat.
+  const notHere = run.status === "running" && run.isLive === false;
+  const leasedElsewhere = notHere && !!run.leaseOwner && (run.leaseExpiresAt ?? 0) > now;
+  const awaitingRunner = notHere && !leasedElsewhere;
+  const displayStatus = leasedElsewhere ? "running elsewhere" : awaitingRunner ? "awaiting runner" : run.status;
   const badgeClass = STATUS_BADGE[displayStatus] ?? STATUS_BADGE["idle"];
+  const errorStreak = run.status === "running" ? run.consecutiveErrors ?? 0 : 0;
 
   return (
     <div className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
@@ -68,7 +91,23 @@ export default function StrategyStatusCard({ run, onStop }: Props) {
         </div>
       </dl>
 
-      {run.isLive && onStop && (
+      {run.status === "error" && run.disabledReason && (
+        <p className="mt-3 rounded-md bg-red-50 px-2.5 py-1.5 text-xs text-red-700 dark:bg-red-950 dark:text-red-400">
+          {run.disabledReason}
+        </p>
+      )}
+      {errorStreak > 0 && (
+        <p className="mt-3 text-xs text-amber-600 dark:text-amber-400">
+          {errorStreak} evaluation error{errorStreak === 1 ? "" : "s"} in a row — the runner disables it if this continues.
+        </p>
+      )}
+      {awaitingRunner && (
+        <p className="mt-3 text-xs text-zinc-500 dark:text-zinc-400">
+          No runner holds this run right now. A running trading process adopts it within about 30 seconds.
+        </p>
+      )}
+
+      {(run.isLive || leasedElsewhere) && onStop && (
         <button
           onClick={() => onStop(run.id)}
           className="mt-4 w-full rounded-md border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 transition-colors hover:bg-red-50"
@@ -77,12 +116,12 @@ export default function StrategyStatusCard({ run, onStop }: Props) {
         </button>
       )}
 
-      {isStale && onStop && (
+      {awaitingRunner && onStop && (
         <button
           onClick={() => onStop(run.id)}
           className="mt-4 w-full rounded-md border border-yellow-200 px-3 py-1.5 text-xs font-medium text-yellow-700 transition-colors hover:bg-yellow-50"
         >
-          Clean Up
+          Stop instead of resuming
         </button>
       )}
     </div>

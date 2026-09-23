@@ -3,6 +3,7 @@ import type { SymbolStateManager } from "../core/state/symbolState";
 import type { PortfolioStateManager } from "../core/state/portfolioState";
 import type { ReplayEngine } from "../core/replay/replayEngine";
 import type { RiskEngine } from "../core/risk/riskEngine";
+import type { LiveRunCoordinator } from "../core/live/liveRunCoordinator";
 
 /** Minimal interface for subscribing to market data symbols at runtime. */
 export interface MarketDataSubscriber {
@@ -19,4 +20,10 @@ export interface AppContext {
   marketDataAdapter?: MarketDataSubscriber;
   /** Execution mode of the current runtime — used to label strategy runs created via the API. */
   executionMode?: string;
+  /**
+   * Lease-holding run registry of a trading runtime (Part 05). Starting a run
+   * goes through it so the run is warmed up and leased to this process;
+   * stopping releases the lease.
+   */
+  liveRuns?: LiveRunCoordinator;
 }

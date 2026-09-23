@@ -157,6 +157,31 @@ export interface ProposalSummary {
   changesRequested: boolean;
 }
 
+/**
+ * What approving would add to the book: every live run's capital cap in the
+ * same execution mode, summed, next to the cap this proposal asks for. Caps are
+ * ceilings (riskBudget.maxCapitalPct), not current usage — the point is to see
+ * whether the club is about to promise out more of the book than it has.
+ */
+export interface CapitalExposure {
+  executionMode: string;
+  /** Current book equity when the serving process holds the live portfolio. */
+  bookEquity: number | null;
+  liveRuns: {
+    runId: UUID;
+    name: string;
+    ownerName: string | null;
+    /** Null = no cap: the run may use whatever capital the club limits allow. */
+    maxCapitalPct: number | null;
+  }[];
+  /** Sum of the capped runs' maxCapitalPct. */
+  allocatedPct: number;
+  /** Live runs with no cap — they make the total a lower bound. */
+  uncappedRuns: number;
+  /** The head version's requested cap, or null if it has none. */
+  proposedPct: number | null;
+}
+
 // ------------------------------------------------------------------
 // Discussion
 // ------------------------------------------------------------------

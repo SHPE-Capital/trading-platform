@@ -4,12 +4,17 @@
  * Shared runtime bootstrap for paper-trading and real-trading entry points.
  * Boots the engine infrastructure (EventBus, Orchestrator, adapters, HTTP
  * server). Strategies are normally started and stopped through the REST API
- * (POST /api/strategies/start|stop).
+ * (POST /api/strategies/start|stop, proposal approval).
+ *
+ * Which runs this process trades is decided by leases (Part 05): on boot, and
+ * every heartbeat after, it adopts running runs of its own execution mode that
+ * no live runner holds — warming each from history before it trades — and it
+ * drops any run whose lease another runner took. Two runtimes started at once
+ * therefore split nothing: each run is traded by exactly one of them.
  *
  * Standalone / debug mode: if startupLeg1 and startupLeg2 are both provided
- * (via STARTUP_LEG1 / STARTUP_LEG2 env vars), a pairs strategy is
- * automatically registered on boot. On restart, the existing DB run is
- * resumed rather than creating a duplicate row.
+ * (via STARTUP_LEG1 / STARTUP_LEG2 env vars), a pairs strategy is created on
+ * first boot; on restart the existing running row is adopted like any other.
  *
  * The two entry points differ only in:
  *   - mode ("paper" | "live") — selects Alpaca paper vs live endpoints
@@ -18,6 +23,8 @@
  */
 
 import http from "http";
+import os from "os";
+import { randomBytes } from "crypto";
 import { EventBus } from "../core/engine/eventBus";
 import { Orchestrator } from "../core/engine/orchestrator";
 import { SymbolStateManager } from "../core/state/symbolState";
@@ -25,8 +32,13 @@ import { PortfolioStateManager } from "../core/state/portfolioState";
 import { OrderStateManager } from "../core/state/orderState";
 import { RiskEngine } from "../core/risk/riskEngine";
 import { ExecutionEngine } from "../core/execution/executionEngine";
+import { BacktestLoader } from "../core/backtest/backtestLoader";
+import { LiveRunCoordinator } from "../core/live/liveRunCoordinator";
+import { warmUpStrategy } from "../core/live/strategyWarmer";
+import { RiskRejectionRecorder } from "../core/live/riskRejectionRecorder";
 import { AlpacaMarketDataAdapter } from "../adapters/alpaca/marketData";
 import { AlpacaOrderExecutionAdapter } from "../adapters/alpaca/orderExecution";
+import { SupabaseBarCache } from "../adapters/supabase/barCacheRepository";
 import { PairsStrategy } from "../strategies/pairs/pairsStrategy";
 import { createPairsConfig } from "../strategies/pairs/pairsConfig";
 import { createApp } from "../app/index";
@@ -41,11 +53,26 @@ import {
   insertStrategyRun,
   updateStrategyRun,
   findRunningStartupRun,
-  getAllStrategyRuns,
 } from "../adapters/supabase/repositories";
+import {
+  claimOrphanedRuns,
+  heartbeatRunLeases,
+  releaseRunLease,
+} from "../adapters/supabase/runLeaseRepository";
+import { insertRiskRejections, resolveStrategyOwner } from "../adapters/supabase/riskRejectionRepository";
 import { STRATEGY_FACTORY } from "../config/strategyDefaults";
 import type { IExecutionSink } from "../core/execution/executionEngine";
-import type { OrderSubmittedEvent, OrderFilledEvent, OrderCanceledEvent } from "../types/events";
+import type { IStrategy } from "../strategies/base/strategy";
+import type {
+  OrderSubmittedEvent,
+  OrderFilledEvent,
+  OrderCanceledEvent,
+  StrategyErrorEvent,
+  StrategyRecoveredEvent,
+  StrategyAutoDisabledEvent,
+  RiskRejectedEvent,
+  CapitalUnavailableEvent,
+} from "../types/events";
 import type { StrategyRun } from "../types/strategy";
 import type { Symbol } from "../types/common";
 import { newId } from "../utils/ids";
@@ -69,6 +96,18 @@ export interface RuntimeConfig {
    */
   startupLeg1?: Symbol;
   startupLeg2?: Symbol;
+}
+
+/**
+ * Rebuilds a persisted run's strategy. The config's own id is what risk budgets
+ * and rejection attribution key on; rows from before that was set fall back to
+ * the run's strategy_id.
+ */
+function buildRunStrategy(run: StrategyRun): IStrategy {
+  const factory = STRATEGY_FACTORY[run.strategyType];
+  if (!factory) throw new Error(`No factory for strategy type "${run.strategyType}"`);
+  const raw = run.config as unknown as Record<string, unknown>;
+  return factory({ ...raw, id: (raw.id as string | undefined) ?? run.strategyId });
 }
 
 /**
@@ -103,21 +142,45 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
     riskEngine,
     executionEngine,
     mode,
+    { maxConsecutiveErrors: env.maxConsecutiveStrategyErrors },
   );
+
+  // ------------------------------------------------------------------
+  // Run ownership (Part 05)
+  // ------------------------------------------------------------------
+  const owner = `${mode}:${os.hostname()}:${process.pid}:${randomBytes(3).toString("hex")}`;
+  const leaseSeconds = env.runLeaseSeconds;
+  // Warm-up reads through the shared bar cache, so restarting a runner costs
+  // little or no Alpaca quota for history a backtest already fetched.
+  const historyLoader = new BacktestLoader({ cache: new SupabaseBarCache() });
+
+  const liveRuns = new LiveRunCoordinator(owner, leaseSeconds, {
+    registry: orchestrator,
+    subscribe: (symbols) => marketDataAdapter.subscribe(symbols),
+    leases: {
+      claimOrphans: () => claimOrphanedRuns(owner, mode, leaseSeconds),
+      heartbeat: (runIds) => heartbeatRunLeases(owner, runIds, leaseSeconds),
+      release: (runId) => releaseRunLease(runId, owner),
+    },
+    buildStrategy: buildRunStrategy,
+    warmUp: (strategy) =>
+      warmUpStrategy(strategy, (symbols, start, end) => historyLoader.loadBars(symbols, start, end, "1Min")),
+    markRunErrored: (runId, reason) =>
+      updateStrategyRun(runId, { status: "error", stoppedAt: nowMs(), disabledReason: reason }),
+  });
+  logger.info("bootstrap: runner identity", { owner, leaseSeconds });
 
   // ------------------------------------------------------------------
   // Optional startup strategy (standalone / debug mode).
   //
-  // Only runs when STARTUP_LEG1 and STARTUP_LEG2 are both set. On restart,
-  // finds the existing running DB row by startupKey and resumes it instead
-  // of creating a duplicate. On clean boot, inserts a new row.
+  // A fresh boot inserts the row already leased to this runner. On restart the
+  // existing running row is left for adoption below, like any other run.
   // ------------------------------------------------------------------
   let startupRunId: string | undefined;
 
   if (startupLeg1 && startupLeg2) {
     const pairsConfig = createPairsConfig(startupLeg1, startupLeg2);
-    const strategy = new PairsStrategy(pairsConfig);
-    const startupKey = `${strategy.type}:${[startupLeg1, startupLeg2].sort().join(":")}`;
+    const startupKey = `pairs_trading:${[startupLeg1, startupLeg2].sort().join(":")}`;
 
     const existingRun = await findRunningStartupRun(startupKey).catch((err) => {
       logger.error("bootstrap: findRunningStartupRun failed, will create fresh run", { err });
@@ -131,15 +194,17 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
       }).catch((err) =>
         logger.error("bootstrap: failed to record resumedAt on strategy run", { err }),
       );
-      logger.info("bootstrap: resuming startup strategy run", { runId: startupRunId, startupKey });
+      logger.info("bootstrap: startup strategy run exists — adopting it with the rest", { runId: startupRunId, startupKey });
     } else {
       startupRunId = newId();
+      const strategy = new PairsStrategy({ ...pairsConfig, id: pairsConfig.id ?? startupRunId });
       const run: StrategyRun = {
         id: startupRunId,
-        strategyId: startupRunId,
-        strategyType: strategy.type as StrategyRun["strategyType"],
+        strategyId: strategy.id ?? startupRunId,
+        strategyType: "pairs_trading",
+        strategyVersion: strategy.version,
         name: pairsConfig.name,
-        config: pairsConfig as unknown as StrategyRun["config"],
+        config: { ...pairsConfig, id: strategy.id } as unknown as StrategyRun["config"],
         status: "running",
         executionMode: mode,
         startedAt: nowMs(),
@@ -147,58 +212,28 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
         totalOrders: 0,
         realizedPnl: 0,
         meta: { startupKey },
+        ...liveRuns.leaseFields(),
       };
-      await insertStrategyRun(run).catch((err) => {
-        logger.error("bootstrap: failed to persist startup strategy run — continuing without DB record", { err });
-      });
-      logger.info("bootstrap: registered startup strategy run", { runId: startupRunId, startupKey });
+      try {
+        await insertStrategyRun(run);
+        await liveRuns.prepare(strategy);
+        liveRuns.activate(startupRunId, strategy);
+        logger.info(`bootstrap: startup strategy active [${startupLeg1}/${startupLeg2}]`, { runId: startupRunId });
+      } catch (err) {
+        // Without a persisted, leased row this runner has no claim to trade it.
+        logger.error("bootstrap: failed to persist startup strategy run — not starting it", { err });
+      }
     }
-
-    orchestrator.registerStrategy(strategy, startupRunId);
-    marketDataAdapter.subscribe(pairsConfig.symbols);
-    logger.info(`bootstrap: startup strategy active [${startupLeg1}/${startupLeg2}]`);
   } else {
     logger.info("bootstrap: no startup strategy configured — waiting for API-managed strategies");
   }
 
   // ------------------------------------------------------------------
-  // Resume API-managed running strategies from DB.
-  //
-  // On server restart the orchestrator's in-memory registry is empty, so
-  // any run that still has status="running" in the DB would appear stale.
-  // Re-register each one using the factory so isLive stays true and the
-  // strategy resumes evaluating incoming market data immediately.
+  // Adopt running runs no live runner holds — warmed from history before any
+  // live tick arrives, since the market data connection opens after this.
   // ------------------------------------------------------------------
-  try {
-    const allRuns = await getAllStrategyRuns();
-    const toResume = allRuns.filter(
-      (r) => r.status === "running" && r.id !== startupRunId,
-    );
-    for (const run of toResume) {
-      const factory = STRATEGY_FACTORY[run.strategyType];
-      if (!factory) {
-        logger.warn("bootstrap: no factory for run type, skipping resume", {
-          runId: run.id, strategyType: run.strategyType,
-        });
-        continue;
-      }
-      try {
-        const rawConfig = run.config as unknown as Record<string, unknown>;
-        const strategy = factory(rawConfig);
-        orchestrator.registerStrategy(strategy, run.id);
-        const symbols = Array.isArray(rawConfig.symbols) ? (rawConfig.symbols as string[]) : [];
-        if (symbols.length > 0) marketDataAdapter.subscribe(symbols);
-        logger.info("bootstrap: resumed strategy run", { runId: run.id, strategyType: run.strategyType });
-      } catch (err) {
-        logger.error("bootstrap: failed to resume strategy run", { runId: run.id, err });
-      }
-    }
-    if (toResume.length > 0) {
-      logger.info(`bootstrap: resumed ${toResume.length} running strategy run(s) from DB`);
-    }
-  } catch (err) {
-    logger.error("bootstrap: could not load running runs for resume — continuing without resume", { err });
-  }
+  const adopted = await liveRuns.adoptOrphans();
+  logger.info(`bootstrap: adopted ${adopted.length} running strategy run(s)`);
 
   // ------------------------------------------------------------------
   // Connect adapters and start the engine
@@ -213,10 +248,22 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
   orchestrator.start();
 
   // This process is now trading. Claim the clock so that a backtest started
-  // here — via the REST API this runtime also mounts, or any other path —
-  // fails loudly instead of silently feeding simulated time to the live
-  // orchestrator, risk checks, and quote timestamps.
+  // here by any path fails loudly instead of silently feeding simulated time to
+  // the live orchestrator, risk checks, and quote timestamps.
   lockClockForLive(mode);
+
+  // Heartbeat three times per lease: a runner survives two missed beats before
+  // a peer may adopt its runs.
+  const leaseTimer = setInterval(() => {
+    liveRuns.tick().then(
+      ({ lost, adopted: newlyAdopted }) => {
+        if (lost.length > 0 || newlyAdopted.length > 0) {
+          logger.info("bootstrap: lease maintenance", { lost, adopted: newlyAdopted });
+        }
+      },
+      (err) => logger.error("bootstrap: lease maintenance failed", { err: String(err) }),
+    );
+  }, Math.max(5_000, Math.floor((leaseSeconds * 1000) / 3)));
 
   // ------------------------------------------------------------------
   // Persistence hooks — fire-and-forget; DB errors never crash the engine
@@ -252,6 +299,64 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
     );
   });
 
+  // Error streaks are persisted so the UI can show a strategy degrading before
+  // the runner disables it.
+  eventBus.on<StrategyErrorEvent>("STRATEGY_ERROR", (event) => {
+    if (!event.runKey || event.consecutiveErrors === undefined) return;
+    updateStrategyRun(event.runKey, { consecutiveErrors: event.consecutiveErrors }).catch((err) =>
+      logger.error("persistence: consecutive_errors update failed", { err }),
+    );
+  });
+
+  eventBus.on<StrategyRecoveredEvent>("STRATEGY_RECOVERED", (event) => {
+    updateStrategyRun(event.runKey, { consecutiveErrors: 0 }).catch((err) =>
+      logger.error("persistence: consecutive_errors reset failed", { err }),
+    );
+  });
+
+  eventBus.on<StrategyAutoDisabledEvent>("STRATEGY_AUTO_DISABLED", (event) => {
+    const reason = `Auto-disabled after ${event.consecutiveErrors} consecutive errors. Last: ${event.lastError}`;
+    updateStrategyRun(event.runKey, {
+      status: "error",
+      stoppedAt: nowMs(),
+      consecutiveErrors: event.consecutiveErrors,
+      disabledReason: reason,
+    })
+      .catch((err) => logger.error("persistence: auto-disable update failed", { err }))
+      // Status first, then the lease: releasing a still-"running" row would let
+      // another runner adopt the broken strategy straight back.
+      .finally(() => void liveRuns.deactivate(event.runKey));
+  });
+
+  // Blocked orders, persisted for the contention view (Part 06).
+  const rejections = new RiskRejectionRecorder({
+    insert: insertRiskRejections,
+    resolveOwner: resolveStrategyOwner,
+  });
+  rejections.start();
+
+  eventBus.on<RiskRejectedEvent>("RISK_REJECTED", (event) => {
+    rejections.record({
+      ts: event.ts,
+      strategyId: event.strategyId ?? null,
+      symbol: event.rejectedIntent?.symbol ?? null,
+      failedCheck: event.failedCheck ?? "UNKNOWN",
+      reason: event.reason,
+      intent: event.rejectedIntent,
+    });
+  });
+
+  eventBus.on<CapitalUnavailableEvent>("CAPITAL_UNAVAILABLE", (event) => {
+    rejections.record({
+      ts: event.ts,
+      strategyId: event.strategyId ?? null,
+      symbol: null,
+      failedCheck: "CAPITAL_UNAVAILABLE",
+      reason: `Needed $${event.required.toFixed(2)}; $${event.available.toFixed(2)} unreserved`,
+      intent: { intentId: event.intentId, required: event.required, available: event.available },
+    });
+  });
+
   const snapshotTimer = setInterval(() => {
     insertPortfolioSnapshot(portfolioState.getSnapshot()).catch((err) =>
       logger.error("persistence: insertPortfolioSnapshot failed", { err }),
@@ -268,6 +373,7 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
     riskEngine,
     marketDataAdapter,
     executionMode: mode,
+    liveRuns,
   });
   const server = http.createServer(app);
   attachWebSocketServer(server, eventBus);
@@ -281,14 +387,14 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
   const shutdown = async (): Promise<void> => {
     logger.warn(`bootstrap: shutting down [${mode} mode]`);
     clearInterval(snapshotTimer);
+    clearInterval(leaseTimer);
     orchestrator.stop();
     marketDataAdapter.disconnect();
     orderAdapter.disconnect();
-    if (startupRunId) {
-      await updateStrategyRun(startupRunId, { status: "stopped", stoppedAt: nowMs() }).catch(
-        (err) => logger.error("bootstrap: failed to mark startup run as stopped", { err }),
-      );
-    }
+    await rejections.stop();
+    // Hand leases back so a successor adopts these runs now instead of after
+    // they lapse. The rows stay "running" — they are paused, not stopped.
+    await liveRuns.releaseAll();
     server.close();
     process.exit(0);
   };

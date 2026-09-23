@@ -42,6 +42,8 @@ export type EventType =
   | "STRATEGY_STARTED"
   | "STRATEGY_STOPPED"
   | "STRATEGY_ERROR"
+  | "STRATEGY_RECOVERED"
+  | "STRATEGY_AUTO_DISABLED"
   // Risk events
   | "RISK_REJECTED"
   // OMS events
@@ -188,6 +190,29 @@ export interface StrategyErrorEvent extends BaseEvent {
   error: string;
   /** Which lifecycle phase the error occurred in */
   phase: "evaluate" | "start" | "stop";
+  /** Orchestrator registry key — the strategy_runs.id for API- and runner-managed runs */
+  runKey?: string;
+  /** Evaluate errors in a row for this run, including this one */
+  consecutiveErrors?: number;
+}
+
+/** A strategy evaluated cleanly after one or more consecutive errors. */
+export interface StrategyRecoveredEvent extends BaseEvent {
+  type: "STRATEGY_RECOVERED";
+  strategyId: string;
+  runKey: string;
+}
+
+/**
+ * A strategy hit the consecutive-error limit and was deregistered, so one bad
+ * push degrades that strategy rather than the shared runner (Part 05).
+ */
+export interface StrategyAutoDisabledEvent extends BaseEvent {
+  type: "STRATEGY_AUTO_DISABLED";
+  strategyId: string;
+  runKey: string;
+  consecutiveErrors: number;
+  lastError: string;
 }
 
 // ------------------------------------------------------------------
@@ -199,6 +224,8 @@ export interface RiskRejectedEvent extends BaseEvent {
   strategyId: string;
   orderId?: UUID;
   reason: string;
+  /** Which named check fired: STRATEGY_BUDGET, CASH_RESERVE, ORDER_COOLDOWN, ... */
+  failedCheck?: string;
   /** The intent that was rejected */
   rejectedIntent: OrderIntent;
 }
@@ -345,6 +372,8 @@ export type TradingEvent =
   | StrategyStartedEvent
   | StrategyStoppedEvent
   | StrategyErrorEvent
+  | StrategyRecoveredEvent
+  | StrategyAutoDisabledEvent
   | RiskRejectedEvent
   | CapitalReservedEvent
   | CapitalReleasedEvent

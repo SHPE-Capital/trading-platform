@@ -31,8 +31,15 @@ import {
   insertComment,
   getComments,
   getProposalTimeline,
+  getAppUsersByIds,
 } from "../../adapters/supabase/reviewRepositories";
-import { getStrategyById, insertStrategyRun, updateStrategy } from "../../adapters/supabase/repositories";
+import {
+  getStrategyById,
+  getRunningRuns,
+  insertStrategyRun,
+  updateStrategy,
+  StrategyAlreadyLiveError,
+} from "../../adapters/supabase/repositories";
 import { STRATEGY_FACTORY } from "../../config/strategyDefaults";
 import { newId } from "../../utils/ids";
 import { nowMs } from "../../utils/time";
@@ -40,7 +47,7 @@ import { logger } from "../../utils/logger";
 import type { AppContext } from "../context";
 import type { StrategyRun, StrategyType } from "../../types/strategy";
 import type { UUID } from "../../types/common";
-import type { CommentKind, ProposalStatus } from "../../types/review";
+import type { CapitalExposure, CommentKind, ProposalStatus } from "../../types/review";
 
 /** Statuses a caller may filter the proposal list by. */
 const VALID_STATUSES: ProposalStatus[] = ["open", "approved", "rejected", "withdrawn"];
@@ -156,6 +163,42 @@ export async function listProposalsHandler(req: Request, res: Response): Promise
   }
 }
 
+function capitalPctOf(config: Record<string, unknown> | undefined | null): number | null {
+  const pct = (config?.riskBudget as { maxCapitalPct?: unknown } | undefined)?.maxCapitalPct;
+  return typeof pct === "number" && pct > 0 ? pct : null;
+}
+
+/**
+ * Sums the capital caps of every live run in this book next to the cap the
+ * proposal requests, so a lead sees what approving adds to the total. Reads the
+ * database rather than this process's orchestrator: runs may be leased to a
+ * different runner of the same mode.
+ */
+async function buildCapitalExposure(
+  ctx: AppContext,
+  proposedConfig: Record<string, unknown> | undefined,
+): Promise<CapitalExposure> {
+  const executionMode = ctx.executionMode ?? "paper";
+  const runs = await getRunningRuns(executionMode);
+  const owners = await getAppUsersByIds([...new Set(runs.map((r) => r.ownerId).filter((v): v is string => !!v))]);
+  const ownerName = new Map(owners.map((u) => [u.id, u.displayName ?? u.email]));
+
+  const liveRuns = runs.map((r) => ({
+    runId: r.id,
+    name: r.name,
+    ownerName: r.ownerId ? ownerName.get(r.ownerId) ?? null : null,
+    maxCapitalPct: capitalPctOf(r.config as unknown as Record<string, unknown>),
+  }));
+  return {
+    executionMode,
+    bookEquity: ctx.portfolioState?.getSnapshot().equity ?? null,
+    liveRuns,
+    allocatedPct: liveRuns.reduce((sum, r) => sum + (r.maxCapitalPct ?? 0), 0),
+    uncappedRuns: liveRuns.filter((r) => r.maxCapitalPct === null).length,
+    proposedPct: capitalPctOf(proposedConfig),
+  };
+}
+
 /**
  * GET /api/proposals/:id
  * Everything the review page needs in one response: the proposal, the version
@@ -179,7 +222,18 @@ export async function getProposalDetail(req: Request, res: Response): Promise<vo
       getStrategyById(proposal.strategyId),
     ]);
 
-    const backtests = await getBacktestsForVersion(proposal.headVersionId);
+    const ctx = (req.app.locals.ctx ?? {}) as AppContext;
+    const [backtests, capitalExposure] = await Promise.all([
+      getBacktestsForVersion(proposal.headVersionId),
+      // Only worth computing while there is still a decision to make.
+      proposal.status === "open"
+        ? buildCapitalExposure(ctx, headVersion?.config as unknown as Record<string, unknown> | undefined)
+            .catch((err) => {
+              logger.warn("getProposalDetail: capital exposure unavailable", { id, err: String(err) });
+              return null;
+            })
+        : Promise.resolve(null),
+    ]);
 
     res.json({
       proposal,
@@ -189,6 +243,7 @@ export async function getProposalDetail(req: Request, res: Response): Promise<vo
       backtests,
       comments,
       timeline,
+      capitalExposure,
       // Lets the UI decide what to render without duplicating the role rules.
       viewer: req.user
         ? {
@@ -277,8 +332,9 @@ export async function createProposal(req: Request, res: Response): Promise<void>
  *
  * The only path that puts a strategy live. Settles the proposal first — a
  * guarded update that two simultaneous approvals cannot both win — then builds
- * the strategy from the cited version's persisted config, registers it, and
- * writes the single strategy_runs row. Any failure after the settle rolls the
+ * the strategy from the cited version's persisted config, warms it from
+ * history, writes the single strategy_runs row already leased to this runner,
+ * and only then starts trading it. A failure before the row lands rolls the
  * proposal back to open so the queue stays truthful.
  */
 export async function approveProposal(req: Request, res: Response): Promise<void> {
@@ -296,8 +352,8 @@ export async function approveProposal(req: Request, res: Response): Promise<void
     return;
   }
 
-  const { orchestrator, marketDataAdapter, executionMode } = req.app.locals.ctx as AppContext;
-  if (!orchestrator) {
+  const { orchestrator, liveRuns, executionMode } = req.app.locals.ctx as AppContext;
+  if (!orchestrator || !liveRuns) {
     res.status(503).json({
       error: "Orchestrator not available in this runtime mode",
       detail: "Approving starts a live strategy, so it must run against the trading process.",
@@ -328,10 +384,30 @@ export async function approveProposal(req: Request, res: Response): Promise<void
     return;
   }
 
+  // One live run per strategy (0004's strategy_runs_single_live). Promoting a
+  // new version of a strategy that is already trading would orphan its open
+  // positions — the new instance knows nothing about them — so the live run
+  // has to be stopped deliberately first.
+  if (orchestrator.hasStrategyWithConfigId(proposal.strategyId)) {
+    res.status(409).json({
+      error: "This strategy is already live",
+      detail: "Stop its running version first, then approve — its open positions need a deliberate hand-off.",
+    });
+    return;
+  }
+
   // Sizing settled during review wins over what the author proposed. This is the
   // whole capital mechanism — no allocation table, just the riskBudget that
   // RiskEngine.checkStrategyBudget already enforces on every order.
-  const config: Record<string, unknown> = { ...(version.config as unknown as Record<string, unknown>) };
+  //
+  // The strategy's identity is the strategies row. Versions carry no id of their
+  // own inside config, and strategy.id keys the risk budget, rejection
+  // attribution, and the already-live check above — left undefined, every
+  // approved strategy would share one budget.
+  const config: Record<string, unknown> = {
+    ...(version.config as unknown as Record<string, unknown>),
+    id: proposal.strategyId,
+  };
   if (approvedCapitalPct !== undefined) {
     const budget = (config.riskBudget as Record<string, unknown> | undefined) ?? {};
     config.riskBudget = { ...budget, maxCapitalPct: approvedCapitalPct };
@@ -357,19 +433,13 @@ export async function approveProposal(req: Request, res: Response): Promise<void
   }
 
   const runId = newId();
-  let registered = false;
+  let run: StrategyRun;
+  let strategy;
   try {
-    const strategy = factory(config);
-    // Mirrors startStrategyRun: register in memory first, persist second, and
-    // undo the registration if the write fails. listStrategyRuns treats the
-    // orchestrator as authoritative for isLive, so the two must not diverge.
-    orchestrator.registerStrategy(strategy, runId);
-    registered = true;
+    strategy = factory(config);
+    await liveRuns.prepare(strategy);
 
-    const symbols = Array.isArray(config.symbols) ? (config.symbols as string[]) : [];
-    if (marketDataAdapter && symbols.length > 0) marketDataAdapter.subscribe(symbols);
-
-    const run: StrategyRun = {
+    run = {
       id: runId,
       strategyId: proposal.strategyId,
       strategyType: strategyType as StrategyType,
@@ -385,35 +455,45 @@ export async function approveProposal(req: Request, res: Response): Promise<void
       versionId: version.id,
       proposalId: proposal.id,
       ownerId: proposal.requestedBy,
+      ...liveRuns.leaseFields(),
     };
+    // Persist before trading: a crash between the two leaves a leased running
+    // row that gets adopted, never a live strategy with no row behind it.
     await insertStrategyRun(run);
-
-    if (note && note.trim()) {
-      await insertComment({
-        proposalId: id,
-        authorId: req.user!.id,
-        body: note.trim(),
-        kind: "approve",
-      });
-    }
-
-    logger.info("approveProposal: strategy promoted to live", {
-      proposalId: id,
-      runId,
-      versionId: version.id,
-      versionNumber: version.versionNumber,
-      approvedBy: req.user!.id,
-    });
-    res.status(201).json({ proposal: settled, run });
   } catch (err) {
-    if (registered) orchestrator.deregisterStrategy(runId);
     await reopenProposal(id);
     logger.error("approveProposal: go-live failed, proposal reopened", { id, runId, err });
+    if (err instanceof StrategyAlreadyLiveError) {
+      res.status(409).json({ error: "This strategy is already live — proposal reopened", detail: err.message });
+      return;
+    }
     res.status(500).json({
       error: "Approval recorded but the strategy failed to start — proposal reopened",
       detail: String(err),
     });
+    return;
   }
+
+  liveRuns.activate(runId, strategy);
+
+  // The run is live; a note that fails to post must not undo that.
+  if (note && note.trim()) {
+    await insertComment({
+      proposalId: id,
+      authorId: req.user!.id,
+      body: note.trim(),
+      kind: "approve",
+    }).catch((err) => logger.warn("approveProposal: approval note not recorded", { id, err }));
+  }
+
+  logger.info("approveProposal: strategy promoted to live", {
+    proposalId: id,
+    runId,
+    versionId: version.id,
+    versionNumber: version.versionNumber,
+    approvedBy: req.user!.id,
+  });
+  res.status(201).json({ proposal: settled, run });
 }
 
 /**
