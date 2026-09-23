@@ -13,7 +13,7 @@
 import WebSocket from "ws";
 import { env } from "../../config/env";
 import { logger } from "../../utils/logger";
-import { nowMs, isoToMs } from "../../utils/time";
+import { nowMs } from "../../utils/time";
 import { newId } from "../../utils/ids";
 import type { EventBus } from "../../core/engine/eventBus";
 import type { OrderIntent, Order, Fill } from "../../types/orders";
@@ -198,7 +198,6 @@ export class AlpacaOrderExecutionAdapter {
 
     const ts = nowMs();
     const orderId = order["client_order_id"] as string ?? newId();
-    const brokerOrderId = order["id"] as string;
 
     switch (event) {
       case "fill":

@@ -9,7 +9,6 @@
  */
 
 import { nowMs } from "../../utils/time";
-import { newId } from "../../utils/ids";
 import type { StrategyRuntimeState, StrategyRunStatus, StrategyType } from "../../types/strategy";
 import type { StrategySignal } from "../../types/strategy";
 import type { UUID } from "../../types/common";

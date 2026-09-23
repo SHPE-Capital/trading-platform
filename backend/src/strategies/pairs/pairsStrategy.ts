@@ -241,7 +241,7 @@ export class PairsStrategy extends BaseStrategy {
     spread: number,
     ts: number,
     leg1: string,
-    leg2: string,
+    _leg2: string,
   ): StrategySignal | null {
     const { positionState, positionOpenedAt } = this.state;
     if (positionState === "flat") return null;

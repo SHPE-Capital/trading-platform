@@ -30,7 +30,7 @@ import { SymbolStateManager } from '../../core/state/symbolState';
 import { SimulatedExecutionSink } from '../../core/execution/simulatedExecution';
 import type { OrderIntent, Order, Fill } from '../../types/orders';
 import type { Bar } from '../../types/market';
-import type { OrderSubmittedEvent, OrderFilledEvent, OrderRejectedEvent, BarReceivedEvent } from '../../types/events';
+import type { OrderSubmittedEvent, OrderFilledEvent, OrderRejectedEvent } from '../../types/events';
 
 function makeIntent(overrides: Partial<OrderIntent> = {}): OrderIntent {
   return {
@@ -166,7 +166,7 @@ describe('SimulatedExecutionSink: order accounting (fix #2)', () => {
 
   it('filledQty equals sum(fills.qty) and avgFillPrice is the weighted average after applyFill', () => {
     // Applies OrderStateManager directly: simulate two partial fills.
-    const { OrderStateManager } = require('../../core/state/orderState');
+    const { OrderStateManager } = jest.requireActual<typeof import('../../core/state/orderState')>('../../core/state/orderState');
     const oms = new OrderStateManager();
     const order: Order = {
       id: 'o', intentId: 'i', strategyId: 's', symbol: 'SPY',

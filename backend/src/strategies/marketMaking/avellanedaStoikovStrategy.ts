@@ -183,7 +183,7 @@ export class AvellanedaStoikovStrategy extends BaseStrategy {
 
     // Enforce strict bid < ask after snapping (degenerate when halfSpread
     // is tiny vs tickSize). If they collide, push them one tick apart.
-    let finalBid = bidPrice;
+    const finalBid = bidPrice;
     let finalAsk = askPrice;
     if (finalAsk - finalBid < this.asConfig.tickSize) {
       finalAsk = finalBid + this.asConfig.tickSize;

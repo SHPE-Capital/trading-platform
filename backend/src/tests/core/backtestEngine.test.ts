@@ -222,7 +222,7 @@ describe('run(): result structure', () => {
 });
 
 describe('_computeMetrics', () => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   let computeMetrics: (curve: PortfolioSnapshot[], fills: Fill[], initial: number) => any;
 
   beforeEach(() => {
@@ -327,7 +327,6 @@ import type { StrategySignal } from '../../types/strategy';
  * be expired by the backtest engine's terminal drain.
  */
 function makeLastBarSignalStrategy(symbol: string, lastBarTs: number): IStrategy {
-  let evalCount = 0;
   return {
     id: 'last-bar-strat' as UUID,
     type: 'pairs_trading',
@@ -341,10 +340,9 @@ function makeLastBarSignalStrategy(symbol: string, lastBarTs: number): IStrategy
       cooldownMs: 0,
       enabled: true,
     },
-    start: () => { evalCount = 0; },
+    start: () => {},
     stop: () => {},
     evaluate: (ctx): StrategySignal | null => {
-      evalCount++;
       const bar = ctx.symbolState.get(symbol)?.latestBar;
       if (!bar || bar.ts !== lastBarTs) return null;
       return {

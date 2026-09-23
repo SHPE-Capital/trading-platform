@@ -13,7 +13,6 @@ import type { StrategySignal, BaseStrategyConfig, StrategyType } from "../../typ
 import type { SymbolStateManager } from "../../core/state/symbolState";
 import type { PortfolioStateManager } from "../../core/state/portfolioState";
 import type { OrderStateManager } from "../../core/state/orderState";
-import type { EventBus } from "../../core/engine/eventBus";
 import type { UUID } from "../../types/common";
 import { nowMs } from "../../utils/time";
 import { newId } from "../../utils/ids";

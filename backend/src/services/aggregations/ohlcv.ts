@@ -30,10 +30,10 @@ export function aggregateTradesToBar(
 ): Bar | null {
   if (trades.length === 0) return null;
 
-  let open = trades[0].price;
+  const open = trades[0].price;
   let high = trades[0].price;
   let low = trades[0].price;
-  let close = trades[trades.length - 1].price;
+  const close = trades[trades.length - 1].price;
   let volume = 0;
   let vwapNumerator = 0;
 

@@ -10,7 +10,6 @@
  * Outputs: Single Order submitted immediately to the sink.
  */
 
-import { logger } from "../../../utils/logger";
 import type { ExecutionAlgoType, UUID } from "../../../types/common";
 import type { OrderIntent, Order } from "../../../types/orders";
 import type { IExecutionSink } from "../IExecutionSink";

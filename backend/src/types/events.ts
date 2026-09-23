@@ -9,13 +9,12 @@
  * Outputs: Typed event objects published to the EventBus.
  */
 
-import type { EpochMs, Symbol, UUID, OrderSide, OrderStatus, ExecutionMode } from "./common";
+import type { EpochMs, UUID, ExecutionMode } from "./common";
 import type { Quote, Trade, Bar } from "./market";
 import type { OrderIntent, Order, Fill } from "./orders";
 import type { PortfolioSnapshot } from "./portfolio";
 import type { StrategySignal } from "./strategy";
 import type { ReplayStatus, ReplaySpeed } from "./replay";
-import type { PortfolioRiskViolation } from "./risk";
 
 // ------------------------------------------------------------------
 // Event Type Enum

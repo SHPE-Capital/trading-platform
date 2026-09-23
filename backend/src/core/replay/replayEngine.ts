@@ -11,7 +11,6 @@
 
 import { EventBus } from "../engine/eventBus";
 import { logger } from "../../utils/logger";
-import type { TradingEvent } from "../../types/events";
 import type { ReplaySession, ReplayCommand, ReplaySpeed } from "../../types/replay";
 
 export class ReplayEngine {

@@ -221,8 +221,8 @@ describe("BacktestEngine Integration", () => {
 
     try {
         await errorEngine.run(config, strategyFactory);
-    } catch (e) {
-        // Expected
+    } catch {
+        // Expected — the assertion below is about wall-clock time, not the error.
     }
 
     expect(Date.now()).toBeGreaterThanOrEqual(wallClockStart);

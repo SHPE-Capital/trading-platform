@@ -360,7 +360,7 @@ describe("Orchestrator: STRATEGY_ERROR (phase: evaluate)", () => {
 
   it("continues evaluating remaining strategies after one throws", () => {
     const bus = new EventBus();
-    const events = captureEvents(bus);
+    captureEvents(bus);
     const orch = makeOrchestrator(bus);
 
     const goodEvaluate = jest.fn().mockReturnValue(null);
