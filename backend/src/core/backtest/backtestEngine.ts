@@ -46,8 +46,21 @@ import type { Fill } from "../../types/orders";
 import type { Bar } from "../../types/market";
 import type { BacktestProgressPoint } from "./backtestStreamManager";
 
+/**
+ * How long the simulation loop may run before yielding to the event loop.
+ * In a worker process, timers (lease heartbeat, progress writes) only fire
+ * between yields; a window of 10k bars processed without one could outlast
+ * the job lease and get the run reclaimed by another worker mid-flight.
+ */
+const YIELD_EVERY_MS = 200;
+
+export interface BacktestRunOptions {
+  /** Aborting stops the run at the next yield point with an AbortError. */
+  signal?: AbortSignal;
+}
+
 export class BacktestEngine {
-  private readonly loader = new BacktestLoader();
+  constructor(private readonly loader: BacktestLoader = new BacktestLoader()) {}
 
   /**
    * Runs a full backtest with the given config and strategy factory.
@@ -61,7 +74,10 @@ export class BacktestEngine {
       eventBus: EventBus;
     }) => IStrategy[],
     onProgress?: (point: BacktestProgressPoint) => void,
+    options: BacktestRunOptions = {},
   ): Promise<BacktestResult> {
+    const { signal } = options;
+    signal?.throwIfAborted();
     // A backtest installs a simulated clock and runs a long CPU-bound loop.
     // Doing either inside a trading process corrupts live timestamps and
     // starves the event loop that owns the broker WebSocket. Refuse early,
@@ -158,6 +174,7 @@ export class BacktestEngine {
 
     let processedBars = 0;
     let batchIndex = 0;
+    let lastYieldAt = performance.now();
 
     try {
       for await (const window of this.loader.streamBars(
@@ -166,6 +183,7 @@ export class BacktestEngine {
         config.endDate,
         "1Min",
       )) {
+        signal?.throwIfAborted();
         // Validate this window. Cross-window ordering issues can't occur:
         // streamBars' safe-horizon guarantee means no batch ever spans windows.
         const v = validateBars(window, config.strategyConfig.symbols, "raw");
@@ -270,6 +288,12 @@ export class BacktestEngine {
           }
           processedBars += batch.length;
           batchIndex++;
+
+          if (performance.now() - lastYieldAt >= YIELD_EVERY_MS) {
+            await new Promise<void>((resolve) => setImmediate(resolve));
+            lastYieldAt = performance.now();
+            signal?.throwIfAborted();
+          }
         }
       }
     } finally {

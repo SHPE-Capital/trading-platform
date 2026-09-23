@@ -70,6 +70,10 @@ export default function BacktestResults({ result, onRerun, onSave, isSaving = fa
     : result.completed_at
       ? `Completed ${formatTimestamp(result.completed_at)}${duration ? ` · Ran in ${formatDuration(duration)}` : ""}`
       : null;
+  // Unsaved runs are staged server-side for a limited window, then dropped.
+  const unsavedUntil = !isSaved && result.result_expires_at
+    ? new Date(result.result_expires_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+    : null;
 
   return (
     <div className="flex flex-col gap-6">
@@ -78,6 +82,11 @@ export default function BacktestResults({ result, onRerun, onSave, isSaving = fa
           <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">{result.config.name}</h3>
           {runMeta && (
             <p className="mt-0.5 text-xs text-zinc-400 dark:text-zinc-500">{runMeta}</p>
+          )}
+          {unsavedUntil && (
+            <p className="mt-0.5 text-xs text-amber-600 dark:text-amber-400">
+              Not saved — kept until {unsavedUntil}, then discarded
+            </p>
           )}
         </div>
         <div className="flex shrink-0 items-center gap-2">

@@ -12,9 +12,9 @@ export const config = {
   apiBaseUrl: process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080/api",
 
   /**
-   * Base URL for backtest endpoints. Points at the API-only process, which runs
-   * no trading engine — a backtest on a trading process is rejected with 409
-   * because it would overwrite the live clock and starve the broker WebSocket.
+   * Base URL for backtest endpoints. Backtests execute in worker processes;
+   * this only carries queue requests and progress streams, so it points at the
+   * API-only process to keep that traffic off the trading runtime.
    */
   backtestApiBaseUrl:
     process.env.NEXT_PUBLIC_BACKTEST_API_BASE_URL ?? "http://localhost:8082/api",

@@ -18,10 +18,43 @@
 import { env } from "../../config/env";
 import { normalizeBar } from "../../adapters/alpaca/normalizer";
 import { logger } from "../../utils/logger";
+import {
+  DAY_MS,
+  splitIntoRuns,
+  utcDay,
+  utcDayStart,
+  utcDaysInRange,
+  type BarCache,
+} from "./barCache";
 import type { Bar } from "../../types/market";
 import type { Symbol, ISOTimestamp } from "../../types/common";
 
+/** Cached reads are sliced so no single get_bars response grows unbounded. */
+const CACHE_READ_SLICE_DAYS = 10;
+
+export interface BacktestLoaderOptions {
+  /** Shared bar cache (Part 03). Omit to always fetch from Alpaca. */
+  cache?: BarCache;
+  /**
+   * Days within this many days of today are fetched and written but never
+   * marked complete: Alpaca revises recent bars, so they must be re-read.
+   */
+  settleDays?: number;
+  /** Injectable wall clock for the settle cutoff (tests). */
+  now?: () => number;
+}
+
 export class BacktestLoader {
+  private readonly cache?: BarCache;
+  private readonly settleDays: number;
+  private readonly now: () => number;
+
+  constructor(options: BacktestLoaderOptions = {}) {
+    this.cache = options.cache;
+    this.settleDays = options.settleDays ?? 1;
+    this.now = options.now ?? Date.now;
+  }
+
   /**
    * Fetches historical bars for one or more symbols and returns them as a
    * single sorted array. Symbols are fetched concurrently; pages within each
@@ -149,10 +182,150 @@ export class BacktestLoader {
   // ------------------------------------------------------------------
 
   /**
+   * One symbol's bars over [startDate, endDate], page by page. With a cache,
+   * days already known complete come from it and every other run of days is
+   * fetched from Alpaca and backfilled; without one, it is Alpaca throughout.
+   */
+  private _pageIterator(
+    symbol: Symbol,
+    startDate: ISOTimestamp,
+    endDate: ISOTimestamp,
+    timeframe: string,
+  ): AsyncGenerator<Bar[]> {
+    return this.cache
+      ? this._cachedPages(this.cache, symbol, startDate, endDate, timeframe)
+      : this._alpacaPages(symbol, startDate, endDate, timeframe);
+  }
+
+  private async *_cachedPages(
+    cache: BarCache,
+    symbol: Symbol,
+    startDate: ISOTimestamp,
+    endDate: ISOTimestamp,
+    timeframe: string,
+  ): AsyncGenerator<Bar[]> {
+    const startMs = Date.parse(startDate);
+    const endMs = Date.parse(endDate);
+    const days = utcDaysInRange(startMs, endMs);
+    if (days.length === 0) return;
+
+    let complete: Set<string>;
+    try {
+      complete = await cache.getCompleteDays(symbol, timeframe, days[0], days[days.length - 1]);
+    } catch (err) {
+      // The cache is an optimization; a broken one must never fail a backtest.
+      logger.warn("BacktestLoader: bar cache unavailable, fetching from Alpaca", { symbol, err: String(err) });
+      yield* this._alpacaPages(symbol, startDate, endDate, timeframe);
+      return;
+    }
+
+    const inRange = (b: Bar) => b.ts >= startMs && b.ts <= endMs;
+    let cachedBars = 0;
+    let fetchedBars = 0;
+
+    for (const run of splitIntoRuns(days, complete)) {
+      const runStart = utcDayStart(run.days[0]);
+      const runEnd = utcDayStart(run.days[run.days.length - 1]) + DAY_MS;
+
+      if (run.cached) {
+        let readFailed = false;
+        for (let from = runStart; from < runEnd; from += CACHE_READ_SLICE_DAYS * DAY_MS) {
+          const to = Math.min(runEnd, from + CACHE_READ_SLICE_DAYS * DAY_MS);
+          let slice: Bar[];
+          try {
+            slice = await cache.readBars(symbol, timeframe, Math.max(from, startMs), Math.min(to, endMs + 1));
+          } catch (err) {
+            logger.warn("BacktestLoader: cache read failed, fetching the rest of this span from Alpaca", {
+              symbol, err: String(err),
+            });
+            // Resume from the first unread instant so nothing already yielded repeats.
+            yield* this._fetchAndBackfill(cache, symbol, timeframe, Math.max(from, startMs), runEnd, inRange, false);
+            readFailed = true;
+            break;
+          }
+          cachedBars += slice.length;
+          if (slice.length > 0) yield slice;
+        }
+        if (readFailed) continue;
+      } else {
+        fetchedBars += yield* this._fetchAndBackfill(cache, symbol, timeframe, runStart, runEnd, inRange, true);
+      }
+    }
+
+    logger.info("BacktestLoader: bars loaded", { symbol, timeframe, cachedBars, fetchedBars });
+  }
+
+  /**
+   * Fetches [fromMs, toMs) from Alpaca, yields the in-range bars, and writes
+   * every fetched bar to the cache. When `markDays` is set (the span covers
+   * whole days), days older than the settle cutoff are recorded complete —
+   * but only if every write succeeded, so a partial backfill is retried later.
+   * @returns number of bars yielded
+   */
+  private async *_fetchAndBackfill(
+    cache: BarCache,
+    symbol: Symbol,
+    timeframe: string,
+    fromMs: number,
+    toMs: number,
+    inRange: (b: Bar) => boolean,
+    markDays: boolean,
+  ): AsyncGenerator<Bar[], number> {
+    const counts = new Map<string, number>();
+    let writes: Promise<void> = Promise.resolve();
+    let writeFailed = false;
+    let yielded = 0;
+
+    // Alpaca's end bound is inclusive; stop 1ms short of the next day.
+    for await (const page of this._alpacaPages(
+      symbol,
+      new Date(fromMs).toISOString(),
+      new Date(toMs - 1).toISOString(),
+      timeframe,
+    )) {
+      const owned = page.filter((b) => b.ts >= fromMs && b.ts < toMs);
+      for (const b of owned) {
+        const day = utcDay(b.ts);
+        counts.set(day, (counts.get(day) ?? 0) + 1);
+      }
+      // Chained, not awaited: writing page N overlaps fetching page N+1.
+      writes = writes.then(() =>
+        writeFailed
+          ? undefined
+          : cache.writeBars(symbol, timeframe, owned).catch((err) => {
+              writeFailed = true;
+              logger.warn("BacktestLoader: bar cache write failed — days stay uncached", {
+                symbol, err: String(err),
+              });
+            }),
+      );
+      const wanted = owned.filter(inRange);
+      yielded += wanted.length;
+      if (wanted.length > 0) yield wanted;
+    }
+
+    await writes;
+    if (!markDays || writeFailed) return yielded;
+
+    const settleCutoff = utcDay(this.now() - this.settleDays * DAY_MS);
+    const settled: { day: string; barCount: number }[] = [];
+    for (let d = fromMs; d < toMs; d += DAY_MS) {
+      const day = utcDay(d);
+      if (day < settleCutoff) settled.push({ day, barCount: counts.get(day) ?? 0 });
+    }
+    if (settled.length > 0) {
+      await cache.markComplete(symbol, timeframe, settled).catch((err) =>
+        logger.warn("BacktestLoader: bar coverage write failed", { symbol, err: String(err) }),
+      );
+    }
+    return yielded;
+  }
+
+  /**
    * Async generator that yields one page of normalized bars per iteration
    * for a single symbol, following Alpaca's next_page_token pagination.
    */
-  private async *_pageIterator(
+  private async *_alpacaPages(
     symbol: Symbol,
     startDate: ISOTimestamp,
     endDate: ISOTimestamp,

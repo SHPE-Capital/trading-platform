@@ -4,8 +4,9 @@
   "description": "Event-driven algorithmic trading platform backend",
   "main": "dist/index.js",
   "scripts": {
-    "dev": "concurrently --names \"paper,real,api\" --prefix-colors \"cyan,magenta,yellow\" \"nodemon --config nodemon.paper-trading.json\" \"nodemon --config nodemon.real-trading.json\" \"nodemon --config nodemon.api.json\"",
+    "dev": "concurrently --names \"paper,real,api,worker\" --prefix-colors \"cyan,magenta,yellow,green\" \"nodemon --config nodemon.paper-trading.json\" \"nodemon --config nodemon.real-trading.json\" \"nodemon --config nodemon.api.json\" \"nodemon --config nodemon.worker.json\"",
     "dev:api": "nodemon --config nodemon.api.json",
+    "dev:worker": "nodemon --config nodemon.worker.json",
     "dev:paper-trading": "nodemon --config nodemon.paper-trading.json",
     "dev:real-trading": "nodemon --config nodemon.real-trading.json",
     "dev:backtest": "nodemon --exec ts-node src/runtime/backtest.ts",
@@ -16,6 +17,7 @@
     "start:paper-trading": "node dist/runtime/paper-trading.js",
     "start:real-trading": "node dist/runtime/real-trading.js",
     "start:backtest": "node dist/runtime/backtest.js",
+    "start:worker": "node dist/runtime/backtestWorker.js",
     "start:replay": "node dist/runtime/replay.js",
     "lint": "eslint src",
     "lint:strict": "eslint src --max-warnings 0",

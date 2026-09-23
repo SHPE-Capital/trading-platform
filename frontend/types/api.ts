@@ -93,6 +93,8 @@ export interface BacktestResult {
    */
   owner_id?: string;
   saved_at?: number;
+  /** For a run not yet saved: when it stops being saveable (Unix ms). */
+  result_expires_at?: number;
 }
 
 export type ReplaySpeed = 0.25 | 0.5 | 1 | 2 | 5 | 10 | "step";

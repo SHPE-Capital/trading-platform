@@ -581,6 +581,7 @@ export async function insertBacktestResult(result: BacktestResult, savedBy: UUID
   delete payload.orders;
   delete payload.fills;
   delete payload.reused_from_id;   // serve-time annotation, not a persisted fact
+  delete payload.result_expires_at; // staging-window annotation (backtest_jobs), not a column here
   delete payload.data_validation;  // derivable by re-running validateBars(); not a run result
   delete payload.fill_model;       // derivable from config + DEFAULT_FILL_MODEL merge
   delete payload.assumptions;      // derivable from metrics + config fields
@@ -716,6 +717,17 @@ export async function getAllBacktestResults(): Promise<BacktestResult[]> {
     return [];
   }
   return (data ?? []) as unknown as BacktestResult[];
+}
+
+/** True when a saved backtest_results row exists — an id-only read, no equity curve. */
+export async function backtestResultExists(id: UUID): Promise<boolean> {
+  const { data, error } = await getSupabaseClient()
+    .from("backtest_results")
+    .select("id")
+    .eq("id", id)
+    .maybeSingle();
+  if (error) throw new Error(`backtestResultExists failed: ${error.message}`);
+  return data !== null;
 }
 
 /** Retrieves a single backtest result by ID, including the full equity curve. */

@@ -12,6 +12,8 @@
  */
 
 import { BacktestEngine } from "../core/backtest/backtestEngine";
+import { BacktestLoader } from "../core/backtest/backtestLoader";
+import { SupabaseBarCache } from "../adapters/supabase/barCacheRepository";
 import { PairsStrategy } from "../strategies/pairs/pairsStrategy";
 import { createPairsConfig } from "../strategies/pairs/pairsConfig";
 import { insertBacktestResult, insertBacktestOrders, insertBacktestFills } from "../adapters/supabase/repositories";
@@ -38,7 +40,7 @@ async function main(): Promise<void> {
     description: "Initial SPY/QQQ pairs backtest",
   };
 
-  const engine = new BacktestEngine();
+  const engine = new BacktestEngine(new BacktestLoader({ cache: new SupabaseBarCache() }));
   const strategy = new PairsStrategy(pairsConfig);
   const result = await engine.run(config, () => [strategy]);
 

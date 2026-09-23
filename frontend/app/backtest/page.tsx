@@ -14,13 +14,44 @@
 import BacktestForm from "../../features/backtest/BacktestForm";
 import BacktestResults from "../../features/backtest/BacktestResults";
 import PnLChart from "../../components/charts/PnLChart";
-import { useBacktest } from "../../hooks/useBacktest";
-import { useRef } from "react";
+import { useBacktest, type QueueStatus } from "../../hooks/useBacktest";
+import { useEffect, useRef, useState } from "react";
 import type { BacktestConfig } from "../../types/api";
+
+/** A job still queued after this long probably has no worker to run it. */
+const STUCK_QUEUE_MS = 15_000;
+
+/** Pre-progress state of a run: waiting for a worker, or loading market data. */
+function QueueNotice({ status, queuedAt }: { status: QueueStatus | null; queuedAt: number | null }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (status !== "queued") return;
+    const timer = setInterval(() => setNow(Date.now()), 1_000);
+    return () => clearInterval(timer);
+  }, [status]);
+
+  if (status === "running") {
+    return <p className="text-sm text-zinc-400">Running — loading market data…</p>;
+  }
+  const stuck = status === "queued" && queuedAt !== null && now - queuedAt > STUCK_QUEUE_MS;
+  return (
+    <div className="space-y-1">
+      <p className="text-sm text-zinc-400">Queued — waiting for a backtest worker…</p>
+      {stuck && (
+        <p className="text-xs text-amber-600 dark:text-amber-400">
+          No worker has picked this up yet. Backtests run in a separate worker process — start one
+          with <code className="font-mono">npm run dev:worker</code> in <code className="font-mono">backend/</code>
+          {" "}(<code className="font-mono">npm run dev</code> starts it too).
+        </p>
+      )}
+    </div>
+  );
+}
 
 export default function BacktestPage() {
   const {
-    selectedResult, previousResult, isRunning, isSaving, progress, error, saveError, run, rerun, save,
+    selectedResult, previousResult, isRunning, isSaving, progress, queueStatus, queuedAt, reused,
+    error, saveError, run, rerun, save,
   } = useBacktest();
 
   // Keep the last submitted config so Re-run can re-submit it without the form
@@ -71,8 +102,11 @@ export default function BacktestPage() {
               {saveError}
             </div>
           )}
-          {isRunning && !progress && (
-            <p className="text-sm text-zinc-400">Connecting…</p>
+          {isRunning && !progress && <QueueNotice status={queueStatus} queuedAt={queuedAt} />}
+          {!isRunning && reused && selectedResult && (
+            <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">
+              An identical run already existed, so its result was reused instead of re-simulating. Use Re-run to force a fresh one.
+            </p>
           )}
           {isRunning && progress && (
             <div className="space-y-2">

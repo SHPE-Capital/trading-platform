@@ -121,6 +121,11 @@ export interface BacktestResult {
   owner_id?: UUID;
   /** When this result was explicitly saved (wall-clock Unix ms) — distinct from completed_at. */
   saved_at?: EpochMs;
+  /**
+   * For a run not yet saved: when its staged output is dropped and it can no
+   * longer be saved (wall-clock Unix ms). Serve-time annotation, not a column.
+   */
+  result_expires_at?: EpochMs;
   /** Final portfolio state at end of backtest */
   final_portfolio: PortfolioSnapshot;
   /** Computed performance metrics */

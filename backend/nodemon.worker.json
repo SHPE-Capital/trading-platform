@@ -1,0 +1,15 @@
+{
+  "watch": [
+    "src/core",
+    "src/strategies",
+    "src/adapters",
+    "src/runtime",
+    "src/services",
+    "src/config",
+    "src/types",
+    "src/utils"
+  ],
+  "ignore": ["src/app/**", "src/tests/**"],
+  "ext": "ts",
+  "exec": "ts-node src/runtime/backtestWorker.ts"
+}
