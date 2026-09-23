@@ -15,7 +15,10 @@
 import { useState, useEffect } from "react";
 import type { PairsStrategyConfig, RiskBudget } from "../../types/strategy";
 import { useStrategyConfigs } from "../../hooks/useStrategyConfigs";
+import { useStrategyVersions } from "../../hooks/useStrategyVersions";
 import RiskBudgetSection, { type RiskBudgetState, defaultRiskBudgetState } from "../shared/RiskBudgetSection";
+import { createVersion, createProposal } from "../../services/proposalsService";
+import { useAuth } from "../../context/AuthContext";
 
 interface Props {
   onSubmit: (config: Omit<PairsStrategyConfig, "id">) => Promise<void>;
@@ -24,8 +27,17 @@ interface Props {
 
 export default function StrategyForm({ onSubmit, isLoading }: Props) {
   const { strategies, definition, isLoading: configsLoading, save, update } = useStrategyConfigs("pairs_trading");
+  const { user } = useAuth();
 
   const [selectedId, setSelectedId] = useState<string>("new");
+
+  // Version history for the selected config — who edited it, and when.
+  const {
+    versions,
+    isLoading: versionsLoading,
+    refetch: refetchVersions,
+  } = useStrategyVersions(selectedId !== "new" ? selectedId : null);
+  const [showVersions, setShowVersions] = useState(false);
 
   // Form fields
   const [name, setName] = useState("Pairs: SPY/QQQ");
@@ -47,6 +59,14 @@ export default function StrategyForm({ onSubmit, isLoading }: Props) {
   const [isSavingNew, setIsSavingNew] = useState(false);
   const [newName, setNewName] = useState("");
   const [saveError, setSaveError] = useState<string | null>(null);
+
+  // Review workflow: every saved edit becomes an immutable version, and a
+  // proposal is how a tested version asks to go live.
+  const [changeSummary, setChangeSummary] = useState("");
+  const [isProposing, setIsProposing] = useState(false);
+  const [proposalTitle, setProposalTitle] = useState("");
+  const [proposalNote, setProposalNote] = useState("");
+  const [reviewStatus, setReviewStatus] = useState<string | null>(null);
 
   // Populate fields whenever the selected config changes
   useEffect(() => {
@@ -163,11 +183,46 @@ export default function StrategyForm({ onSubmit, isLoading }: Props) {
 
   const handleSaveChanges = async () => {
     setSaveError(null);
+    setReviewStatus(null);
     if (!durationsValid()) return;
+    const config = buildConfig() as Record<string, unknown>;
     try {
-      await update(selectedId, name, buildConfig() as Record<string, unknown>);
+      await update(selectedId, name, config);
+
+      // Record the edit as an immutable version. If this strategy has an open
+      // proposal, the backend re-points it at this version automatically — the
+      // reason the review page itself is never an editing surface.
+      if (user) {
+        const version = await createVersion(selectedId, config, changeSummary.trim() || undefined);
+        setChangeSummary("");
+        setReviewStatus(
+          version.attachedToProposalId
+            ? `Saved as v${version.versionNumber} and attached to the open proposal.`
+            : `Saved as v${version.versionNumber}. Backtest it, then propose it for review.`,
+        );
+        await refetchVersions();
+      }
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "Save failed");
+    }
+  };
+
+  /** Opens a promotion request citing this strategy's newest version. */
+  const handlePropose = async () => {
+    setSaveError(null);
+    setReviewStatus(null);
+    try {
+      const proposal = await createProposal({
+        strategyId: selectedId,
+        title: proposalTitle.trim() || `Promote ${name}`,
+        description: proposalNote.trim() || undefined,
+      });
+      setIsProposing(false);
+      setProposalTitle("");
+      setProposalNote("");
+      setReviewStatus(`Proposal opened — a lead reviews it in Approvals (${proposal.id.slice(0, 8)}).`);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Could not open proposal");
     }
   };
 
@@ -198,7 +253,7 @@ export default function StrategyForm({ onSubmit, isLoading }: Props) {
             <select
               className={inputClass}
               value={selectedId}
-              onChange={(e) => { setSelectedId(e.target.value); setIsSavingNew(false); setSaveError(null); }}
+              onChange={(e) => { setSelectedId(e.target.value); setIsSavingNew(false); setSaveError(null); setShowVersions(false); }}
             >
               <option value="new">New Configuration</option>
               {strategies.map((s) => (
@@ -234,6 +289,42 @@ export default function StrategyForm({ onSubmit, isLoading }: Props) {
               autoFocus
             />
           </Field>
+        )}
+
+        {/* Version history — who edited this config, and when */}
+        {selectedId !== "new" && (
+          <div className="flex flex-col gap-2">
+            <button
+              type="button"
+              onClick={() => setShowVersions((v) => !v)}
+              className="self-start text-xs font-medium text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
+            >
+              {showVersions ? "Hide" : "Show"} version history
+              {versions.length > 0 ? ` (${versions.length})` : ""}
+            </button>
+            {showVersions && (
+              <div className="flex flex-col gap-1 rounded-md border border-zinc-200 p-2 dark:border-zinc-700">
+                {versionsLoading ? (
+                  <p className="text-xs text-zinc-400">Loading…</p>
+                ) : versions.length === 0 ? (
+                  <p className="text-xs text-zinc-400">No versions yet.</p>
+                ) : (
+                  versions.map((v) => (
+                    <div key={v.id} className="flex flex-col gap-0.5 border-b border-zinc-100 py-1 text-xs last:border-0 dark:border-zinc-800">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-medium text-zinc-700 dark:text-zinc-300">v{v.versionNumber}</span>
+                        <span className="text-zinc-400">{new Date(v.createdAt).toLocaleString()}</span>
+                      </div>
+                      <span className="text-zinc-500">
+                        {v.createdByName ?? "Unknown"}
+                        {v.changeSummary ? ` — ${v.changeSummary}` : ""}
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
         )}
       </div>
 
@@ -377,16 +468,82 @@ export default function StrategyForm({ onSubmit, isLoading }: Props) {
         <p className="text-xs text-red-600 dark:text-red-400">{saveError}</p>
       )}
 
+      {reviewStatus && (
+        <p className="rounded-md border border-zinc-200 bg-zinc-50 p-2 text-xs text-zinc-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+          {reviewStatus}
+        </p>
+      )}
+
       {/* Save actions */}
       <div className="flex flex-col gap-2">
         {selectedId !== "new" && (
-          <button
-            type="button"
-            onClick={handleSaveChanges}
-            className="rounded-md border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-50 dark:border-zinc-600 dark:text-zinc-300 dark:hover:bg-zinc-800"
-          >
-            Save changes
-          </button>
+          <>
+            <Field label="What changed? (saved with this version)">
+              <input
+                id="change-summary"
+                type="text"
+                value={changeSummary}
+                onChange={(e) => setChangeSummary(e.target.value)}
+                placeholder="e.g. widened spread window to 7 days"
+                className={inputClass}
+              />
+            </Field>
+            <button
+              type="button"
+              onClick={handleSaveChanges}
+              className="rounded-md border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-50 dark:border-zinc-600 dark:text-zinc-300 dark:hover:bg-zinc-800"
+            >
+              Save changes
+            </button>
+
+            {user && (isProposing ? (
+              <div className="flex flex-col gap-2 rounded-md border border-zinc-200 p-3 dark:border-zinc-700">
+                <p className="text-xs text-zinc-500">
+                  Proposes the newest saved version for a lead to review.
+                </p>
+                <input
+                  id="proposal-title"
+                  type="text"
+                  value={proposalTitle}
+                  onChange={(e) => setProposalTitle(e.target.value)}
+                  placeholder={`Promote ${name}`}
+                  className={inputClass}
+                />
+                <textarea
+                  id="proposal-note"
+                  rows={3}
+                  value={proposalNote}
+                  onChange={(e) => setProposalNote(e.target.value)}
+                  placeholder="Why should this go live? Which backtests back it?"
+                  className={inputClass}
+                />
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={handlePropose}
+                    className="flex-1 rounded-md bg-zinc-800 px-3 py-1.5 text-sm text-white hover:bg-zinc-700 dark:bg-zinc-200 dark:text-zinc-900"
+                  >
+                    Open proposal
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setIsProposing(false); setSaveError(null); }}
+                    className="rounded-md px-3 py-1.5 text-sm text-zinc-500 hover:text-zinc-700"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setIsProposing(true)}
+                className="rounded-md border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-50 dark:border-zinc-600 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              >
+                Propose for live review
+              </button>
+            ))}
+          </>
         )}
 
         {isSavingNew ? (

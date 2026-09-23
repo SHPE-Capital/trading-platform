@@ -1,16 +1,29 @@
 import request from "supertest";
 import { createApp } from "../../app/index";
 import * as repositories from "../../adapters/supabase/repositories";
+import * as review from "../../adapters/supabase/reviewRepositories";
+import { getSupabaseClient } from "../../adapters/supabase/client";
 import { PairsStrategy } from "../../strategies/pairs/pairsStrategy";
 
 jest.mock("../../adapters/supabase/repositories");
+jest.mock("../../adapters/supabase/reviewRepositories");
+jest.mock("../../adapters/supabase/client");
 
 const mockGetAll = repositories.getAllStrategyRuns as jest.Mock;
 const mockGetById = repositories.getStrategyRunById as jest.Mock;
-const mockInsertRun = repositories.insertStrategyRun as jest.Mock;
-const mockUpdateRun = repositories.updateStrategyRun as jest.Mock;
 const mockGetAllStrategies = repositories.getAllStrategies as jest.Mock;
 const mockGetStrategyById = repositories.getStrategyById as jest.Mock;
+const mockInsertStrategyVersion = review.insertStrategyVersion as jest.Mock;
+const mockGetAppUser = review.getAppUserById as jest.Mock;
+
+const mockGetUser = jest.fn();
+(getSupabaseClient as jest.Mock).mockReturnValue({ auth: { getUser: mockGetUser } });
+
+/** Signs the next request in as a club member. Config CRUD needs no special role. */
+function signedInAs(id = "user-1") {
+  mockGetUser.mockResolvedValue({ data: { user: { id } }, error: null });
+  mockGetAppUser.mockResolvedValue({ id, email: "member@shpe.test", displayName: "Member", role: "member" });
+}
 
 describe("Strategies HTTP API", () => {
   const app = createApp();
@@ -139,35 +152,103 @@ describe("Strategies HTTP API", () => {
   });
 
   describe("POST /api/strategies/configs", () => {
-    test("returns 400 when required fields are missing", async () => {
+    test("returns 401 without a signed-in caller", async () => {
       const res = await request(app)
         .post("/api/strategies/configs")
+        .send({ strategy_type: "pairs_trading", name: "test", config: {} });
+      expect(res.status).toBe(401);
+    });
+
+    test("returns 400 when required fields are missing", async () => {
+      signedInAs();
+      const res = await request(app)
+        .post("/api/strategies/configs")
+        .set("Authorization", "Bearer valid")
         .send({ name: "test" }); // missing strategy_type and config
       expect(res.status).toBe(400);
     });
 
     test("returns 400 for unknown strategy type", async () => {
+      signedInAs();
       const res = await request(app)
         .post("/api/strategies/configs")
+        .set("Authorization", "Bearer valid")
         .send({ strategy_type: "unknown", name: "test", config: {} });
       expect(res.status).toBe(400);
+    });
+
+    test("creates the strategy and its v1 version together", async () => {
+      signedInAs("user-1");
+      (repositories.insertStrategy as jest.Mock).mockResolvedValue({
+        id: "cfg-1", strategy_type: "pairs_trading", name: "test", config: { symbols: ["SPY", "QQQ"] },
+      });
+      mockInsertStrategyVersion.mockResolvedValue({ id: "ver-1", versionNumber: 1 });
+
+      const res = await request(app)
+        .post("/api/strategies/configs")
+        .set("Authorization", "Bearer valid")
+        .send({ strategy_type: "pairs_trading", name: "test", config: { symbols: ["SPY", "QQQ"] } });
+
+      expect(res.status).toBe(201);
+      expect(mockInsertStrategyVersion).toHaveBeenCalledWith(
+        expect.objectContaining({
+          strategyId: "cfg-1",
+          changeSummary: "Initial version",
+          createdBy: "user-1",
+        }),
+      );
+    });
+
+    test("rolls back the strategy row if the v1 version insert fails", async () => {
+      signedInAs("user-1");
+      (repositories.insertStrategy as jest.Mock).mockResolvedValue({ id: "cfg-1", strategy_type: "pairs_trading", name: "test" });
+      mockInsertStrategyVersion.mockRejectedValue(new Error("db down"));
+
+      const res = await request(app)
+        .post("/api/strategies/configs")
+        .set("Authorization", "Bearer valid")
+        .send({ strategy_type: "pairs_trading", name: "test", config: {} });
+
+      expect(res.status).toBe(500);
+      expect(repositories.deleteStrategy).toHaveBeenCalledWith("cfg-1");
     });
   });
 
   describe("PUT /api/strategies/configs/:configId", () => {
+    test("returns 401 without a signed-in caller", async () => {
+      const res = await request(app)
+        .put("/api/strategies/configs/cfg-1")
+        .send({ name: "Updated", config: {} });
+      expect(res.status).toBe(401);
+    });
+
     test("returns 404 when config does not exist", async () => {
+      signedInAs();
       mockGetStrategyById.mockResolvedValue(null);
       const res = await request(app)
         .put("/api/strategies/configs/missing-id")
+        .set("Authorization", "Bearer valid")
         .send({ name: "Updated", config: {} });
       expect(res.status).toBe(404);
     });
 
     test("returns 400 when name or config is missing", async () => {
+      signedInAs();
       const res = await request(app)
         .put("/api/strategies/configs/cfg-1")
+        .set("Authorization", "Bearer valid")
         .send({ name: "Only name" }); // missing config
       expect(res.status).toBe(400);
+    });
+
+    test("any signed-in member (no special role) may update a config", async () => {
+      signedInAs("user-1");
+      mockGetStrategyById.mockResolvedValue({ id: "cfg-1", name: "old", config: {} });
+      const res = await request(app)
+        .put("/api/strategies/configs/cfg-1")
+        .set("Authorization", "Bearer valid")
+        .send({ name: "Updated", config: { symbols: ["SPY", "QQQ"] } });
+      expect(res.status).toBe(200);
     });
   });
 

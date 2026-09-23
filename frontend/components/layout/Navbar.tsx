@@ -14,11 +14,13 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { config } from "../../config";
 import { useSystemHealthData } from "../../context/DataContext";
+import { useAuth } from "../../context/AuthContext";
 
 const NAV_LINKS = [
   { href: "/dashboard",  label: "Dashboard"   },
   { href: "/strategies", label: "Strategies"  },
   { href: "/portfolio",  label: "Portfolio"   },
+  { href: "/approvals",  label: "Approvals"   },
   { href: "/backtest",   label: "Backtest"    },
   { href: "/replay",     label: "Replay"      },
 ] as const;
@@ -26,6 +28,7 @@ const NAV_LINKS = [
 export default function Navbar() {
   const pathname = usePathname();
   const { status, isLoading } = useSystemHealthData();
+  const { user, signOut, isConfigured } = useAuth();
 
   const dotColor =
     isLoading || !status ? "bg-zinc-300" :
@@ -67,10 +70,37 @@ export default function Navbar() {
         })}
       </ul>
 
-      {/* System health indicator */}
-      <div className="flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
-        <span className={`h-2 w-2 rounded-full ${dotColor}`} />
-        <span className="capitalize">{label}</span>
+      {/* System health + account */}
+      <div className="flex items-center gap-4 text-xs text-zinc-500 dark:text-zinc-400">
+        <div className="flex items-center gap-2">
+          <span className={`h-2 w-2 rounded-full ${dotColor}`} />
+          <span className="capitalize">{label}</span>
+        </div>
+
+        {isConfigured && (
+          user ? (
+            <div className="flex items-center gap-2">
+              <span className="text-zinc-600 dark:text-zinc-300">
+                {user.displayName ?? user.email}
+              </span>
+              {user.role === "lead" && (
+                <span className="rounded border border-zinc-300 px-1.5 py-0.5 text-[10px] uppercase tracking-wide dark:border-zinc-600">
+                  lead
+                </span>
+              )}
+              <button
+                onClick={() => void signOut()}
+                className="text-zinc-500 underline-offset-2 hover:underline dark:text-zinc-400"
+              >
+                Sign out
+              </button>
+            </div>
+          ) : (
+            <Link href="/login" className="font-medium text-zinc-700 hover:underline dark:text-zinc-300">
+              Sign in
+            </Link>
+          )
+        )}
       </div>
     </nav>
   );

@@ -10,6 +10,7 @@ import {
   updateStrategy,
   deleteStrategy,
 } from "../../adapters/supabase/repositories";
+import { insertStrategyVersion } from "../../adapters/supabase/reviewRepositories";
 import { STRATEGY_DEFINITIONS, STRATEGY_FACTORY } from "../../config/strategyDefaults";
 import { newId } from "../../utils/ids";
 import { nowMs } from "../../utils/time";
@@ -91,7 +92,6 @@ export async function startStrategyRun(req: Request, res: Response): Promise<voi
     return;
   }
 
-  const def = STRATEGY_DEFINITIONS[strategyType];
   const strategy = factory(config);
 
   const configId = config.id as string | undefined;
@@ -203,7 +203,15 @@ export async function getStrategyDefaults(req: Request, res: Response): Promise<
   res.json(def);
 }
 
-/** POST /api/strategies/configs — body: { strategy_type, name, config } */
+/**
+ * POST /api/strategies/configs — body: { strategy_type, name, config }
+ *
+ * Every strategy gets its v1 strategy_versions row here, at creation — not only
+ * on a later edit. Without this, a strategy saved and proposed without ever
+ * being edited first has no version for a proposal to cite (createProposal
+ * 400s with "no versions yet"). If the version insert fails, the strategy row
+ * is rolled back rather than left orphaned with zero history.
+ */
 export async function createStrategy(req: Request, res: Response): Promise<void> {
   const { strategy_type, name, config } = req.body as {
     strategy_type: string;
@@ -221,6 +229,19 @@ export async function createStrategy(req: Request, res: Response): Promise<void>
   }
   try {
     const strategy = await insertStrategy({ strategy_type, name, config });
+
+    try {
+      await insertStrategyVersion({
+        strategyId: strategy.id,
+        config,
+        changeSummary: "Initial version",
+        createdBy: req.user!.id,
+      });
+    } catch (versionErr) {
+      await deleteStrategy(strategy.id);
+      throw versionErr;
+    }
+
     // Enrich the response with the current algorithm version so the frontend has
     // it immediately without a second round-trip.
     const enriched = { ...strategy, algorithmVersion: def.algorithmVersion };

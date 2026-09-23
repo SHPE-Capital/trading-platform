@@ -240,6 +240,9 @@ function mapStrategyRun(row: Record<string, unknown>): StrategyRun {
     totalOrders: (row.total_orders as number) ?? 0,
     realizedPnl: (row.realized_pnl as number) ?? 0,
     meta: row.meta as StrategyRun["meta"],
+    versionId: (row.version_id as UUID | undefined) ?? undefined,
+    proposalId: (row.proposal_id as UUID | undefined) ?? undefined,
+    ownerId: (row.owner_id as UUID | undefined) ?? undefined,
   };
 }
 
@@ -263,6 +266,11 @@ export async function insertStrategyRun(run: StrategyRun): Promise<void> {
     total_orders: run.totalOrders,
     realized_pnl: run.realizedPnl,
     meta: run.meta ?? null,
+    // Review-workflow linkage (0007). Null on runs started outside the approval
+    // path, e.g. the STARTUP_LEG1/LEG2 bootstrap route.
+    version_id: run.versionId ?? null,
+    proposal_id: run.proposalId ?? null,
+    owner_id: run.ownerId ?? null,
   };
   const { error } = await supabase.from("strategy_runs").insert(payload);
   if (error) {

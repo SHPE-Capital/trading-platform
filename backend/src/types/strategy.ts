@@ -8,7 +8,7 @@
  * Outputs: StrategySignal or OrderIntent emitted to the execution pipeline.
  */
 
-import type { UUID, EpochMs, Symbol, OrderSide, Metadata, ExecutionAlgoType, SizerType } from "./common";
+import type { UUID, EpochMs, Symbol, Metadata, ExecutionAlgoType, SizerType } from "./common";
 import type { StrategyRiskBudget } from "./risk";
 
 // ------------------------------------------------------------------
@@ -171,6 +171,16 @@ export interface StrategyRun {
   totalOrders: number;
   realizedPnl: number;
   meta?: Metadata;
+
+  /**
+   * The exact strategy_versions row this run executed. Set by the approval path;
+   * absent on runs started before the review workflow existed.
+   */
+  versionId?: UUID;
+  /** The proposal that authorised this run going live. */
+  proposalId?: UUID;
+  /** The member accountable for this run — the proposal's author. */
+  ownerId?: UUID;
 }
 
 // ------------------------------------------------------------------
