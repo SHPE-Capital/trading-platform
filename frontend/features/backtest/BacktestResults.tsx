@@ -18,13 +18,48 @@ import { formatDuration, formatTimestamp } from "../../utils/dates";
 interface Props {
   result: BacktestResult;
   onRerun?: () => void;
+  onSave?: (id: string) => void;
+  isSaving?: boolean;
   showChart?: boolean;
 }
 
-export default function BacktestResults({ result, onRerun, showChart = true }: Props) {
+/** The Save affordance: a button when unsaved, a static badge once saved. */
+function SaveControl({ id, isSaved, isSaving, onSave }: {
+  id: string;
+  isSaved: boolean;
+  isSaving: boolean;
+  onSave: (id: string) => void;
+}) {
+  if (isSaved) {
+    return (
+      <span
+        title="Saved — this result and its full trade log are kept in the database"
+        className="flex items-center gap-1 rounded-md border border-transparent px-2.5 py-0.5 text-xs font-medium text-green-700 dark:text-green-400"
+      >
+        ✓ Saved
+      </span>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => onSave(id)}
+      disabled={isSaving}
+      title="Nothing is kept in the database until you save — unsaved runs are only held in memory for a limited time"
+      className="rounded-md border border-zinc-300 px-2.5 py-0.5 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-600 dark:text-zinc-400 dark:hover:bg-zinc-800"
+    >
+      {isSaving ? "Saving…" : "Save"}
+    </button>
+  );
+}
+
+export default function BacktestResults({ result, onRerun, onSave, isSaving = false, showChart = true }: Props) {
   const metrics = result.metrics;
   const equityCurve = result.equity_curve ?? [];
   const isReused = !!result.reused_from_id;
+  // A reused result came FROM the DB (dedup only ever matches previously-saved
+  // rows), so it's already durable — no point offering to save it again.
+  const isSaved = isReused || result.saved_at != null;
   const duration =
     result.completed_at && result.started_at
       ? result.completed_at - result.started_at
@@ -62,6 +97,9 @@ export default function BacktestResults({ result, onRerun, showChart = true }: P
             >
               Re-run
             </button>
+          )}
+          {onSave && result.status === "completed" && (
+            <SaveControl id={result.id} isSaved={isSaved} isSaving={isSaving} onSave={onSave} />
           )}
         </div>
       </div>

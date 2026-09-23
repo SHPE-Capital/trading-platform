@@ -44,8 +44,10 @@ import {
   listBacktests,
   getBacktest,
   runBacktest,
+  saveBacktest,
 } from '../../app/controllers/backtestController';
 import type { BacktestResult, BacktestConfig } from '../../types/backtest';
+import type { AuthenticatedUser } from '../../types/review';
 
 const mockGetAll = repos.getAllBacktestResults as jest.Mock;
 const mockGetById = repos.getBacktestResultById as jest.Mock;
@@ -85,6 +87,13 @@ function makeResult(id = 'bt-1'): BacktestResult {
     completed_at: Date.now(),
   } as unknown as BacktestResult;
 }
+
+const TEST_USER: AuthenticatedUser = {
+  id: 'user-42',
+  email: 'a@example.com',
+  role: 'member',
+  displayName: 'A. Member',
+};
 
 function mockReq(overrides: Partial<Request> = {}): Request {
   return {
@@ -243,16 +252,16 @@ describe('runBacktest — async dedup and fault tolerance', () => {
     expect(mockStreamComplete).toHaveBeenCalledTimes(1);
   });
 
-  it('completes SSE successfully even when DB insert fails after engine run', async () => {
-    // Engine runs fine but DB is unreachable for persistence
-    mockInsertResult.mockRejectedValue(new Error('DB insert failed'));
+  it('never writes to the DB on a fresh run — persistence only happens via explicit save', async () => {
+    // A completed run no longer auto-persists; it lives in memory until POST /:id/save.
     const res = mockRes();
     await runBacktest(mockReq({ body: validBody }), res);
     await flushAsync();
-    // SSE complete fires before insert (result cached in memory)
     expect(mockStreamComplete).toHaveBeenCalledTimes(1);
-    // SSE error should NOT have been called
     expect(mockStreamError).not.toHaveBeenCalled();
+    expect(mockInsertResult).not.toHaveBeenCalled();
+    expect(mockInsertOrders).not.toHaveBeenCalled();
+    expect(mockInsertFills).not.toHaveBeenCalled();
   });
 
   it('fires SSE error (not hang) when the backtest engine itself throws', async () => {
@@ -274,5 +283,81 @@ describe('runBacktest — async dedup and fault tolerance', () => {
     await flushAsync();
     // Outer catch-all must resolve the SSE channel
     expect(mockStreamError).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('saveBacktest', () => {
+  beforeEach(() => {
+    mockFindMatch.mockResolvedValue(null);
+    mockGetById.mockResolvedValue(null);
+    (BacktestEngine.prototype.run as jest.Mock).mockResolvedValue(makeResult('bt-save'));
+    mockInsertResult.mockResolvedValue(undefined);
+    mockInsertOrders.mockResolvedValue(undefined);
+    mockInsertFills.mockResolvedValue(undefined);
+  });
+
+  /** Drives a real run (result id fixed to 'bt-save' via the beforeEach mock above) so
+   *  the module-private pendingSaveCache is populated the same way the app populates
+   *  it — there is no test-only seam into it. */
+  async function runToCompletion(): Promise<void> {
+    await runBacktest(mockReq({ body: validRunBody }), mockRes());
+    await flushAsync();
+  }
+
+  const validRunBody = {
+    strategyConfig: { type: 'pairs_trading', symbols: ['SPY', 'QQQ'] },
+    startDate: '2024-01-01',
+    endDate: '2024-03-01',
+  };
+
+  it('persists result, orders, then fills (in that order) and returns 201', async () => {
+    await runToCompletion();
+
+    const res = mockRes();
+    await saveBacktest(mockReq({ params: { id: 'bt-save' }, user: TEST_USER } as never), res);
+
+    expect(mockInsertResult).toHaveBeenCalledWith(expect.objectContaining({ id: 'bt-save' }), TEST_USER.id);
+    expect(mockInsertOrders).toHaveBeenCalledWith('bt-save', expect.any(Array));
+    expect(mockInsertFills).toHaveBeenCalledWith('bt-save', expect.any(Array));
+    // Orders before fills: backtest_fills.order_id references backtest_orders.id.
+    const orderCallIndex = mockInsertOrders.mock.invocationCallOrder[0];
+    const fillCallIndex = mockInsertFills.mock.invocationCallOrder[0];
+    expect(orderCallIndex).toBeLessThan(fillCallIndex);
+    expect(res.status).toHaveBeenCalledWith(201);
+    expect(res.json).toHaveBeenCalledWith({ id: 'bt-save', alreadySaved: false });
+  });
+
+  it('short-circuits with alreadySaved when a row already exists, without touching pendingSaveCache state', async () => {
+    mockGetById.mockResolvedValue(makeResult('bt-already'));
+    const res = mockRes();
+    await saveBacktest(mockReq({ params: { id: 'bt-already' }, user: TEST_USER } as never), res);
+
+    expect(mockInsertResult).not.toHaveBeenCalled();
+    expect(res.json).toHaveBeenCalledWith({ id: 'bt-already', alreadySaved: true });
+  });
+
+  it('returns 404 with a re-run hint when nothing was ever run for this id', async () => {
+    const res = mockRes();
+    await saveBacktest(mockReq({ params: { id: 'never-ran' }, user: TEST_USER } as never), res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+    const [body] = res.json.mock.calls[0];
+    expect(body.detail).toMatch(/re-run/i);
+    expect(mockInsertResult).not.toHaveBeenCalled();
+  });
+
+  it('on persist failure, leaves the pending result available so a retry succeeds without re-running', async () => {
+    await runToCompletion();
+
+    mockInsertResult.mockRejectedValueOnce(new Error('DB unreachable'));
+    const failRes = mockRes();
+    await saveBacktest(mockReq({ params: { id: 'bt-save' }, user: TEST_USER } as never), failRes);
+    expect(failRes.status).toHaveBeenCalledWith(500);
+
+    // No re-run here — the second attempt must succeed purely from the still-pending cache entry.
+    mockInsertResult.mockResolvedValueOnce(undefined);
+    const retryRes = mockRes();
+    await saveBacktest(mockReq({ params: { id: 'bt-save' }, user: TEST_USER } as never), retryRes);
+    expect(retryRes.status).toHaveBeenCalledWith(201);
   });
 });

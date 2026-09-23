@@ -536,8 +536,19 @@ export function downsampleEquityCurve<T>(curve: T[], targetPoints = 5000): T[] {
   return downsampled;
 }
 
-/** Persists a full backtest result summary to the backtest_results table. */
-export async function insertBacktestResult(result: BacktestResult): Promise<void> {
+/**
+ * Persists a full backtest result summary to the backtest_results table.
+ *
+ * Called ONLY from the explicit save path (POST /api/backtests/:id/save) —
+ * a completed run otherwise lives in server memory only, so this insert is
+ * what makes it durable. savedBy becomes the row's owner_id: under this
+ * table's semantics, mere existence of the row means someone chose to keep
+ * it, so owner_id unambiguously means "who saved it," not "who ran it."
+ *
+ * @param result - The completed BacktestResult to persist
+ * @param savedBy - app_users.id of the member saving this result
+ */
+export async function insertBacktestResult(result: BacktestResult, savedBy: UUID): Promise<void> {
   const supabase = getSupabaseClient();
 
   let downsampledEquity = result.equity_curve ?? [];
@@ -569,6 +580,9 @@ export async function insertBacktestResult(result: BacktestResult): Promise<void
   // Persist the FK link to the strategy definition row if the config referenced one
   payload.strategy_id = result.config ? (result.config as { strategyId?: string }).strategyId ?? null : null;
   payload.strategy_version = result.config ? (result.config as { strategyVersion?: number }).strategyVersion ?? null : null;
+
+  payload.owner_id = savedBy;
+  payload.saved_at = new Date().toISOString();
 
   const MAX_RETRIES = 3;
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {

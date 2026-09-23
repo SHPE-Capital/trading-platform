@@ -19,7 +19,9 @@ import { useRef } from "react";
 import type { BacktestConfig } from "../../types/api";
 
 export default function BacktestPage() {
-  const { selectedResult, previousResult, isRunning, progress, error, run, rerun } = useBacktest();
+  const {
+    selectedResult, previousResult, isRunning, isSaving, progress, error, saveError, run, rerun, save,
+  } = useBacktest();
 
   // Keep the last submitted config so Re-run can re-submit it without the form
   const lastConfigRef = useRef<Omit<BacktestConfig, "id"> | null>(null);
@@ -27,6 +29,12 @@ export default function BacktestPage() {
   const handleRun = async (config: Omit<BacktestConfig, "id">) => {
     lastConfigRef.current = config;
     await run(config);
+  };
+
+  const handleSave = (id: string) => {
+    // Fire-and-forget from the button's perspective — errors surface via saveError
+    // below rather than a thrown promise the click handler would need to catch.
+    save(id).catch(() => {});
   };
 
   const handleRerun = async () => {
@@ -58,6 +66,11 @@ export default function BacktestPage() {
               {error}
             </div>
           )}
+          {saveError && (
+            <div className="mb-4 rounded-md bg-red-50 px-4 py-3 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
+              {saveError}
+            </div>
+          )}
           {isRunning && !progress && (
             <p className="text-sm text-zinc-400">Connecting…</p>
           )}
@@ -84,11 +97,17 @@ export default function BacktestPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
                   <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-zinc-400">Previous</p>
-                  <BacktestResults result={previousResult} showChart={false} />
+                  <BacktestResults result={previousResult} onSave={handleSave} isSaving={isSaving} showChart={false} />
                 </div>
                 <div className="rounded-lg border border-blue-200 p-4 dark:border-blue-900">
                   <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-blue-500">New run</p>
-                  <BacktestResults result={selectedResult} onRerun={handleRerun} showChart={false} />
+                  <BacktestResults
+                    result={selectedResult}
+                    onRerun={handleRerun}
+                    onSave={handleSave}
+                    isSaving={isSaving}
+                    showChart={false}
+                  />
                 </div>
               </div>
               <div>
@@ -100,7 +119,7 @@ export default function BacktestPage() {
 
           {/* Single result (no comparison) */}
           {!isRunning && selectedResult && !previousResult && (
-            <BacktestResults result={selectedResult} onRerun={handleRerun} />
+            <BacktestResults result={selectedResult} onRerun={handleRerun} onSave={handleSave} isSaving={isSaving} />
           )}
 
           {!isRunning && !selectedResult && !error && (

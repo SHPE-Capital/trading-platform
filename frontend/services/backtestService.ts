@@ -44,3 +44,16 @@ export async function runBacktest(
 ): Promise<{ backtestId: string; message: string }> {
   return apiPost("/backtests/run", force ? { ...config, force } : config, BASE);
 }
+
+/**
+ * Explicitly persists a completed run — nothing is written to the database
+ * until this is called. The server only holds the full result (with orders
+ * and fills) for a limited window after completion; past that, this call
+ * 404s and the backtest must be re-run to save it. Idempotent: saving an
+ * already-saved id just confirms it.
+ * @param id - Backtest UUID (the one returned by runBacktest / the SSE complete event)
+ * @returns { id, alreadySaved }
+ */
+export async function saveBacktest(id: string): Promise<{ id: string; alreadySaved: boolean }> {
+  return apiPost(`/backtests/${id}/save`, {}, BASE);
+}

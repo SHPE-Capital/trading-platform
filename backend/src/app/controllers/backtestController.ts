@@ -17,7 +17,6 @@ import {
   insertBacktestResult,
   insertBacktestOrders,
   insertBacktestFills,
-  updateBacktestResultStatus,
   backtestConfigKey,
 } from "../../adapters/supabase/repositories";
 import { BacktestEngine } from "../../core/backtest/backtestEngine";
@@ -33,6 +32,18 @@ import type { AppContext } from "../context";
 // completed, without a DB round trip. Entries expire after 10 minutes.
 const CACHE_TTL_MS = 10 * 60 * 1000;
 const resultCache = new Map<string, { result: BacktestResult; expiresAt: number }>();
+
+// Holds the FULL result (orders + fills included) for the window in which a member
+// can still explicitly save it — this is the only place that data exists once a run
+// completes, since it is no longer written to the DB automatically. Separate from
+// resultCache (which intentionally strips orders/fills — see cacheResult below) so
+// the two can carry different retention policies: the slim cache only needs to last
+// long enough for the initial results view; this one needs to last long enough for
+// someone to actually look at a run and decide whether it's worth keeping.
+// Expiring is not data loss — a backtest is deterministic given cached bars, so
+// "re-run to save" is always available as a fallback once this window closes.
+const SAVE_WINDOW_MS = 30 * 60 * 1000;
+const pendingSaveCache = new Map<string, { result: BacktestResult; expiresAt: number }>();
 
 // Tracks config fingerprints of runs that are currently executing, mapped to
 // the channel ID of the in-progress run. Used both to prevent duplicate engine
@@ -81,6 +92,25 @@ function getCached(id: string): BacktestResult | null {
   return entry.result;
 }
 
+/** Stashes the full (unstripped) result so an explicit save can still find the
+ *  orders/fills that cacheResult() deliberately dropped from the display cache. */
+function stashForSave(result: BacktestResult): void {
+  if (!result?.id) return;
+  pendingSaveCache.set(result.id, { result, expiresAt: Date.now() + SAVE_WINDOW_MS });
+}
+
+/**
+ * Reads without evicting — a save that fails partway through (e.g. the result row
+ * writes but the orders insert then throws) must leave the entry in place so the
+ * member can retry the save without needing to re-run the backtest.
+ */
+function peekPendingSave(id: string): BacktestResult | null {
+  const entry = pendingSaveCache.get(id);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) { pendingSaveCache.delete(id); return null; }
+  return entry.result;
+}
+
 /**
  * GET /api/backtests
  * Returns summaries of all past backtest results.
@@ -119,6 +149,72 @@ export async function getBacktest(req: Request, res: Response): Promise<void> {
     logger.error("getBacktest error", { id, err });
     res.status(500).json({ error: "Failed to fetch backtest" });
   }
+}
+
+/**
+ * POST /api/backtests/:id/save
+ *
+ * Explicitly persists a completed run — the only path that writes to
+ * backtest_results/backtest_orders/backtest_fills. Idempotent: saving an
+ * already-saved id just confirms it, rather than erroring.
+ *
+ * Known limitation: the three inserts below are not transactional (the
+ * Supabase JS client has no cross-table transaction here). If the result row
+ * writes but insertBacktestOrders then throws, a retry sees the row already
+ * exists and reports alreadySaved rather than resuming the orders/fills
+ * insert. This mirrors the risk tolerance the original auto-persist code
+ * already accepted (it logged a warning and moved on in the same situation);
+ * closing it fully would need a Postgres function wrapping all three writes
+ * in one transaction.
+ *
+ * Requires requireAuth (mounted in backtestRoutes.ts) — req.user is populated.
+ *
+ * @param req - Express Request with params.id; req.user from requireAuth
+ * @param res - Express Response: { id, alreadySaved? } or an error
+ */
+export async function saveBacktest(req: Request, res: Response): Promise<void> {
+  const id = req.params.id as string;
+
+  try {
+    const existing = await getBacktestResultById(id);
+    if (existing) {
+      res.json({ id, alreadySaved: true });
+      return;
+    }
+  } catch (err) {
+    logger.error("saveBacktest: existence check failed", { id, err });
+    res.status(500).json({ error: "Failed to check whether this backtest is already saved" });
+    return;
+  }
+
+  const full = peekPendingSave(id);
+  if (!full) {
+    res.status(404).json({
+      error: "This result is no longer available to save",
+      detail:
+        "It either expired (results stay saveable for 30 minutes after completion) or the " +
+        "server restarted. Re-run the backtest — the underlying bar data is cached, so a " +
+        "re-run of an unchanged config reproduces the same result.",
+    });
+    return;
+  }
+
+  try {
+    await insertBacktestResult(full, req.user!.id);
+    // Orders must complete before fills: backtest_fills.order_id FK references backtest_orders.id
+    await insertBacktestOrders(full.id, full.orders ?? []);
+    await insertBacktestFills(full.id, full.fills ?? []);
+  } catch (err) {
+    logger.error("saveBacktest: persist failed", { id, err });
+    // Deliberately do NOT evict from pendingSaveCache — leaving it in place lets
+    // the member retry the save without needing to re-run the backtest.
+    res.status(500).json({ error: "Failed to save backtest — try again" });
+    return;
+  }
+
+  pendingSaveCache.delete(id);
+  logger.info("saveBacktest: saved", { id, savedBy: req.user!.id });
+  res.status(201).json({ id, alreadySaved: false });
 }
 
 /**
@@ -255,7 +351,6 @@ export async function runBacktest(req: Request, res: Response): Promise<void> {
 
       logger.info("Backtest dedup: no match found, starting engine run", { id: config.id });
       const engine = new BacktestEngine();
-      let resultInserted = false;
       try {
         const result = await engine.run(
           config,
@@ -275,27 +370,18 @@ export async function runBacktest(req: Request, res: Response): Promise<void> {
         );
         logger.info("Backtest engine run finished", { id: config.id });
         cacheResult(result);
+        // The full result — orders and fills included — is only ever held here.
+        // Nothing is written to the DB until a member explicitly saves it via
+        // POST /:id/save; see the module doc comment on pendingSaveCache above.
+        stashForSave(result);
         // Release in-flight key before SSE fires so back-to-back runs from the
         // same client reach findMatchingBacktestResult instead of the relay path.
         inFlightKeys.delete(configKey);
         backtestStreamManager.complete(config.id, { backtestId: config.id });
         logger.info("Backtest SSE complete fired for fresh run", { id: config.id });
-        try {
-          await insertBacktestResult(result);
-          resultInserted = true;
-          // Orders must complete before fills: backtest_fills.order_id FK references backtest_orders.id
-          await insertBacktestOrders(result.id, result.orders ?? []);
-          await insertBacktestFills(result.id, result.fills ?? []);
-          logger.info("Backtest completed and saved", { id: config.id });
-        } catch (dbErr) {
-          logger.warn("Backtest result saved to cache but DB persist failed", { id: config.id, err: dbErr });
-        }
       } catch (err) {
         logger.error("Backtest engine failed", { id: config.id, err });
         backtestStreamManager.error(config.id, err instanceof Error ? err.message : "Backtest failed");
-        if (resultInserted) {
-          try { await updateBacktestResultStatus(config.id, "failed"); } catch {}
-        }
       }
     } catch (err) {
       // Catch-all: guarantees the SSE channel is always resolved

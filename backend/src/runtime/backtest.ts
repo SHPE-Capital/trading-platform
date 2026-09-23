@@ -54,7 +54,19 @@ async function main(): Promise<void> {
     events: result.event_count,
   });
 
-  await insertBacktestResult(result);
+  // insertBacktestResult now requires the saving member's app_users.id (owner_id
+  // has an FK to app_users) — there's no HTTP request/JWT here to derive one from,
+  // so this CLI entry point takes it from an env var. Running this script at all is
+  // already an explicit, deliberate action, unlike the app's UI flow it mirrors.
+  const cliOwnerId = process.env.BACKTEST_CLI_OWNER_ID;
+  if (!cliOwnerId) {
+    throw new Error(
+      "BACKTEST_CLI_OWNER_ID is required — set it to your app_users.id so this " +
+        "result's owner_id FK resolves. Find your id via GET /api/auth/me.",
+    );
+  }
+
+  await insertBacktestResult(result, cliOwnerId);
   logger.info("runtime/backtest: summary persisted", { id: result.id, event_count: result.event_count });
 
   await insertBacktestOrders(result.id, result.orders ?? []);

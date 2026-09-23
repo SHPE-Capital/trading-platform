@@ -10,7 +10,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { fetchBacktests, fetchBacktest, runBacktest } from "../services/backtestService";
+import { fetchBacktests, fetchBacktest, runBacktest, saveBacktest } from "../services/backtestService";
 import { config as appConfig } from "../config";
 import type { BacktestConfig, BacktestResult } from "../types/api";
 
@@ -26,10 +26,13 @@ interface UseBacktestResult {
   previousResult: BacktestResult | null;
   isLoading: boolean;
   isRunning: boolean;
+  isSaving: boolean;
   progress: BacktestProgress | null;
   error: string | null;
+  saveError: string | null;
   run: (config: Omit<BacktestConfig, "id">) => Promise<string>;
   rerun: (config: Omit<BacktestConfig, "id">) => Promise<string>;
+  save: (id: string) => Promise<void>;
   loadResult: (id: string, prefetched?: BacktestResult) => Promise<void>;
   refetch: () => void;
 }
@@ -44,8 +47,10 @@ export function useBacktest(): UseBacktestResult {
   const [previousResult, setPreviousResult] = useState<BacktestResult | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRunning, setIsRunning] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [progress, setProgress] = useState<BacktestProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const esRef = useRef<EventSource | null>(null);
 
   const fetchData = useCallback(async () => {
@@ -128,6 +133,24 @@ export function useBacktest(): UseBacktestResult {
     setSelectedResult(result);
   }, []);
 
+  const save = useCallback(async (id: string): Promise<void> => {
+    setIsSaving(true);
+    setSaveError(null);
+    try {
+      await saveBacktest(id);
+      // Optimistic: mark the currently-displayed result saved without a round trip.
+      // The real saved_at will show up next time this result is loaded from the list
+      // (fetchData below refreshes it, since a saved result now appears there).
+      setSelectedResult((prev) => (prev?.id === id ? { ...prev, saved_at: Date.now() } : prev));
+      await fetchData();
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Failed to save backtest");
+      throw err;
+    } finally {
+      setIsSaving(false);
+    }
+  }, [fetchData]);
+
   // Stores the current result as "previous" then forces a fresh run (bypasses dedup).
   const selectedResultRef = useRef<BacktestResult | null>(null);
   selectedResultRef.current = selectedResult;
@@ -137,5 +160,8 @@ export function useBacktest(): UseBacktestResult {
     return run(config, true);
   }, [run]);
 
-  return { results, selectedResult, previousResult, isLoading, isRunning, progress, error, run, rerun, loadResult, refetch: fetchData };
+  return {
+    results, selectedResult, previousResult, isLoading, isRunning, isSaving, progress, error, saveError,
+    run, rerun, save, loadResult, refetch: fetchData,
+  };
 }

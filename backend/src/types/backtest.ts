@@ -106,6 +106,14 @@ export interface BacktestResult {
   completed_at?: EpochMs;
   /** Error message if status is "failed" */
   error_message?: string;
+  /**
+   * app_users.id of whoever explicitly saved this result. Undefined for a
+   * result still living only in server memory (not yet saved, or from a
+   * process where the save endpoint was never called).
+   */
+  owner_id?: UUID;
+  /** When this result was explicitly saved (wall-clock Unix ms) — distinct from completed_at. */
+  saved_at?: EpochMs;
   /** Final portfolio state at end of backtest */
   final_portfolio: PortfolioSnapshot;
   /** Computed performance metrics */

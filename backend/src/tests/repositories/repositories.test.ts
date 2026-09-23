@@ -633,10 +633,12 @@ describe('insertBacktestFills', () => {
 // insertBacktestResult
 // ---------------------------------------------------------------------------
 describe('insertBacktestResult', () => {
+  const SAVED_BY = 'user-42';
+
   it('calls from("backtest_results").insert() with orders/fills stripped', async () => {
     const chain = buildChain();
     mockFrom.mockReturnValue(chain);
-    await insertBacktestResult(mockBacktestResult);
+    await insertBacktestResult(mockBacktestResult, SAVED_BY);
     expect(mockFrom).toHaveBeenCalledWith('backtest_results');
     expect(chain.insert).toHaveBeenCalledTimes(1);
     const [payload] = chain.insert.mock.calls[0];
@@ -646,11 +648,21 @@ describe('insertBacktestResult', () => {
     expect(payload.fills).toBeUndefined();
   });
 
+  it('stamps owner_id from the savedBy argument and sets saved_at', async () => {
+    const chain = buildChain();
+    mockFrom.mockReturnValue(chain);
+    const before = Date.now();
+    await insertBacktestResult(mockBacktestResult, SAVED_BY);
+    const [payload] = chain.insert.mock.calls[0];
+    expect(payload.owner_id).toBe(SAVED_BY);
+    expect(new Date(payload.saved_at).getTime()).toBeGreaterThanOrEqual(before);
+  });
+
   it('downsamples equity_curve to 5000 points when it exceeds the limit', async () => {
     const chain = buildChain();
     mockFrom.mockReturnValue(chain);
     const largeCurve = Array.from({ length: 6_000 }, (_, i) => ({ ts: i } as any));
-    await insertBacktestResult({ ...mockBacktestResult, equity_curve: largeCurve });
+    await insertBacktestResult({ ...mockBacktestResult, equity_curve: largeCurve }, SAVED_BY);
     const [payload] = chain.insert.mock.calls[0];
     expect(payload.equity_curve).toHaveLength(5000);
     expect(payload.equity_curve[0]).toEqual(largeCurve[0]);
@@ -661,7 +673,7 @@ describe('insertBacktestResult', () => {
     const chain = buildChain();
     mockFrom.mockReturnValue(chain);
     const smallCurve = [{ ts: 1 } as any, { ts: 2 } as any];
-    await insertBacktestResult({ ...mockBacktestResult, equity_curve: smallCurve });
+    await insertBacktestResult({ ...mockBacktestResult, equity_curve: smallCurve }, SAVED_BY);
     const [payload] = chain.insert.mock.calls[0];
     expect(payload.equity_curve).toHaveLength(2);
   });

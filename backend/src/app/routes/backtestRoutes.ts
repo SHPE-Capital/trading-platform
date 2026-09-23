@@ -11,7 +11,9 @@ import {
   getBacktest,
   runBacktest,
   streamBacktest,
+  saveBacktest,
 } from "../controllers/backtestController";
+import { requireAuth } from "../middleware/requireAuth";
 
 const router = Router();
 
@@ -26,5 +28,8 @@ router.get("/:id", getBacktest);
 
 /** POST /api/backtests/run — trigger a new backtest run */
 router.post("/run", runBacktest);
+
+/** POST /api/backtests/:id/save — explicitly persist a completed run (member-only) */
+router.post("/:id/save", requireAuth, saveBacktest);
 
 export default router;

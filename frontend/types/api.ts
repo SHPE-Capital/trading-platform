@@ -80,6 +80,13 @@ export interface BacktestResult {
   event_count?: number;
   /** Set when this result was served from a previous identical run. */
   reused_from_id?: string;
+  /**
+   * Present only once someone has explicitly saved this result — a fresh run
+   * lives only in server memory until POST /backtests/:id/save. Absence means
+   * "not saved yet," not "unknown."
+   */
+  owner_id?: string;
+  saved_at?: number;
 }
 
 export type ReplaySpeed = 0.25 | 0.5 | 1 | 2 | 5 | 10 | "step";
