@@ -6,6 +6,8 @@
 
 This document is a snapshot, not a changelog — it describes what's true as of the date above. Treat anything it says about "current state" as something to re-verify (`git status`, `git log`, re-read the referenced files) before acting on it, since work continued on this repo outside the conversation this document summarizes.
 
+> **Correction, made minutes after this document was first committed:** the original version asserted several things were "zero code written" — the backtest job queue/worker, bar-cache read-through, run-lease heartbeating, boot-time warm-up, and a live migration runner — without first checking `git log`. Three commits (`fa2aa51`, `1129e88`, `79d4dcb`) landed on this branch, outside this conversation, implementing exactly those things. §2, §3, §6, §7, §8, §9, and §10 below have been corrected to account for them. This is left in rather than silently fixed because it's a real lesson for whoever reads this: **run `git log` before trusting any "not yet built" claim in this document**, including the corrected ones — more may have shipped since.
+
 ---
 
 ## 1. How the strategies work
@@ -70,7 +72,9 @@ Other known-but-unfixed gaps: two of the three presets' computed half-spreads ar
 2. **`core/backtest/backtestEngine.ts`** — `run()` checks the lock and throws immediately, before fetching any market data, if called inside a locked process.
 3. **`app/controllers/backtestController.ts`** — returns **409** at the HTTP edge the moment `req.app.locals.ctx.orchestrator` is present, before the request body is even validated.
 
-**Why three layers instead of just removing the route.** The real fix is removing `backtestRoutes` from the trading runtime's router entirely, making the question "is the clock locked" unaskable rather than answered. That's a larger, riskier change than fit in this checkpoint (it touches how `app/index.ts` assembles its router based on mode). The three layers are compensating controls until that split exists — and the clock-lock layer specifically is worth keeping *permanently*, even after the route is removed, because it's a two-line invariant check that turns "a future debug script calls `setClockOverride` against the wrong environment" from silent data corruption into an immediate crash. **Not done, offered but never requested:** actually removing the route mount for live processes.
+**Why three layers instead of just removing the route, at the time.** The real fix was removing `backtestRoutes` from the trading runtime's router entirely, making the question "is the clock locked" unaskable rather than answered. That felt like a larger, riskier change than fit in this checkpoint. The three layers were compensating controls until that split existed.
+
+**Update — this has since actually happened, via a cleaner path than "remove the route."** Commit `1129e88` ("durable job queue, worker process, and shared bar cache" — see §3, §10) moved backtest *execution* entirely out of the request path and into a dedicated worker process. `POST /backtests/run` now only enqueues a `backtest_jobs` row and returns — it never calls `BacktestEngine.run()` itself. Because of that, the route is safe on *any* process, trading runtimes included, and the commit message explicitly removed the 409 guard as a result: *"the engine only ever runs in a worker, any process can accept a backtest request, trading runtimes included, and the 409 guard is gone."* The clock-lock layer in `utils/time.ts` was kept anyway, deliberately, as defense in depth — exactly the reasoning laid out above about it being a cheap, permanent invariant worth having regardless of what the routing layer guarantees.
 
 **Frontend half of the fix:** `NEXT_PUBLIC_BACKTEST_API_BASE_URL` (defaults to the API-only process, port 8082) — all backtest HTTP calls and the SSE progress stream route there instead of `NEXT_PUBLIC_API_BASE_URL`.
 
@@ -97,13 +101,15 @@ The 7 parts from that plan, and their actual status as of this document:
 
 | Part | What it covers | Status |
 |---|---|---|
-| 1 | Process isolation | **Done** — Checkpoint 1, §2 above |
-| 2 | Durable backtest job queue | Schema written (`0001_backtest_jobs.sql`), **zero consumer code** |
-| 3 | Shared bar cache | Schema written (`0002_bars_cache.sql`), **no read-through** in `BacktestLoader` |
-| 4 | Identity & RLS | Schema + most app code appears built (see §6, §7) — **not audited end-to-end in this conversation** |
-| 5 | Live runner hardening (leases, warm-up) | Schema written (`0004_run_leases.sql`), **no heartbeat or warm-up code** |
+| 1 | Process isolation | **Done** — Checkpoint 1, §2 above (since evolved: the 409 guard it introduced was later removed as unnecessary — see §2's update) |
+| 2 | Durable backtest job queue | **Done** — commit `1129e88`: `FOR UPDATE SKIP LOCKED` worker (`npm run dev:worker`), lease/heartbeat, poison-job failure after repeated crashes, per-member concurrency cap, config-fingerprint dedup via a DB unique index (replacing the old in-process `inFlightKeys` map) |
+| 3 | Shared bar cache | **Done** — same commit (`1129e88`) wires the cache in, per its message |
+| 4 | Identity & RLS | Schema + most app code appears built (see §6, §7) — **not audited end-to-end in this conversation**; RLS was further hardened across 11 tables in `fa2aa51` (see §6) |
+| 5 | Live runner hardening (leases, warm-up) | **Done** — commit `79d4dcb`: per-run leases with heartbeat and orphan adoption (mode-aware — a real-money runtime no longer adopts paper runs), boot/approval-time history warm-up via the bar cache, auto-disable after `MAX_CONSECUTIVE_STRATEGY_ERRORS` |
 | 6 | Shared-book governance | Superseded — see §4's capital-sizing redesign and §6's migration `0005`→`0008` history |
 | 7 | Strategy correctness backlog | Partially done — hysteresis + O(1) stats shipped (§2); `meta` column, trade-replay, better downsampling all still open (§8) |
+
+All three of rows 2/3/5 above were corrected after this document's first commit — the original version called them schema-only. See the correction note at the top of this document.
 
 ---
 
@@ -145,7 +151,7 @@ A nice side effect of version-tagging backtests directly (`backtest_results.stra
 
 ## 6. Database schema — migrations 0001 through 0009
 
-Every migration below is **written as a `.sql` file in `supabase/migrations/` and has never been applied to any live database.** This is the single largest latent gap in the whole project — the entire identity/proposals/governance design exists only as source code until someone runs these against a real Supabase project, in order, for the first time.
+Every migration below is written as a `.sql` file in `supabase/migrations/`. The original version of this document said flatly that none had ever been applied to a live database and called that "the single largest latent gap in the whole project" — that was written without checking `git log` first, and it's now known to be wrong, or at least incomplete: commit `fa2aa51` ("runtime RPCs, RLS hardening, and a migration runner") added `backend/src/runtime/migrate.ts` and three npm scripts — `db:status` / `db:migrate` / `db:baseline` — that apply everything in `supabase/migrations/` in order, tracked in `supabase_migrations.schema_migrations` (the same table the Supabase CLI itself uses, so the two stay interchangeable), plus `db:verify` to check the live schema and its access controls against what's expected. **What this document cannot tell you is whether that runner has actually been pointed at a real Supabase project yet** — tooling existing and a migration having been executed are different facts, and only `npm run db:status` against the real `DATABASE_URL` answers that. Run it before assuming either way.
 
 | # | File | Adds | Status beyond "written" |
 |---|---|---|---|
@@ -158,8 +164,10 @@ Every migration below is **written as a `.sql` file in `supabase/migrations/` an
 | 0007 | `strategy_proposals.sql` | `strategy_proposals`, `proposal_comments`, the single-open-proposal partial unique index, the timeline-supporting view | Appears built per sampled code |
 | 0008 | `auth_provisioning.sql` | The `on_auth_user_created` trigger auto-creating an `app_users` row on signup; drops `member_allocations` | Appears built — `requireAuth.ts`'s own comment explicitly references this migration |
 | 0009 | `backtest_explicit_save.sql` | `saved_at` column, wires up the previously-unused `owner_id` on `backtest_results`, an owner-scoped insert RLS policy | **Built and tested this session** — see §7 |
+| 0010 | `proposal_review_state.sql` | Unknown to this document — discovered via `ls` after the fact, never read | **Not reviewed here** |
+| 0011 | `runtime_rpc.sql` | Security-definer SQL functions for the queue/cache/leases: claim/heartbeat/complete/fail/release for `backtest_jobs`, a single-call bar-range read, acquire/heartbeat/claim-orphans/release for run leases — all run over PostgREST with the service-role key so the backend needs no direct Postgres connection; `EXECUTE` revoked from `anon`/`authenticated` (Supabase grants it by default, which per the commit message would otherwise have let the public anon key claim jobs or steal leases) | **Built** — commit `fa2aa51`, which also enabled RLS on 11 previously-unprotected public tables, including `app_users` — the commit message notes that without it, a signed-in member could have `PATCH`ed their own role to `'lead'` |
 
-**Columns that exist with no code reading or writing them yet**, worth flagging explicitly so nobody assumes they're live: `bars`/`bar_coverage` (no reader), `strategy_runs.lease_*` (no heartbeat), `risk_rejections` (never confirmed wired to `RiskEngine`'s actual rejection paths).
+**Corrected from the original version of this document**, which claimed `bars`/`bar_coverage` and `strategy_runs.lease_*` had no code reading/writing them — commits `1129e88` and `79d4dcb` (§3) say otherwise. **Still genuinely unconfirmed in this document:** whether `risk_rejections` is wired to `RiskEngine`'s actual rejection paths, and what migration `0010` does (never read).
 
 ---
 
@@ -177,6 +185,8 @@ Every migration below is **written as a `.sql` file in `supabase/migrations/` an
 
 **Verification:** 817 backend tests passing (including new coverage specifically for the retry-without-re-running behavior and the orders-before-fills insert order), both backend and frontend `tsc --noEmit` clean. **Not committed** as of this document.
 
+**Note added after the fact:** commit `1129e88`'s message says the queue's dedup now also consults the save-window cache this feature introduced — "a recent identical result — saved, or still in its save window — is returned without re-simulating." That integration was not reviewed by this document; confirm it before assuming the two features compose cleanly.
+
 **Deliberately deferred, discussed but not built in this feature:** an `AttributionCollector` implementation for true trade-replay (the type shape, `ReplayAttribution`, and the TODO comments describing exactly what to subscribe to already exist in `core/replay/attributionCollector.ts` — `STRATEGY_SIGNAL_CREATED`/`ORDER_FILLED` are confirmed already published on the same event bus a backtest's own `BacktestEngine` instance uses, so this is a implementation gap, not a design gap); a `meta jsonb` column on `backtest_orders` to stop silently dropping the already-computed signal metadata (zScore, spread, hedge ratio, etc.) at persistence time; peak/trough-preserving downsampling for the equity curve chart (current uniform-stride sampling can visually hide a real drawdown that the metrics correctly reflect).
 
 ---
@@ -188,6 +198,8 @@ Every migration below is **written as a `.sql` file in `supabase/migrations/` an
 **Why not Kubernetes or Fargate for the live engine.** The live trading engine is designed to run as *exactly one instance* — that's what the run-lease work (migration `0004`) exists to enforce. Kubernetes' and Fargate's core value is elastic scaling across many replicas; nothing here benefits from that, and a managed EKS control plane alone runs roughly $70+/month before a single pod launches — against a total proposed budget in the $15–20/month range for everything else, that would roughly quadruple spend for a capability this workload structurally can't use.
 
 **Why Lambda for backtests specifically, over an always-on ECS worker service.** The core argument from the comparison: usage is bursty (12 people running backtests intermittently, not a constant stream), and Lambda bills per 100ms of actual compute versus an always-on task billing 24/7 regardless of load — at this usage shape, Lambda is plausibly within AWS's standing free tier. A 15-minute hard execution ceiling is the real tradeoff, mitigated by splitting a multi-symbol sweep into one invocation per pair (which also gets free parallelism, not just a workaround). Packaging plan: a multi-stage Dockerfile with a `server` target (what EC2 runs) and a future `lambda` target wrapping the same compiled `dist/` output for the Lambda Runtime API — one build, two deploy artifacts, not two parallel codebases.
+
+**Correction:** the worker process this plan is meant to deploy **now exists as real code**, not just a plan — commit `1129e88` (§3, §10) added it as a standalone Node process (`npm run dev:worker`) that claims `backtest_jobs` rows and runs `BacktestEngine` directly, no HTTP involved. What's described above is unchanged as the *deployment target* for that process (Lambda vs. an always-on worker service) — that decision and the packaging work are still unmade/undone. What's wrong is treating the worker's *application logic* as unbuilt; it isn't. The `docker-compose.yml` on disk has in fact already grown a `backtest-worker` service (`command: ["node", "dist/runtime/backtestWorker.js"]`) running the same image as `api` — containerizing it was apparently already underway outside this conversation too.
 
 **Why Vercel, not the same EC2, for the frontend.** Free at this traffic level (not just cheap), purpose-built for Next.js specifically (preview deployments, CDN caching, image optimization for free), and "push to main deploys" requires zero pipeline code via Vercel's native GitHub integration — versus building and maintaining that in the EC2 pipeline. One thing flagged to verify, not assumed: Vercel's free-tier terms lean personal/non-commercial; worth a quick check that a club's internal tool fits comfortably.
 
@@ -208,8 +220,9 @@ Every migration below is **written as a `.sql` file in `supabase/migrations/` an
 
 ## 9. Current repository state (verify before relying on this)
 
-- **Branch:** `JC`. **One real commit beyond main:** `8116797` ("wip(backtest): isolate backtest engine from live trading process"), containing all of §2 and the Part 07 fixes.
-- **A large set of modified and untracked files beyond that commit** — including extensive auth/proposals/review infrastructure (`requireAuth.ts`, `proposalsController.ts`, `reviewRepositories.ts`, migrations `0006`–`0008`, frontend `/approvals` and `/login`) that was **not produced by the conversation this document summarizes** and has not been audited here (§5's caveat). Also includes this session's explicit-backtest-save work (§7) and the Docker/AWS scaffolding (§8), both uncommitted.
+- **Branch:** `JC`. Commits beyond `main`, oldest first, as last checked: `8116797` (Checkpoint 1 + Part 07, §2 — the only one produced inside the conversation this document summarizes), `fa2aa51` (migration runner + RPCs + RLS hardening, §6), `1129e88` (backtest job queue + worker + bar cache, §3/§8/§10), `79d4dcb` (run leases + warm-up + auto-disable, §3), `99906d3` (proposal review-page version diff + book-allocation panel, §5), `84c001c` (a full Vitest frontend test suite — the frontend previously had none), and this document's own two commits. **The original version of this document said there was exactly "one commit beyond main" — that was wrong; it was written without running `git log`.** Run it yourself before trusting this list; more may have landed since.
+- **Everything from `fa2aa51` onward is co-authored "Claude Opus 5.5"** — a different model than the one that produced this document, confirming this is genuinely separate work, not something this conversation did and forgot about.
+- Auth/proposals/review infrastructure (`requireAuth.ts`, `proposalsController.ts`, `reviewRepositories.ts`, migrations `0006`–`0010`, frontend `/approvals` and `/login`) still has **not been audited end-to-end in the conversation this document summarizes** (§5's caveat stands) — it has, however, now gained a real test suite (`84c001c`) that this document has not read either.
 - **`backend/.env.bak-20260910164223` is still sitting on disk, untracked, with real-looking Alpaca/Supabase key names.** Flagged repeatedly across this conversation; never deleted, since removing a file nobody explicitly asked to have removed isn't a call to make unprompted. **Action for whoever picks this up: confirm it isn't needed, then delete it.**
 - **`backend/src/tests/core/backtestLoader.test.ts` hangs indefinitely** — confirmed pre-existing, never root-caused, currently just excluded from CI/local full-suite runs via a path ignore pattern.
 
@@ -217,27 +230,26 @@ Every migration below is **written as a `.sql` file in `supabase/migrations/` an
 
 ## 10. What's left to implement, prioritized
 
-**Zero code written, schema exists:**
-1. A consumer for `backtest_jobs` — nothing claims a row, runs `BacktestEngine`, or writes a result back. This is the single biggest piece of unbuilt application logic in the whole plan, and the AWS decision (§8) depends on deciding its final shape (Lambda direct-invoke vs. a polling worker).
-2. `bars`/`bar_coverage` read-through in `BacktestLoader` — confirmed every backtest still hits Alpaca directly.
-3. Run-lease heartbeating and boot-time warm-up for the live runner (replay recent bars into `SymbolStateManager` on restart, so strategies aren't blind for the full `minObservations` window after every deploy).
+**Corrected from the original version of this document** — three items previously listed here as "zero code written" (a `backtest_jobs` consumer, bar-cache read-through, run-lease heartbeating/warm-up) turned out to already be built in commits this document initially missed (§3, §9). They're removed from this list; treat their removal with the same skepticism this whole correction episode earns — verify, don't just trust this document's word a second time either.
 
-**AWS pieces:**
-4. Verify the Docker build actually succeeds (blocks everything downstream).
-5. The GitHub Actions workflow itself (build → ECR → SSM deploy → health-check rollback) — fully unstarted.
-6. The Lambda packaging stage and the backtest-job consumer that runs inside it.
-7. Caddy/TLS/Elastic IP/domain setup — none of it exists yet.
+**Confirmed whether a live Supabase project has actually been migrated:**
+1. Run `npm run db:status` (or `db:verify`) against the real `DATABASE_URL` — the tooling to apply `supabase/migrations/0001`–`0011` now exists (`fa2aa51`), but whether it's been pointed at production is unconfirmed by anything in this document.
 
-**Smaller, explicitly scoped-out fast-follows:**
-8. `meta` column on `backtest_orders` (data already computed, just currently dropped at insert — the cheapest win on this list).
-9. `AttributionCollector` implementation for real trade-replay.
-10. Peak/trough-preserving equity-curve downsampling.
-11. Actually removing (not just 409-guarding) the backtest routes from the live process's router.
+**AWS pieces — status reassessed given the worker now exists:**
+2. Verify the Docker build actually succeeds — Docker Desktop was not running when `backend/Dockerfile`/`docker-compose.yml` were written, so this is still unexecuted. Now three services need checking, not two: `api`, `paper-trading`, and the `backtest-worker` service that's since appeared in `docker-compose.yml`.
+3. The GitHub Actions workflow itself (build → ECR → SSM deploy → health-check rollback) — fully unstarted.
+4. The actual EC2-vs-Lambda deployment decision for the worker *process* (the process itself is built, per the correction above — this is now purely a "where does it run in production" question, not an application-logic gap).
+5. Caddy/TLS/Elastic IP/domain setup — none of it exists yet.
+
+**Smaller, explicitly scoped-out fast-follows (unaffected by the correction above):**
+6. `meta` column on `backtest_orders` (data already computed, just currently dropped at insert — the cheapest win on this list).
+7. `AttributionCollector` implementation for real trade-replay.
+8. Peak/trough-preserving equity-curve downsampling.
 
 **Explicitly deferred by the user, not a gap:**
-12. `teams`/`team_members` schema — correctly absent, per an explicit "later push" instruction.
+9. `teams`/`team_members` schema — correctly absent, per an explicit "later push" instruction, as of the last check.
 
-**Recommended single next action:** get Docker Desktop running and confirm `docker build -t trading-backend:smoke-test -f backend/Dockerfile backend` actually succeeds, then smoke-test the `api` service against dummy credentials (it never touches Alpaca at startup, so this is a safe, complete test). Everything else in §8 is built on top of that image.
+**Recommended single next action:** run `git log` and `npm run db:status` before doing anything else in this list — both are now known to have been wrong assumptions once already in this same document. After that: get Docker Desktop running and confirm `docker build` actually succeeds for all three services now defined in `docker-compose.yml`.
 
 ---
 
@@ -251,4 +263,4 @@ Every migration below is **written as a `.sql` file in `supabase/migrations/` an
 
 ---
 
-*This document summarizes one engineering conversation's worth of work. Where it says a file or behavior "exists" or is "confirmed," that was checked by reading the actual source at the time this was written — but given how much changed even during the conversation (the auth/proposals discovery in §5, the docker-compose/`.env.example` drift noted in §8), re-verify anything load-bearing before depending on it.*
+*This document summarizes one engineering conversation's worth of work. Where it says a file or behavior "exists" or is "confirmed," that was checked by reading the actual source at the time this was written — but given how much changed even during the conversation (the auth/proposals discovery in §5, the docker-compose/`.env.example` drift noted in §8), and given this document's own first committed version got §2/§3/§6/§10 wrong by not checking `git log` first, re-verify anything load-bearing before depending on it. That includes re-verifying this correction.*
