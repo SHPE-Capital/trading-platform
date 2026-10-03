@@ -1,0 +1,25 @@
+# Kept independent from .gitignore on purpose — a build context leak is a
+# different failure mode than a git commit leak (an image can be pushed to
+# ECR and pulled by anyone with registry read access), so this errs wider
+# rather than assuming git's rules are sufficient here too.
+
+node_modules
+dist
+*.tsbuildinfo
+coverage
+
+# Anything env-shaped, not just the exact names git ignores — this catches
+# stray backups too (e.g. .env.bak-<timestamp>, .env.old, .env~) the way a
+# literal ".env" / ".env.local" allowlist in .gitignore does not.
+.env*
+*.bak
+*.bak-*
+
+.git
+.github
+*.md
+supabase
+
+src/tests
+jest.config.js
+tsconfig.spec.json
