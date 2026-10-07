@@ -110,6 +110,21 @@ Closed trades use the same FIFO lot accounting as the backtest engine
 | `GET /api/runs/:runId/fills`, `/signals` | Raw rows for the run page tables |
 | `GET /api/broker/account`, `/positions`, `/history`, `/drift` | The account as the broker reports it (cached 15–60 s) |
 
+### Diagnostics
+
+- **Slippage** — every order records the price the strategy acted on
+  (`decision_price`); the report compares each fill with it, in basis points
+  and dollars, overall and per symbol.
+- **Backtest vs live** — `POST /api/runs/:runId/compare-backtest` queues a
+  backtest of the run's exact window and config (tagged `sourceRunId`, linked
+  from `strategy_runs.meta.compareBacktestId`). The run page overlays the two
+  PnL curves: live tracking its backtest but trailing it points at execution;
+  both losing points at the strategy. Pairs only, like the backtest engine.
+- **Benchmark** — buy-and-hold of `BENCHMARK_SYMBOL` (default SPY) over the
+  same window, through the shared bar cache; shown as a return and a curve.
+- **Behaviour** — holding-time distribution of closed trades, exposure over
+  time from `run_snapshots`, per-symbol PnL, and the runner-event timeline.
+
 Reports and broker reads are cached in-process (`utils/cache.ts`); the `Cache`
 interface is the seam for a shared store if the API ever runs as several
 processes.
@@ -121,3 +136,4 @@ processes.
 | `EXECUTION_TARGET` | `sim` | `sim`, `alpaca-paper`, or `alpaca-live` |
 | `EXPECTED_BROKER_ACCOUNT` | — | Account number the keys must resolve to; mandatory on `aws-prod` |
 | `BROKER_SYNC_INTERVAL_MS` | `60000` | Ledger sync + drift interval |
+| `BENCHMARK_SYMBOL` | `SPY` | Buy-and-hold benchmark shown beside run and strategy performance |

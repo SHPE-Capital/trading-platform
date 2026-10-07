@@ -139,6 +139,10 @@ export interface PerformanceReport {
   rejectionsByCheck: Array<{ check: string; count: number }>;
   slippage: SlippageSummary;
   holdingTimes: Array<{ bucket: string; trades: number; pnl: number }>;
+  /** Gross and net exposure over time, from the run's sampled book. */
+  exposureCurve: Array<{ ts: number; gross: number; net: number }>;
+  /** Buy-and-hold of the benchmark over the same window, as dollar PnL on the capital base. */
+  benchmark?: { symbol: string; curve: Array<{ ts: number; pnl: number }> };
   runs?: RunSummary[];
   events?: RunnerEvent[];
 }

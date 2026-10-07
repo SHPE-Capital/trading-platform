@@ -16,6 +16,7 @@ import { use, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import PerformancePanel from "../../../features/performance/PerformancePanel";
+import CompareSection from "../../../features/performance/CompareSection";
 import {
   HoldingTimesCard, OpenPositionsTable, RejectionsCard, RunsTable, Section, SignalFunnelCard,
   SlippageCard, SymbolTable, TradesTable,
@@ -56,8 +57,10 @@ export default function StrategyPerformancePage({ params }: Props) {
   }, []);
 
   const latestBacktest = useMemo(() => {
+    // Run-window comparisons are diagnostics, not the strategy's reference backtest.
     const matching = backtests.filter((b) =>
-      b.status === "completed" && b.metrics && b.config.strategyId === id && (!versionId || b.config.strategyVersionId === versionId));
+      b.status === "completed" && b.metrics && !b.config.sourceRunId
+      && b.config.strategyId === id && (!versionId || b.config.strategyVersionId === versionId));
     return matching.sort((a, b) => (b.completed_at ?? 0) - (a.completed_at ?? 0))[0] ?? null;
   }, [backtests, id, versionId]);
 
@@ -121,6 +124,8 @@ export default function StrategyPerformancePage({ params }: Props) {
               )}
             </Section>
           </div>
+
+          <CompareSection report={report} />
 
           <RunsTable runs={report.runs ?? []} />
 

@@ -55,7 +55,7 @@ export async function loadRunLedger(run: StrategyRun): Promise<RunLedger> {
     readAll<Record<string, unknown>>((a, b) => supabase.from("risk_rejections")
       .select("failed_check").eq("run_id", run.id).range(a, b), "run rejections"),
     readAll<Record<string, unknown>>((a, b) => supabase.from("run_snapshots")
-      .select("ts, realized_pnl, unrealized_pnl").eq("run_id", run.id)
+      .select("ts, realized_pnl, unrealized_pnl, gross_exposure, net_exposure").eq("run_id", run.id)
       .order("ts", { ascending: true }).range(a, b), "run snapshots"),
   ]);
 
@@ -95,6 +95,8 @@ export async function loadRunLedger(run: StrategyRun): Promise<RunLedger> {
       ts: new Date(s.ts as string).getTime(),
       realizedPnl: Number(s.realized_pnl),
       unrealizedPnl: Number(s.unrealized_pnl),
+      grossExposure: Number(s.gross_exposure),
+      netExposure: Number(s.net_exposure),
     })),
   };
 }

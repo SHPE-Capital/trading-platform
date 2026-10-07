@@ -139,6 +139,10 @@ export interface PerformanceReport {
   slippage: SlippageSummary;
   /** Holding time of closed trades, bucketed. */
   holdingTimes: Array<{ bucket: string; trades: number; pnl: number }>;
+  /** Gross and net exposure over time, from the run's sampled book. */
+  exposureCurve: Array<{ ts: EpochMs; gross: number; net: number }>;
+  /** Buy-and-hold of the benchmark over the same window, as dollar PnL on the capital base. */
+  benchmark?: { symbol: string; curve: Array<{ ts: EpochMs; pnl: number }> };
   /** Strategy reports: the runs that make it up. */
   runs?: RunSummary[];
   /** Run reports: lease adoptions, error streaks, auto-disables. */

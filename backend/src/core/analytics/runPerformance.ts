@@ -34,6 +34,8 @@ export interface RunSnapshotRow {
   ts: number;
   realizedPnl: number;
   unrealizedPnl: number;
+  grossExposure?: number;
+  netExposure?: number;
 }
 
 export interface RunLedger {
@@ -339,6 +341,11 @@ function buildReport(
     rejectionsByCheck: [...rejections].map(([check, count]) => ({ check, count })).sort((a, b) => b.count - a.count),
     slippage: slippageSummary(allFills, allOrders),
     holdingTimes: holdingTimes(trades),
+    exposureCurve: ledgers
+      .flatMap((l) => l.snapshots)
+      .filter((s) => s.grossExposure !== undefined)
+      .sort((a, b) => a.ts - b.ts)
+      .map((s) => ({ ts: s.ts, gross: s.grossExposure!, net: s.netExposure ?? 0 })),
   };
 }
 

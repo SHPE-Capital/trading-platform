@@ -112,6 +112,8 @@ export const env = {
   sandboxMaxActiveRunsPerMember: optionalNumber("SANDBOX_MAX_ACTIVE_RUNS_PER_MEMBER", 2),
   /** Automatic lifetime of a self-service paper sandbox. */
   sandboxRunTtlHours: optionalNumber("SANDBOX_RUN_TTL_HOURS", 24),
+  /** Buy-and-hold benchmark shown beside run and strategy performance. */
+  benchmarkSymbol: optional("BENCHMARK_SYMBOL", "SPY"),
   /** How often a trading runtime copies its broker's orders and fills into the ledger. */
   brokerSyncIntervalMs: optionalNumber("BROKER_SYNC_INTERVAL_MS", 60_000),
 

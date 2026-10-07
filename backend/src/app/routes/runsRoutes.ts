@@ -6,7 +6,7 @@
 
 import { Router } from "express";
 import { requireAuth } from "../middleware/requireAuth";
-import { getRunFills, getRunPerformance, getRunSignals } from "../controllers/performanceController";
+import { compareRunWithBacktest, getRunFills, getRunPerformance, getRunSignals } from "../controllers/performanceController";
 
 const router = Router();
 
@@ -18,5 +18,8 @@ router.get("/:runId/fills", requireAuth, getRunFills);
 
 /** GET /api/runs/:runId/signals — the run's latest signals and their outcomes */
 router.get("/:runId/signals", requireAuth, getRunSignals);
+
+/** POST /api/runs/:runId/compare-backtest — queue a backtest of the run's exact window */
+router.post("/:runId/compare-backtest", requireAuth, compareRunWithBacktest);
 
 export default router;

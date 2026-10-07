@@ -10,6 +10,9 @@ import { createPairsConfig } from "../../strategies/pairs/pairsConfig";
 import type { BacktestConfig } from "../../types/backtest";
 import type { IStrategy } from "../../strategies/base/strategy";
 
+/** Strategy types the backtest engine can simulate. */
+export const BACKTESTABLE_TYPES: ReadonlySet<string> = new Set(["pairs_trading"]);
+
 export function buildBacktestStrategies(config: BacktestConfig): IStrategy[] {
   const sc = config.strategyConfig;
   if (sc.type === "pairs_trading") {

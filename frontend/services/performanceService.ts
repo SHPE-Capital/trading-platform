@@ -5,7 +5,7 @@
  * its runs, plus the raw rows behind the run page tables.
  */
 
-import { apiGet } from "./api";
+import { apiGet, apiPost } from "./api";
 import type { PerformanceReport, RunSignal } from "../types/analytics";
 import type { Fill } from "../types/portfolio";
 
@@ -26,6 +26,11 @@ export function fetchStrategyPerformance(strategyId: string, filter: StrategyPer
   if (filter.sandbox) qs.set("sandbox", filter.sandbox);
   const q = qs.toString();
   return apiGet<PerformanceReport>(`/strategies/${encodeURIComponent(strategyId)}/performance${q ? `?${q}` : ""}`);
+}
+
+/** Queues a backtest of the run's exact window and config; returns the backtest to poll. */
+export function compareRunWithBacktest(runId: string, force = false): Promise<{ backtestId: string; reused?: boolean }> {
+  return apiPost<{ backtestId: string; reused?: boolean }>(`/runs/${encodeURIComponent(runId)}/compare-backtest`, { force });
 }
 
 export function fetchRunFills(runId: string): Promise<Fill[]> {

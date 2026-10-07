@@ -47,6 +47,7 @@ function report(overrides: Partial<PerformanceReport> = {}): PerformanceReport {
     rejectionsByCheck: [{ check: "ORDER_COOLDOWN", count: 4 }],
     slippage: { measuredFills: 0, avgBps: 0, medianBps: 0, totalCost: 0, bySymbol: [] },
     holdingTimes: [{ bucket: "1–5 min", trades: 158, pnl: -20 }],
+    exposureCurve: [],
     events: [{ ts: 1, type: "STOPPED", detail: "stopped by lead@shpe.test" }],
     ...overrides,
   };

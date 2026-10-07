@@ -3,12 +3,31 @@
  *
  * Live performance from the ledger: one run, or a strategy across every run of
  * it. Reports reuse the backtest metric names so the frontend renders both with
- * the same panel.
+ * the same panel, and carry a buy-and-hold benchmark over the same window.
+ * "Compare with backtest" queues a backtest of a run's exact window and config.
  */
 
 import type { Request, Response } from "express";
-import { getFillsForRun, getRunsForStrategy, getStrategyRunById, getStrategyById } from "../../adapters/supabase/repositories";
 import {
+  backtestConfigKey,
+  getFillsForRun,
+  getRunsForStrategy,
+  getStrategyById,
+  getStrategyRunById,
+  updateStrategyRun,
+} from "../../adapters/supabase/repositories";
+import { enqueueBacktestJob } from "../../adapters/supabase/backtestJobRepository";
+import { SupabaseBarCache } from "../../adapters/supabase/barCacheRepository";
+import { BacktestLoader } from "../../core/backtest/backtestLoader";
+import { BACKTESTABLE_TYPES } from "../../core/backtest/strategyFactory";
+import { benchmarkPnl, loadBenchmarkCurve } from "../../core/analytics/benchmark";
+import { env } from "../../config/env";
+import { newId } from "../../utils/ids";
+import type { BacktestConfig } from "../../types/backtest";
+import type { BaseStrategyConfig } from "../../types/strategy";
+import type { PerformanceReport } from "../../types/analytics";
+import {
+  capitalBaseOf,
   filterStrategyRuns,
   getRunEvents,
   loadRunLedger,
@@ -23,6 +42,23 @@ import type { AppContext } from "../context";
 
 const REPORT_TTL_MS = 30_000;
 const MARKS_TTL_MS = 15_000;
+const BENCHMARK_TTL_MS = 3_600_000;
+
+const benchmarkLoader = new BacktestLoader({ cache: new SupabaseBarCache() });
+
+/** Benchmark closes over a window; empty when no bars are available (e.g. no data keys). */
+async function benchmarkCurve(startMs: number, endMs: number): Promise<{ ts: number; value: number }[]> {
+  const key = `bench:${env.benchmarkSymbol}:${Math.floor(startMs / 60_000)}:${Math.floor(endMs / 60_000)}`;
+  return sharedCache.getOrLoad(key, BENCHMARK_TTL_MS, () =>
+    loadBenchmarkCurve(benchmarkLoader, env.benchmarkSymbol, startMs, endMs).catch((err) => {
+      logger.warn("performance: benchmark unavailable", { err: String(err) });
+      return [];
+    }));
+}
+
+function withBenchmark(report: PerformanceReport, curve: { ts: number; value: number }[]): PerformanceReport {
+  return curve.length < 2 ? report : { ...report, benchmark: { symbol: env.benchmarkSymbol, curve: benchmarkPnl(curve, report.capitalBase) } };
+}
 
 /** Latest prices: the broker's position marks, then this process's live quotes. */
 async function currentMarks(ctx: AppContext): Promise<Map<string, number>> {
@@ -56,7 +92,10 @@ export async function getRunPerformance(req: Request, res: Response): Promise<vo
       // Keep the stored stats (run cards) in step with what this report shows.
       upsertRunStats([computeRunStats(ledger, marks, now)]).catch((err) =>
         logger.warn("performance: run stats not stored", { runId, err: String(err) }));
-      return { ...buildRunReport(ledger, { marks, now }), events };
+      const start = ledger.startedAt ?? ledger.fills[0]?.ts ?? now;
+      const end = run.status === "running" ? now : (ledger.stoppedAt ?? ledger.fills[ledger.fills.length - 1]?.ts ?? now);
+      const bench = await benchmarkCurve(start, end);
+      return { ...withBenchmark(buildRunReport(ledger, { marks, now, benchmarkCurve: bench }), bench), events };
     });
     if (!report) {
       res.status(404).json({ error: `Run ${runId} not found` });
@@ -88,7 +127,11 @@ export async function getStrategyPerformance(req: Request, res: Response): Promi
         currentMarks(ctx),
         runSummariesFor(runs),
       ]);
-      return buildStrategyReport(strategyId, strategy.name, strategy.strategy_type, ledgers, summaries, { marks, now: Date.now() });
+      const now = Date.now();
+      const starts = ledgers.map((l) => l.startedAt ?? l.fills[0]?.ts).filter((t): t is number => t !== undefined);
+      const bench = starts.length > 0 ? await benchmarkCurve(Math.min(...starts), now) : [];
+      const built = buildStrategyReport(strategyId, strategy.name, strategy.strategy_type, ledgers, summaries, { marks, now, benchmarkCurve: bench });
+      return withBenchmark(built, bench);
     });
     if (!report) {
       res.status(404).json({ error: `Strategy ${strategyId} not found` });
@@ -133,4 +176,61 @@ export async function getRunSignals(req: Request, res: Response): Promise<void> 
     id: s.id, ts: new Date(s.ts as string).getTime(), symbol: s.symbol, direction: s.direction,
     outcome: s.outcome, reason: s.outcome_reason,
   })));
+}
+
+/**
+ * POST /api/runs/:runId/compare-backtest  { force?: boolean }
+ *
+ * Queues a backtest of the run's exact window and config, so its live curve
+ * can be laid over what the strategy would have done in simulation. Separates
+ * "the strategy is bad" from "execution is bad". Returns the backtest id the
+ * frontend polls; reuses the previous comparison unless forced.
+ */
+export async function compareRunWithBacktest(req: Request, res: Response): Promise<void> {
+  const runId = String(req.params.runId);
+  const force = !!(req.body as { force?: boolean } | undefined)?.force;
+  try {
+    const run = await getStrategyRunById(runId);
+    if (!run) {
+      res.status(404).json({ error: `Run ${runId} not found` });
+      return;
+    }
+    if (!BACKTESTABLE_TYPES.has(run.strategyType)) {
+      res.status(400).json({ error: `Backtesting is not supported for ${run.strategyType} yet, so this run cannot be compared` });
+      return;
+    }
+    if (!run.startedAt) {
+      res.status(400).json({ error: "This run has no start time to replay" });
+      return;
+    }
+    const meta = (run.meta ?? {}) as Record<string, unknown>;
+    if (meta.compareBacktestId && !force) {
+      res.json({ backtestId: meta.compareBacktestId, reused: true });
+      return;
+    }
+    const config: BacktestConfig = {
+      id: newId(),
+      name: `${run.name} — backtest of run ${run.id.slice(0, 8)}`,
+      strategyConfig: { ...(run.config as unknown as Record<string, unknown>), type: run.strategyType } as unknown as BaseStrategyConfig,
+      startDate: new Date(run.startedAt).toISOString(),
+      endDate: new Date(run.stoppedAt ?? Date.now()).toISOString(),
+      initialCapital: capitalBaseOf(run),
+      slippageBps: 5,
+      commissionPerShare: 0.005,
+      dataGranularity: "bar",
+      strategyId: run.strategyId,
+      strategyVersionId: run.versionId,
+      strategyVersion: run.strategyVersion,
+      sourceRunId: run.id,
+      description: `Replays run ${run.id} over its live window for comparison`,
+    };
+    const queued = await enqueueBacktestJob({
+      id: config.id, configKey: backtestConfigKey(config), config, requestedBy: req.user?.id ?? null,
+    });
+    await updateStrategyRun(run.id, { meta: { ...meta, compareBacktestId: queued.jobId } });
+    res.status(202).json({ backtestId: queued.jobId, deduped: queued.deduped });
+  } catch (err) {
+    logger.error("compareRunWithBacktest failed", { runId, err: String(err) });
+    res.status(500).json({ error: "Failed to queue the comparison backtest" });
+  }
 }

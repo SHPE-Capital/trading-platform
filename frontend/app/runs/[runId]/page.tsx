@@ -17,6 +17,8 @@ import StrategyControls from "../../../components/controls/StrategyControls";
 import OrdersTable from "../../../components/tables/OrdersTable";
 import FillsTable from "../../../components/tables/FillsTable";
 import PerformancePanel from "../../../features/performance/PerformancePanel";
+import CompareSection from "../../../features/performance/CompareSection";
+import ComparisonChart from "../../../components/charts/ComparisonChart";
 import {
   EventsTimeline, HoldingTimesCard, OpenPositionsTable, RejectionsCard, Section, SignalFunnelCard,
   SlippageCard, SymbolTable, TradesTable,
@@ -96,6 +98,15 @@ export default function RunPage({ params }: Props) {
             <PerformancePanel live metrics={report.metrics} curve={report.equityCurve} />
           </Section>
 
+          <CompareSection
+            report={report}
+            run={run ? {
+              id: run.id,
+              strategyType: run.strategyType,
+              compareBacktestId: (run.meta?.compareBacktestId as string | undefined),
+            } : undefined}
+          />
+
           <div className="grid gap-6 lg:grid-cols-3">
             <SignalFunnelCard funnel={report.funnel} />
             <RejectionsCard rejections={report.rejectionsByCheck} />
@@ -111,6 +122,18 @@ export default function RunPage({ params }: Props) {
             <HoldingTimesCard buckets={report.holdingTimes} />
             <EventsTimeline events={report.events ?? []} />
           </div>
+
+          {report.exposureCurve.length >= 2 && (
+            <Section title="Exposure" hint="Gross and net market value of this run's own positions, sampled every minute.">
+              <ComparisonChart
+                height={200}
+                series={[
+                  { label: "Gross", color: "#f59e0b", points: report.exposureCurve.map((p) => ({ ts: p.ts, value: p.gross })) },
+                  { label: "Net", color: "#2563eb", points: report.exposureCurve.map((p) => ({ ts: p.ts, value: p.net })) },
+                ]}
+              />
+            </Section>
+          )}
 
           <TradesTable trades={report.trades} />
 

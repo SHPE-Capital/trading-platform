@@ -94,6 +94,11 @@ export interface BacktestConfig {
   riskConfig?: Partial<RiskConfig>;
   /** Optional extra config */
   meta?: Metadata;
+  /**
+   * Set when this backtest replays a live run's exact window and config
+   * ("Compare with backtest"), so the run page can find and overlay it.
+   */
+  sourceRunId?: UUID;
 }
 
 // ------------------------------------------------------------------

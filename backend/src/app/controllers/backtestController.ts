@@ -15,6 +15,7 @@
  * Outputs: JSON backtest result data and SSE progress streams.
  */
 
+import { BACKTESTABLE_TYPES } from "../../core/backtest/strategyFactory";
 import type { Request, Response } from "express";
 import {
   getAllBacktestResults,
@@ -42,7 +43,6 @@ import { newId } from "../../utils/ids";
 import type { BacktestConfig } from "../../types/backtest";
 
 /** Strategy types a worker knows how to build (see core/backtest/strategyFactory.ts). */
-const BACKTESTABLE_TYPES = new Set(["pairs_trading"]);
 
 const streams = new BacktestStreamManager({
   getJob: (id) => getBacktestJob(id),

@@ -58,6 +58,8 @@ export interface BacktestConfig {
   description?: string;
   /** Annualized risk-free rate for Sharpe/Sortino (default 0) */
   riskFreeRateAnnual?: number;
+  /** Set on a backtest that replays a live run's window ("Compare with backtest"). */
+  sourceRunId?: string;
   /** Optional benchmark equity/return series — must be chronologically ordered */
   benchmarkCurve?: { ts: number; value: number }[];
   /** Fill model override; merged with server defaults when supplied */

@@ -4,11 +4,17 @@ jest.mock("../../adapters/supabase/repositories", () => ({
   getRunsForStrategy: jest.fn(),
   getStrategyById: jest.fn(),
   getFillsForRun: jest.fn(),
+  updateStrategyRun: jest.fn(async () => {}),
+  backtestConfigKey: jest.fn(() => "key"),
+}));
+jest.mock("../../adapters/supabase/backtestJobRepository", () => ({
+  enqueueBacktestJob: jest.fn(async (input: { id: string }) => ({ jobId: input.id, status: "queued", deduped: false })),
 }));
 jest.mock("../../adapters/supabase/analyticsRepository", () => ({
   loadRunLedger: jest.fn(),
   getRunEvents: jest.fn(async () => []),
   upsertRunStats: jest.fn(async () => {}),
+  capitalBaseOf: jest.fn(() => 5_000),
   runSummariesFor: jest.fn(async () => []),
   filterStrategyRuns: jest.fn((runs: unknown[]) => runs),
 }));
@@ -18,7 +24,8 @@ import type { Request, Response } from "express";
 import * as repos from "../../adapters/supabase/repositories";
 import * as analytics from "../../adapters/supabase/analyticsRepository";
 import { getBrokerAccount, getBrokerHistory, getBrokerDrift } from "../../app/controllers/brokerController";
-import { getRunPerformance, getStrategyPerformance } from "../../app/controllers/performanceController";
+import { compareRunWithBacktest, getRunPerformance, getStrategyPerformance } from "../../app/controllers/performanceController";
+import * as jobs from "../../adapters/supabase/backtestJobRepository";
 
 function mockRes() {
   const res = { json: jest.fn(), status: jest.fn() };
@@ -97,5 +104,46 @@ describe("performanceController", () => {
     const res = mockRes();
     await getStrategyPerformance(req({}, { strategyId: "nope" }), res);
     expect(res.status).toHaveBeenCalledWith(404);
+  });
+});
+
+describe("compareRunWithBacktest", () => {
+  beforeEach(() => jest.clearAllMocks());
+  const pairsRun = {
+    id: "run-p", strategyId: "strat-p", strategyType: "pairs_trading", name: "Pairs: SPY/QQQ", status: "stopped",
+    startedAt: Date.parse("2026-10-01T13:30:00Z"), stoppedAt: Date.parse("2026-10-03T20:00:00Z"),
+    config: { id: "cfg", symbols: ["SPY", "QQQ"] }, versionId: "ver-2", meta: {},
+  };
+  const postReq = (runId: string, body: unknown = {}) =>
+    ({ app: { locals: { ctx: {} } }, params: { runId }, body, user: { id: "u1" } } as unknown as Request);
+
+  it("queues a backtest of the run's exact window and config, linked to the run", async () => {
+    (repos.getStrategyRunById as jest.Mock).mockResolvedValue(pairsRun);
+    const res = mockRes();
+    await compareRunWithBacktest(postReq("run-p"), res);
+    expect(res.status).toHaveBeenCalledWith(202);
+    const { config } = (jobs.enqueueBacktestJob as jest.Mock).mock.calls[0][0];
+    expect(config).toMatchObject({
+      startDate: "2026-10-01T13:30:00.000Z", endDate: "2026-10-03T20:00:00.000Z", initialCapital: 5_000,
+      strategyId: "strat-p", strategyVersionId: "ver-2", sourceRunId: "run-p",
+      strategyConfig: { type: "pairs_trading", symbols: ["SPY", "QQQ"] },
+    });
+    expect(repos.updateStrategyRun).toHaveBeenCalledWith("run-p", { meta: { compareBacktestId: config.id } });
+  });
+
+  it("reuses the previous comparison unless forced", async () => {
+    (repos.getStrategyRunById as jest.Mock).mockResolvedValue({ ...pairsRun, meta: { compareBacktestId: "bt-1" } });
+    const res = mockRes();
+    await compareRunWithBacktest(postReq("run-p"), res);
+    expect(res.json).toHaveBeenCalledWith({ backtestId: "bt-1", reused: true });
+    expect(jobs.enqueueBacktestJob).not.toHaveBeenCalled();
+  });
+
+  it("says plainly when the strategy type cannot be backtested", async () => {
+    (repos.getStrategyRunById as jest.Mock).mockResolvedValue({ ...pairsRun, strategyType: "minute_reversal" });
+    const res = mockRes();
+    await compareRunWithBacktest(postReq("run-p"), res);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json.mock.calls[0][0].error).toMatch(/not supported for minute_reversal/);
   });
 });
