@@ -37,6 +37,8 @@ import { lockClockForLive, unlockClockForLive } from '../../utils/time';
 import type { BacktestConfig } from '../../types/backtest';
 import type { PortfolioSnapshot } from '../../types/portfolio';
 import type { Fill } from '../../types/orders';
+import { PairsStrategy } from '../../strategies/pairs/pairsStrategy';
+import { createPairsConfig } from '../../strategies/pairs/pairsConfig';
 
 const MockLoader = BacktestLoader as jest.MockedClass<typeof BacktestLoader>;
 
@@ -218,6 +220,30 @@ describe('run(): result structure', () => {
     const result = await engine.run(makeConfig(), () => []);
     expect(result.event_count).toBe(2);
     expect(result.equity_curve.length).toBe(3); // bars + final MTM
+  });
+});
+
+describe('run(): algorithm version provenance', () => {
+  const pairs = () => [new PairsStrategy(createPairsConfig('SPY', 'QQQ'))];
+
+  it('records the version of the strategy code that actually ran', async () => {
+    const engine = makeEngineWithBars([]);
+    const result = await engine.run(makeConfig(), pairs);
+    expect(result.config.strategyVersion).toBe(PairsStrategy.VERSION);
+  });
+
+  it('fails instead of mislabelling when the queued version differs from the built code', async () => {
+    // A job queued by an API on the previous build, claimed by a worker on the new one.
+    const engine = makeEngineWithBars([]);
+    await expect(
+      engine.run(makeConfig({ strategyVersion: PairsStrategy.VERSION - 1 }), pairs),
+    ).rejects.toThrow(/queued for algorithm v\d+, but this worker runs v\d+/);
+  });
+
+  it('accepts a queued version that matches the built code', async () => {
+    const engine = makeEngineWithBars([]);
+    const result = await engine.run(makeConfig({ strategyVersion: PairsStrategy.VERSION }), pairs);
+    expect(result.status).toBe('completed');
   });
 });
 

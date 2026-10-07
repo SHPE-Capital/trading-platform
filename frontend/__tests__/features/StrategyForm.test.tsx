@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 const auth = vi.hoisted(() => ({ user: { id: "u1", email: "m@shpe.test", role: "member", displayName: "M" } as unknown }));
@@ -9,7 +9,7 @@ const auth = vi.hoisted(() => ({ user: { id: "u1", email: "m@shpe.test", role: "
 // the SAME objects every render — fresh literals would re-run that effect on
 // every render and never settle.
 const configs = vi.hoisted(() => ({
-  update: vi.fn(async () => {}),
+  update: vi.fn(async () => ({ id: "ver-2", versionNumber: 2, attachedToProposalId: null as string | null })),
   save: vi.fn(async () => ({ id: "strat-new" })),
   strategies: [
     {
@@ -52,42 +52,56 @@ vi.mock("../../hooks/useStrategyVersions", () => ({
   }),
 }));
 vi.mock("../../services/proposalsService", () => ({
-  createVersion: vi.fn(),
   createProposal: vi.fn(),
 }));
 
 import StrategyForm from "../../features/strategy/StrategyForm";
-import { createProposal, createVersion } from "../../services/proposalsService";
+import { createProposal } from "../../services/proposalsService";
 
-const mockCreateVersion = vi.mocked(createVersion);
 const mockCreateProposal = vi.mocked(createProposal);
 
-async function selectSavedConfig() {
-  render(<StrategyForm onSubmit={vi.fn(async () => {})} />);
+async function selectSavedConfig(onSubmit = vi.fn(async () => {})) {
+  render(<StrategyForm onSubmit={onSubmit} />);
   await userEvent.selectOptions(screen.getAllByRole("combobox")[1], "strat-1");
 }
 
 beforeEach(() => {
   versions.list = [];
+  configs.update.mockResolvedValue({ id: "ver-2", versionNumber: 2, attachedToProposalId: null });
 });
 
 describe("StrategyForm — versions and proposals", () => {
   it("'Save changes' updates the config and records the edit as an immutable version", async () => {
-    mockCreateVersion.mockResolvedValue({ id: "ver-2", versionNumber: 2, attachedToProposalId: null } as never);
     await selectSavedConfig();
 
     await userEvent.type(screen.getByPlaceholderText(/widened spread window/), "tighter entry");
     await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
-    await waitFor(() => expect(mockCreateVersion).toHaveBeenCalled());
-    expect(configs.update).toHaveBeenCalledWith("strat-1", "Pairs: XOM/CVX", expect.any(Object));
-    expect(mockCreateVersion).toHaveBeenCalledWith("strat-1", expect.objectContaining({ leg1Symbol: "XOM" }), "tighter entry");
+    await waitFor(() => expect(configs.update).toHaveBeenCalled());
+    expect(configs.update).toHaveBeenCalledWith(
+      "strat-1",
+      "Pairs: XOM/CVX",
+      expect.objectContaining({ leg1Symbol: "XOM" }),
+      "tighter entry",
+    );
     expect(versions.refetch).toHaveBeenCalled();
-    expect(await screen.findByText(/Saved as v2\. Backtest it/)).toBeInTheDocument();
+    expect(await screen.findByText(/Saved as v2\. It is now available for backtest and paper trading/)).toBeInTheDocument();
   });
 
-  it("tells the author when the new version landed on their open proposal", async () => {
-    mockCreateVersion.mockResolvedValue({ id: "ver-3", versionNumber: 3, attachedToProposalId: "p1" } as never);
+  it("starts paper trading with the exact latest saved version", async () => {
+    const onSubmit = vi.fn(async () => {});
+    versions.list = [{ id: "ver-3", versionNumber: 3 }];
+    await selectSavedConfig(onSubmit);
+
+    fireEvent.submit(screen.getByRole("button", { name: "Start Latest Saved Version on Paper" }).closest("form")!);
+
+    await waitFor(() => {
+      expect(onSubmit).toHaveBeenCalledWith({ strategyId: "strat-1", versionId: "ver-3" });
+    });
+  });
+
+  it("tells the author when the saved version advances an open proposal", async () => {
+    configs.update.mockResolvedValue({ id: "ver-3", versionNumber: 3, attachedToProposalId: "p1" });
     await selectSavedConfig();
 
     await userEvent.click(screen.getByRole("button", { name: "Save changes" }));

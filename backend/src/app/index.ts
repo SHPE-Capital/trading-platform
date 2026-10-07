@@ -22,7 +22,22 @@ export function createApp(ctx: AppContext = {}): express.Application {
   app.locals.ctx = ctx;
 
   // ------ Core middleware ------
-  app.use(cors({ origin: env.corsOrigin }));
+  const allowedOrigins = env.corsOrigin.split(",").map((origin) => origin.trim()).filter(Boolean);
+  app.use(cors({
+    origin(origin, callback) {
+      // Requests without Origin are server-to-server/health checks. Configured
+      // entries may be exact URLs or a single-label wildcard such as
+      // https://*.vercel.app for preview deployments.
+      if (!origin) return callback(null, true);
+      const allowed = allowedOrigins.some((pattern) => {
+        if (pattern === origin) return true;
+        if (!pattern.includes("*")) return false;
+        const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace("*", "[^./]+");
+        return new RegExp(`^${escaped}$`).test(origin);
+      });
+      callback(allowed ? null : new Error(`Origin ${origin} is not allowed by CORS`), allowed);
+    },
+  }));
   app.use(express.json());
   app.use(requestLogger);
 

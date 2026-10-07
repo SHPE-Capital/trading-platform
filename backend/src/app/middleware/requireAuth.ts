@@ -70,12 +70,20 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
       });
       return;
     }
+    if (profile.membershipStatus !== "active") {
+      res.status(403).json({
+        error: profile.membershipStatus === "suspended" ? "Membership suspended" : "Membership pending",
+        detail: "A club lead must activate this account before it can access the trading platform.",
+      });
+      return;
+    }
 
     req.user = {
       id: profile.id,
       email: profile.email,
       role: profile.role,
       displayName: profile.displayName,
+      membershipStatus: profile.membershipStatus,
     };
     next();
   } catch (err) {
@@ -126,6 +134,7 @@ export async function optionalAuth(req: Request, _res: Response, next: NextFunct
           email: profile.email,
           role: profile.role,
           displayName: profile.displayName,
+          membershipStatus: profile.membershipStatus,
         };
       }
     }

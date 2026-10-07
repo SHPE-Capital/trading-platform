@@ -35,6 +35,7 @@ import {
   deleteJobArtifacts,
 } from "../../adapters/supabase/backtestJobRepository";
 import { BacktestStreamManager } from "../../core/backtest/backtestStreamManager";
+import { getStrategyVersionById } from "../../adapters/supabase/reviewRepositories";
 import { PairsStrategy } from "../../strategies/pairs/pairsStrategy";
 import { logger } from "../../utils/logger";
 import { newId } from "../../utils/ids";
@@ -201,6 +202,20 @@ export async function runBacktest(req: Request, res: Response): Promise<void> {
   if (!BACKTESTABLE_TYPES.has(body.strategyConfig.type)) {
     res.status(400).json({ error: `Backtesting is not supported for strategy type "${body.strategyConfig.type}"` });
     return;
+  }
+  if (body.strategyVersionId) {
+    if (!body.strategyId) {
+      res.status(400).json({ error: "strategyId is required when strategyVersionId is provided" });
+      return;
+    }
+    const taggedVersion = await getStrategyVersionById(body.strategyVersionId);
+    if (!taggedVersion || taggedVersion.strategyId !== body.strategyId) {
+      res.status(400).json({
+        error: "strategyVersionId does not belong to strategyId",
+        detail: "Choose the saved strategy again before running the backtest.",
+      });
+      return;
+    }
   }
 
   const rc = body.riskConfig;

@@ -13,6 +13,9 @@
 
 "use client";
 
+/* Form fields intentionally snapshot the selected persisted configuration. */
+/* eslint-disable react-hooks/set-state-in-effect */
+
 import { useState, useEffect, useMemo } from "react";
 import type { BacktestConfig } from "../../types/api";
 import { useStrategyConfigs } from "../../hooks/useStrategyConfigs";
@@ -45,6 +48,8 @@ export default function BacktestForm({ onSubmit, isLoading }: Props) {
   const [exitZScore, setExitZScore] = useState(0.5);
   const [rollingWindowMins, setRollingWindowMins] = useState(60);
   const [tradeNotionalUsd, setTradeNotionalUsd] = useState(5_000);
+  const [maxHoldingMins, setMaxHoldingMins] = useState(1_440);
+  const [cooldownMins, setCooldownMins] = useState(1);
   const [hedgeRatioMethod, setHedgeRatioMethod] = useState<"fixed" | "rolling_ols">("fixed");
   const [olsWindowMins, setOlsWindowMins] = useState(240);
   const [olsRecalcIntervalBars, setOlsRecalcIntervalBars] = useState(5);
@@ -79,6 +84,8 @@ export default function BacktestForm({ onSubmit, isLoading }: Props) {
     setExitZScore((src.exitZScore as number | undefined) ?? 0.5);
     setRollingWindowMins(Math.round(((src.rollingWindowMs as number | undefined) ?? 3_600_000) / 60_000));
     setTradeNotionalUsd((src.tradeNotionalUsd as number | undefined) ?? 5_000);
+    setMaxHoldingMins(Math.round(((src.maxHoldingTimeMs as number | undefined) ?? 86_400_000) / 60_000));
+    setCooldownMins(Math.round(((src.cooldownMs as number | undefined) ?? 60_000) / 60_000));
     setHedgeRatioMethod((src.hedgeRatioMethod as "fixed" | "rolling_ols" | undefined) ?? "fixed");
     setOlsWindowMins(Math.round(((src.olsWindowMs as number | undefined) ?? 14_400_000) / 60_000));
     setOlsRecalcIntervalBars((src.olsRecalcIntervalBars as number | undefined) ?? 5);
@@ -115,14 +122,14 @@ export default function BacktestForm({ onSubmit, isLoading }: Props) {
         leg2Symbol: leg2,
         rollingWindowMs: rollingWindowMins * 60_000,
         maxPositionSizeUsd: 10_000,
-        cooldownMs: 60_000,
+        cooldownMs: cooldownMins * 60_000,
         enabled: true,
         hedgeRatioMethod,
         fixedHedgeRatio: 1.0,
         entryZScore,
         exitZScore,
         stopLossZScore: 4.0,
-        maxHoldingTimeMs: 86_400_000,
+        maxHoldingTimeMs: maxHoldingMins * 60_000,
         minObservations: 30,
         tradeNotionalUsd,
         priceSource: "mid",
@@ -208,6 +215,12 @@ export default function BacktestForm({ onSubmit, isLoading }: Props) {
         </Field>
         <Field label="Trade Notional (USD)">
           <input type="number" min="100" step="100" value={tradeNotionalUsd} onChange={(e) => setTradeNotionalUsd(Number(e.target.value))} className={inputClass} />
+        </Field>
+        <Field label="Max Holding Time (minutes)">
+          <input type="number" min="1" step="1" value={maxHoldingMins} onChange={(e) => setMaxHoldingMins(Number(e.target.value))} className={inputClass} />
+        </Field>
+        <Field label="Cooldown After Exit (minutes)">
+          <input type="number" min="0" step="1" value={cooldownMins} onChange={(e) => setCooldownMins(Number(e.target.value))} className={inputClass} />
         </Field>
         <Field label="Hedge Ratio Method">
           <select value={hedgeRatioMethod} onChange={(e) => setHedgeRatioMethod(e.target.value as "fixed" | "rolling_ols")} className={inputClass}>

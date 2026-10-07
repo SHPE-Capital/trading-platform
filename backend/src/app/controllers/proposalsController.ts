@@ -40,7 +40,8 @@ import {
   updateStrategy,
   StrategyAlreadyLiveError,
 } from "../../adapters/supabase/repositories";
-import { STRATEGY_FACTORY } from "../../config/strategyDefaults";
+import { STRATEGY_DEFINITIONS, STRATEGY_FACTORY } from "../../config/strategyDefaults";
+import { env } from "../../config/env";
 import { newId } from "../../utils/ids";
 import { nowMs } from "../../utils/time";
 import { logger } from "../../utils/logger";
@@ -97,6 +98,10 @@ export async function createVersion(req: Request, res: Response): Promise<void> 
   const strategy = await getStrategyById(strategyId);
   if (!strategy) {
     res.status(404).json({ error: `Strategy ${strategyId} not found` });
+    return;
+  }
+  if (req.user!.role !== "lead" && strategy.owner_id !== req.user!.id) {
+    res.status(403).json({ error: "Only the strategy owner or a lead may create a version" });
     return;
   }
 
@@ -327,8 +332,46 @@ export async function createProposal(req: Request, res: Response): Promise<void>
 }
 
 /**
+ * Splits a version's saved backtests into those that may justify a real-money
+ * promotion and those that may not, with the reason for each rejection.
+ *
+ * A backtest qualifies only when it completed, ran the algorithm version that
+ * this runtime will trade (a VERSION bump since the run means the evidence is
+ * for different code), came from this runtime's origin, and — whenever this
+ * runtime itself is a clean build — came from a clean build too. Local dirty
+ * runtimes may approve local dirty evidence so the workflow stays testable.
+ */
+export function selectPromotionEvidence(
+  rows: Record<string, unknown>[],
+  algorithmVersion: number | undefined,
+  runtime: { origin: string; dirty: boolean } = { origin: env.runtimeOrigin, dirty: env.buildDirty },
+): { qualifying: Record<string, unknown>[]; rejected: { id: unknown; reason: string }[] } {
+  const qualifying: Record<string, unknown>[] = [];
+  const rejected: { id: unknown; reason: string }[] = [];
+  for (const row of rows) {
+    let reason: string | null = null;
+    if (row.status !== "completed") {
+      reason = `status is ${String(row.status)}, not completed`;
+    } else if (algorithmVersion !== undefined && Number(row.strategy_version) !== algorithmVersion) {
+      reason = `ran algorithm v${String(row.strategy_version)}, but v${algorithmVersion} is deployed`;
+    } else if (row.runtime_origin !== runtime.origin) {
+      reason = `ran in the ${String(row.runtime_origin)} environment, not ${runtime.origin}`;
+    } else if (!runtime.dirty && row.build_dirty !== false) {
+      reason = `ran on an uncommitted build (${String(row.build_sha)})`;
+    }
+    if (reason) rejected.push({ id: row.id, reason });
+    else qualifying.push(row);
+  }
+  return { qualifying, rejected };
+}
+
+/**
  * POST /api/proposals/:id/approve  (lead only)
- * Body: { approvedCapitalPct?, note? }
+ * Body: { expectedHeadVersionId, approvedCapitalPct?, note? }
+ *
+ * expectedHeadVersionId is the version the lead was looking at. Any member
+ * push re-points an open proposal's head, so approving "whatever the head is
+ * now" could promote a version nobody reviewed.
  *
  * The only path that puts a strategy live. Settles the proposal first — a
  * guarded update that two simultaneous approvals cannot both win — then builds
@@ -339,10 +382,19 @@ export async function createProposal(req: Request, res: Response): Promise<void>
  */
 export async function approveProposal(req: Request, res: Response): Promise<void> {
   const id = String(req.params.id);
-  const { approvedCapitalPct, note } = req.body as {
+  const { expectedHeadVersionId, approvedCapitalPct, note } = req.body as {
+    expectedHeadVersionId?: string;
     approvedCapitalPct?: number;
     note?: string;
   };
+
+  if (typeof expectedHeadVersionId !== "string" || expectedHeadVersionId.length === 0) {
+    res.status(400).json({
+      error: "expectedHeadVersionId is required",
+      detail: "Approval must name the exact strategy version that was reviewed.",
+    });
+    return;
+  }
 
   if (
     approvedCapitalPct !== undefined &&
@@ -360,6 +412,13 @@ export async function approveProposal(req: Request, res: Response): Promise<void
     });
     return;
   }
+  if (executionMode !== "live") {
+    res.status(403).json({
+      error: "Lead approval is reserved for real-money promotion",
+      detail: "Active members can start an immutable version directly in the paper sandbox.",
+    });
+    return;
+  }
 
   const proposal = await getProposalById(id);
   if (!proposal) {
@@ -368,6 +427,15 @@ export async function approveProposal(req: Request, res: Response): Promise<void
   }
   if (proposal.status !== "open") {
     res.status(409).json({ error: `Proposal is already ${proposal.status}` });
+    return;
+  }
+
+  if (proposal.headVersionId !== expectedHeadVersionId) {
+    res.status(409).json({
+      error: "The proposal moved to a newer version after you loaded it",
+      detail: "Reload the review page, review the latest version and its backtests, then approve again.",
+      headVersionId: proposal.headVersionId,
+    });
     return;
   }
 
@@ -381,6 +449,21 @@ export async function approveProposal(req: Request, res: Response): Promise<void
   const factory = strategyType ? STRATEGY_FACTORY[strategyType] : undefined;
   if (!factory) {
     res.status(400).json({ error: `Unknown strategy type: ${strategyType}` });
+    return;
+  }
+
+  const evidence = selectPromotionEvidence(
+    await getBacktestsForVersion(proposal.headVersionId),
+    STRATEGY_DEFINITIONS[strategyType as string]?.algorithmVersion,
+  );
+  if (evidence.qualifying.length === 0) {
+    res.status(409).json({
+      error: "The proposal head has no qualifying backtest",
+      detail:
+        "Save a completed backtest of this exact version, run by this environment's clean build " +
+        "on the currently deployed algorithm version, before approval.",
+      rejectedBacktests: evidence.rejected,
+    });
     return;
   }
 
@@ -421,6 +504,7 @@ export async function approveProposal(req: Request, res: Response): Promise<void
       status: "approved",
       approvedBy: req.user!.id,
       approvedCapitalPct: approvedCapitalPct ?? null,
+      expectedHeadVersionId,
     });
   } catch (err) {
     logger.error("approveProposal: settle failed", { id, err });
@@ -448,6 +532,9 @@ export async function approveProposal(req: Request, res: Response): Promise<void
       config: config as unknown as StrategyRun["config"],
       status: "running",
       executionMode: executionMode ?? "paper",
+      runtimeOrigin: env.runtimeOrigin,
+      buildSha: env.buildSha,
+      buildDirty: env.buildDirty,
       startedAt: nowMs(),
       totalSignals: 0,
       totalOrders: 0,

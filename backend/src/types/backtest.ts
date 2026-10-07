@@ -58,6 +58,10 @@ export interface BacktestConfig {
    * what a proposal's "backtests for this version" lookup keys on.
    */
   strategyVersionId?: UUID;
+  /** Build that actually executed the simulation (stamped by the worker). */
+  runtimeOrigin?: string;
+  buildSha?: string;
+  buildDirty?: boolean;
   /** Optional description */
   description?: string;
   /**

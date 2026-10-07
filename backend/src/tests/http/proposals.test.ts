@@ -32,6 +32,7 @@ function signedInAs(role: "member" | "lead", id = `user-${role}`) {
     email: `${role}@shpe.test`,
     displayName: role,
     role,
+    membershipStatus: "active",
   });
 }
 
@@ -51,6 +52,19 @@ describe("authentication", () => {
 
     expect(res.status).toBe(401);
     expect(res.body.error).toMatch(/not signed in/i);
+    expect(mockListPending).not.toHaveBeenCalled();
+  });
+
+  test("a signed-in account without active club membership returns 403", async () => {
+    signedInAs("member");
+    mockGetAppUser.mockResolvedValueOnce({
+      id: "user-member", email: "member@shpe.test", displayName: "Member", role: "member", membershipStatus: "pending",
+    });
+
+    const res = await request(app).get("/api/proposals").set("Authorization", "Bearer valid");
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toMatch(/membership/i);
     expect(mockListPending).not.toHaveBeenCalled();
   });
 
@@ -137,7 +151,7 @@ describe("role gating", () => {
     const res = await request(app)
       .post("/api/proposals/prop-1/approve")
       .set("Authorization", "Bearer valid")
-      .send({});
+      .send({ expectedHeadVersionId: "ver-1" });
 
     expect(res.status).toBe(503);
     expect(res.body.detail).toMatch(/trading process/i);

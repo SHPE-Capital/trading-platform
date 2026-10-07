@@ -7,15 +7,15 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { fetchStrategyRuns, startPairsStrategy, stopStrategyRun } from "../services/strategiesService";
-import type { StrategyRun, PairsStrategyConfig } from "../types/strategy";
+import { fetchStrategyRuns, startPaperStrategy, stopStrategyRun } from "../services/strategiesService";
+import type { StrategyRun } from "../types/strategy";
 
 interface UseStrategiesResult {
   runs: StrategyRun[];
   isLoading: boolean;
   error: string | null;
   refetch: () => void;
-  startStrategy: (config: Omit<PairsStrategyConfig, "id">) => Promise<void>;
+  startStrategy: (selection: { strategyId: string; versionId: string }) => Promise<void>;
   stopStrategy: (id: string) => Promise<void>;
 }
 
@@ -43,8 +43,8 @@ export function useStrategies(pollIntervalMs = 15_000): UseStrategiesResult {
     return () => clearInterval(interval);
   }, [fetchData, pollIntervalMs]);
 
-  const startStrategy = useCallback(async (config: Omit<PairsStrategyConfig, "id">) => {
-    await startPairsStrategy(config);
+  const startStrategy = useCallback(async (selection: { strategyId: string; versionId: string }) => {
+    await startPaperStrategy(selection.strategyId, selection.versionId);
     await fetchData();
   }, [fetchData]);
 

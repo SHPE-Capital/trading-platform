@@ -19,11 +19,20 @@ import { newId } from "../../utils/ids";
 import type { EventBus } from "../../core/engine/eventBus";
 import type { Symbol, ExecutionMode } from "../../types/common";
 
+/**
+ * Ping cadence. A socket that has not answered the previous ping by the next
+ * one is presumed half-open and torn down, so a dead feed reconnects instead
+ * of silently starving every strategy of bars.
+ */
+const HEARTBEAT_INTERVAL_MS = 30_000;
+
 export class AlpacaMarketDataAdapter {
   private ws: WebSocket | null = null;
   private subscribed: Set<Symbol> = new Set();
   private isConnected = false;
   private reconnectTimeout: NodeJS.Timeout | null = null;
+  private heartbeatTimer: NodeJS.Timeout | null = null;
+  private alive = false;
 
   constructor(
     private readonly eventBus: EventBus,
@@ -38,29 +47,37 @@ export class AlpacaMarketDataAdapter {
     return new Promise((resolve, reject) => {
       const url = env.alpacaDataStreamUrl;
       logger.info("AlpacaMarketDataAdapter: connecting", { url, mode: this.mode });
-      this.ws = new WebSocket(url);
+      const ws = new WebSocket(url);
+      this.ws = ws;
 
-      this.ws.on("open", () => {
+      ws.on("open", () => {
         logger.info("AlpacaMarketDataAdapter: WebSocket open — authenticating");
-        this.ws!.send(JSON.stringify({
+        ws.send(JSON.stringify({
           action: "auth",
           key: env.alpacaApiKey,
           secret: env.alpacaApiSecret,
         }));
       });
 
-      this.ws.on("message", (data: WebSocket.Data) => {
+      ws.on("message", (data: WebSocket.Data) => {
         this._handleMessage(data, resolve, reject);
       });
 
-      this.ws.on("error", (err) => {
+      ws.on("pong", () => {
+        this.alive = true;
+      });
+
+      ws.on("error", (err) => {
         logger.error("AlpacaMarketDataAdapter: WebSocket error", { message: err.message });
         reject(err);
       });
 
-      this.ws.on("close", () => {
+      ws.on("close", () => {
+        // A replaced socket, or one closed by disconnect(), stays closed.
+        if (this.ws !== ws) return;
         logger.warn("AlpacaMarketDataAdapter: WebSocket closed — scheduling reconnect");
         this.isConnected = false;
+        this._stopHeartbeat();
         this._scheduleReconnect();
       });
     });
@@ -72,11 +89,14 @@ export class AlpacaMarketDataAdapter {
    * @param symbols - Array of ticker symbols to subscribe to
    */
   subscribe(symbols: Symbol[]): void {
+    // Always retain the desired set. Boot-time run adoption happens before the
+    // socket is authenticated; dropping those symbols here leaves an adopted
+    // strategy visibly running but permanently starved of market data.
+    symbols.forEach((s) => this.subscribed.add(s));
     if (!this.isConnected || !this.ws) {
-      logger.warn("AlpacaMarketDataAdapter: subscribe called before connect");
+      logger.info("AlpacaMarketDataAdapter: subscription queued until connected", { symbols });
       return;
     }
-    symbols.forEach((s) => this.subscribed.add(s));
     this.ws.send(JSON.stringify({
       action: "subscribe",
       quotes: symbols,
@@ -110,8 +130,10 @@ export class AlpacaMarketDataAdapter {
       clearTimeout(this.reconnectTimeout);
       this.reconnectTimeout = null;
     }
-    this.ws?.close();
+    this._stopHeartbeat();
+    const ws = this.ws;
     this.ws = null;
+    ws?.close();
     this.isConnected = false;
     logger.info("AlpacaMarketDataAdapter: disconnected");
   }
@@ -145,7 +167,18 @@ export class AlpacaMarketDataAdapter {
         case "success":
           if (m["msg"] === "authenticated") {
             this.isConnected = true;
+            this._startHeartbeat();
             logger.info("AlpacaMarketDataAdapter: authenticated");
+            if (this.subscribed.size > 0) {
+              const symbols = [...this.subscribed];
+              this.ws!.send(JSON.stringify({
+                action: "subscribe",
+                quotes: symbols,
+                trades: symbols,
+                bars: symbols,
+              }));
+              logger.info("AlpacaMarketDataAdapter: restored subscriptions", { symbols });
+            }
             authResolve?.();
           }
           break;
@@ -197,15 +230,38 @@ export class AlpacaMarketDataAdapter {
     }
   }
 
+  private _startHeartbeat(): void {
+    this._stopHeartbeat();
+    this.alive = true;
+    this.heartbeatTimer = setInterval(() => {
+      const ws = this.ws;
+      if (!ws) return;
+      if (!this.alive) {
+        logger.warn("AlpacaMarketDataAdapter: missed a heartbeat — reconnecting");
+        ws.terminate(); // emits close, which reconnects
+        return;
+      }
+      this.alive = false;
+      ws.ping();
+    }, HEARTBEAT_INTERVAL_MS);
+    this.heartbeatTimer.unref?.();
+  }
+
+  private _stopHeartbeat(): void {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+  }
+
   private _scheduleReconnect(): void {
     const RECONNECT_DELAY_MS = 5_000;
+    if (this.reconnectTimeout) return;
     this.reconnectTimeout = setTimeout(async () => {
+      this.reconnectTimeout = null;
       logger.info("AlpacaMarketDataAdapter: reconnecting...");
       try {
         await this.connect();
-        if (this.subscribed.size > 0) {
-          this.subscribe([...this.subscribed]);
-        }
       } catch (err) {
         logger.error("AlpacaMarketDataAdapter: reconnect failed", { err });
       }

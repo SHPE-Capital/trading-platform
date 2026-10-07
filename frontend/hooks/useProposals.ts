@@ -169,7 +169,12 @@ export function useProposal(id: string): UseProposalResult {
     error,
     isActing,
     actionError,
-    approve: (capitalPct, note) => act(() => approveProposal(id, capitalPct, note)),
+    approve: (capitalPct, note) => act(() => {
+      // Approve exactly the head this page rendered, never "whatever is newest".
+      const reviewedHead = detail?.proposal.headVersionId;
+      if (!reviewedHead) throw new Error("The proposal is still loading; try again in a moment.");
+      return approveProposal(id, reviewedHead, capitalPct, note);
+    }),
     reject: (reason) => act(() => rejectProposal(id, reason)),
     withdraw: () => act(() => withdrawProposal(id)),
     comment: (body, kind) => act(() => postComment(id, body, kind)),

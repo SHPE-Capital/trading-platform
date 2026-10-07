@@ -246,10 +246,33 @@ export default function ProposalPage({ params }: { params: Promise<{ id: string 
                       <span className="font-mono text-zinc-600 dark:text-zinc-400">
                         {b.completed_at ? new Date(b.completed_at).toLocaleDateString() : "—"}
                       </span>
+                      {/* Provenance: which code produced this evidence. Approval rejects
+                          other environments, uncommitted builds, and older algorithms. */}
+                      <span className="flex gap-1 font-mono text-[11px]">
+                        {b.strategy_version != null && (
+                          <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                            algo v{b.strategy_version}
+                          </span>
+                        )}
+                        {b.runtime_origin && (
+                          <span
+                            title={b.build_sha ? `build ${b.build_sha}` : undefined}
+                            className={
+                              b.build_dirty
+                                ? "rounded bg-amber-100 px-1.5 py-0.5 text-amber-800 dark:bg-amber-950 dark:text-amber-400"
+                                : "rounded bg-zinc-100 px-1.5 py-0.5 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
+                            }
+                          >
+                            {b.runtime_origin}
+                            {b.build_sha && b.build_sha !== "unknown" ? `@${b.build_sha.slice(0, 7)}` : ""}
+                            {b.build_dirty ? " (uncommitted)" : ""}
+                          </span>
+                        )}
+                      </span>
                       <span className="flex gap-4 font-mono text-zinc-700 dark:text-zinc-300">
                         {m.totalReturnPct != null && <span>ret {(m.totalReturnPct * 100).toFixed(2)}%</span>}
                         {m.sharpeRatio != null && <span>sharpe {m.sharpeRatio.toFixed(2)}</span>}
-                        {m.maxDrawdownPct != null && <span>dd {(m.maxDrawdownPct * 100).toFixed(1)}%</span>}
+                        {m.maxDrawdown != null && <span>dd {(Math.abs(m.maxDrawdown) * 100).toFixed(1)}%</span>}
                       </span>
                       <Link href={`/backtest?id=${b.id}`} className="text-zinc-500 underline hover:text-zinc-800 dark:hover:text-zinc-200">
                         Open

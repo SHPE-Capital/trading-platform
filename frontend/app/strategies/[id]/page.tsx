@@ -42,7 +42,7 @@ export default function StrategyDetailPage({ params }: Props) {
         setFills(fetched.flatMap((o) => o.fills ?? []));
       })
       .catch(() => {});
-  }, [run?.id]);
+  }, [run]);
 
   if (!run) {
     return (

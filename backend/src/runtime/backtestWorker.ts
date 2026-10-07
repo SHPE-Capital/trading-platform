@@ -34,6 +34,7 @@ import {
   sweepBacktestJobs,
 } from "../adapters/supabase/backtestJobRepository";
 import { logger } from "../utils/logger";
+import { env } from "../config/env";
 
 function intEnv(key: string, fallback: number): number {
   const raw = process.env[key];
@@ -58,7 +59,15 @@ async function main(): Promise<void> {
       claim: (id) =>
         claimBacktestJob(id, { leaseSeconds: LEASE_SECONDS, maxAttempts: MAX_ATTEMPTS, perUserCap: PER_USER_CAP }),
       touch: (jobId, id, progress) => touchBacktestJob(jobId, id, LEASE_SECONDS, progress),
-      writeArtifacts: writeJobArtifacts,
+      writeArtifacts: (jobId, result) => writeJobArtifacts(jobId, {
+        ...result,
+        config: {
+          ...result.config,
+          runtimeOrigin: env.runtimeOrigin,
+          buildSha: env.buildSha,
+          buildDirty: env.buildDirty,
+        },
+      }),
       complete: (jobId, id) => completeBacktestJob(jobId, id, RESULT_TTL_SECONDS),
       fail: failBacktestJob,
       release: releaseBacktestJob,

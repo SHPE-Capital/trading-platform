@@ -18,6 +18,10 @@ services:
     command: ["node", "dist/runtime/backtestWorker.js"]
     env_file: ./backend/.env
     restart: unless-stopped
+    cpus: 1.0
+    stop_grace_period: 60s
+    healthcheck:
+      disable: true
 
   api:
     build:
@@ -30,6 +34,7 @@ services:
     ports:
       - "8082:8082"
     restart: unless-stopped
+    stop_grace_period: 60s
 
   paper-trading:
     build:
@@ -42,6 +47,7 @@ services:
     ports:
       - "8080:8080"
     restart: unless-stopped
+    stop_grace_period: 60s
 
   # Deliberately not started by default (see AWS deployment plan: real-money
   # trading ships as its own explicit decision, not a side effect of
@@ -59,3 +65,4 @@ services:
       - "8081:8081"
     profiles: ["real-trading"]
     restart: unless-stopped
+    stop_grace_period: 60s

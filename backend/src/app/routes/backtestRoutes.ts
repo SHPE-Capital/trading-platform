@@ -13,7 +13,7 @@ import {
   streamBacktest,
   saveBacktest,
 } from "../controllers/backtestController";
-import { requireAuth, optionalAuth } from "../middleware/requireAuth";
+import { requireAuth } from "../middleware/requireAuth";
 
 const router = Router();
 
@@ -27,10 +27,10 @@ router.get("/:id/stream", streamBacktest);
 router.get("/:id", getBacktest);
 
 /**
- * POST /api/backtests/run — queue a run for a worker. optionalAuth attributes the
- * job to a signed-in member, which is what the per-member concurrency cap counts.
+ * POST /api/backtests/run — queue a run for a worker. Authentication makes the
+ * per-member concurrency cap mandatory and prevents anonymous queue abuse.
  */
-router.post("/run", optionalAuth, runBacktest);
+router.post("/run", requireAuth, runBacktest);
 
 /** POST /api/backtests/:id/save — explicitly persist a completed run (member-only) */
 router.post("/:id/save", requireAuth, saveBacktest);

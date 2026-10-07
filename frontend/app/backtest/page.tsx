@@ -51,8 +51,15 @@ function QueueNotice({ status, queuedAt }: { status: QueueStatus | null; queuedA
 export default function BacktestPage() {
   const {
     selectedResult, previousResult, isRunning, isSaving, progress, queueStatus, queuedAt, reused,
-    error, saveError, run, rerun, save,
+    error, saveError, run, rerun, save, loadResult,
   } = useBacktest();
+
+  // Review-page links include a saved result id. Load it on arrival instead of
+  // showing the empty run form and making the "Open" action appear broken.
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get("id");
+    if (id) void loadResult(id);
+  }, [loadResult]);
 
   // Keep the last submitted config so Re-run can re-submit it without the form
   const lastConfigRef = useRef<Omit<BacktestConfig, "id"> | null>(null);

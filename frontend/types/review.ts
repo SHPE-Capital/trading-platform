@@ -9,12 +9,14 @@
  */
 
 export type UserRole = "member" | "lead";
+export type MembershipStatus = "pending" | "active" | "suspended";
 
 /** The signed-in member, as returned by GET /api/auth/me. */
 export interface AuthUser {
   id: string;
   email: string;
   role: UserRole;
+  membershipStatus: MembershipStatus;
   displayName: string | null;
 }
 
@@ -139,6 +141,12 @@ export interface ProposalBacktest {
   started_at: string | null;
   completed_at: string | null;
   strategy_version_id: string | null;
+  /** Algorithm VERSION the backtest ran (code), distinct from the config version. */
+  strategy_version?: number | null;
+  /** Environment and build that executed it; approval accepts only this environment's clean builds. */
+  runtime_origin?: string | null;
+  build_sha?: string | null;
+  build_dirty?: boolean | null;
 }
 
 /** What the signed-in member is allowed to do on this proposal. */

@@ -28,6 +28,7 @@ interface HealthResponse {
     alpaca: ServiceHealth;
   };
   mode: ExecutionMode;
+  build: { origin: string; sha: string; dirty: boolean };
   ts: string;
 }
 
@@ -120,6 +121,7 @@ export async function getSystemStatus(_req: Request, res: Response): Promise<voi
     status,
     services: { supabase, alpaca },
     mode: env.alpacaTradingMode,
+    build: { origin: env.runtimeOrigin, sha: env.buildSha, dirty: env.buildDirty },
     ts: nowIso(),
   };
 

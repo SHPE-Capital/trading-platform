@@ -177,8 +177,13 @@ export function useBacktest(): UseBacktestResult {
   }, [fetchData]);
 
   const loadResult = useCallback(async (id: string, prefetched?: BacktestResult) => {
-    const result = prefetched ?? await fetchBacktest(id);
-    setSelectedResult(result);
+    try {
+      setError(null);
+      const result = prefetched ?? await fetchBacktest(id);
+      setSelectedResult(result);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load result");
+    }
   }, []);
 
   const save = useCallback(async (id: string): Promise<void> => {

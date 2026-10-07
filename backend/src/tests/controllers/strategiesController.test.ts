@@ -1,4 +1,5 @@
 jest.mock('../../adapters/supabase/repositories');
+jest.mock('../../adapters/supabase/reviewRepositories');
 jest.mock('../../config/env', () => ({
   env: {
     supabaseUrl: 'https://test.supabase.co',
@@ -20,6 +21,12 @@ jest.mock('../../config/env', () => ({
     maxPositionSizeUsd: 10_000,
     maxNotionalExposureUsd: 50_000,
     orderCooldownMs: 5_000,
+    sandboxMaxCapitalPct: 0.05,
+    sandboxMaxActiveRunsPerMember: 2,
+    sandboxRunTtlHours: 24,
+    runtimeOrigin: 'test',
+    buildSha: 'test-sha',
+    buildDirty: false,
     enableLiveTrading: false,
     enableWebSocketPush: true,
     databaseUrl: '',
@@ -28,6 +35,7 @@ jest.mock('../../config/env', () => ({
 
 import type { Request, Response } from 'express';
 import * as repos from '../../adapters/supabase/repositories';
+import * as review from '../../adapters/supabase/reviewRepositories';
 import {
   listStrategyRuns,
   getStrategyRun,
@@ -40,6 +48,12 @@ const mockInsertRun = repos.insertStrategyRun as jest.Mock;
 const mockUpdateRun = repos.updateStrategyRun as jest.Mock;
 const mockGetAll = repos.getAllStrategyRuns as jest.Mock;
 const mockGetById = repos.getStrategyRunById as jest.Mock;
+const mockGetStrategy = repos.getStrategyById as jest.Mock;
+const mockGetVersion = review.getStrategyVersionById as jest.Mock;
+const mockCountRunning = repos.countRunningRunsForOwner as jest.Mock;
+const TEST_USER = {
+  id: 'user-1', email: 'member@example.com', role: 'member', displayName: 'Member', membershipStatus: 'active',
+} as const;
 
 function mockReq(overrides: Partial<Request> = {}): Request {
   return {
@@ -66,6 +80,7 @@ function ctxReq(
     params: {},
     query: {},
     app: { locals: { ctx } },
+    user: TEST_USER,
     ...overrides,
   } as unknown as Request;
 }
@@ -83,7 +98,16 @@ function makeLiveRuns() {
 
 const pairsConfig = { name: 'Test Pairs', symbols: ['SPY', 'QQQ'], leg1Symbol: 'SPY', leg2Symbol: 'QQQ' };
 
-beforeEach(() => jest.clearAllMocks());
+beforeEach(() => {
+  jest.clearAllMocks();
+  mockGetStrategy.mockResolvedValue({
+    id: 'strat-1', strategy_type: 'pairs_trading', name: 'Test Pairs',
+    config: pairsConfig, owner_id: TEST_USER.id,
+  });
+  mockGetVersion.mockResolvedValue({ id: 'ver-1', strategyId: 'strat-1', config: pairsConfig });
+  mockCountRunning.mockResolvedValue(0);
+  mockGetById.mockResolvedValue({ id: 'run-1', ownerId: TEST_USER.id });
+});
 
 describe('listStrategyRuns', () => {
   it('calls getAllStrategyRuns and returns result', async () => {
@@ -147,7 +171,7 @@ describe('startStrategyRun', () => {
   it('returns 503 when orchestrator is not in context', async () => {
     const res = mockRes();
     await startStrategyRun(
-      ctxReq({}, { body: { strategyType: 'pairs_trading', config: {} } }),
+      ctxReq({}, { body: { strategyId: 'strat-1', versionId: 'ver-1' } }),
       res,
     );
     expect(res.status).toHaveBeenCalledWith(503);
@@ -156,10 +180,13 @@ describe('startStrategyRun', () => {
 
 describe('startStrategyRun: with orchestrator', () => {
   it('returns 400 when strategy type is unknown', async () => {
+    mockGetStrategy.mockResolvedValue({
+      id: 'strat-1', strategy_type: 'no_such_strategy', name: 'x', config: {}, owner_id: TEST_USER.id,
+    });
     const orchestrator = { registerStrategy: jest.fn() };
     const res = mockRes();
     await startStrategyRun(
-      ctxReq({ orchestrator, liveRuns: makeLiveRuns() }, { body: { strategyType: 'no_such_strategy', config: { name: 'x' } } }),
+      ctxReq({ orchestrator, liveRuns: makeLiveRuns(), executionMode: 'paper' }, { body: { strategyId: 'strat-1', versionId: 'ver-1' } }),
       res,
     );
     expect(res.status).toHaveBeenCalledWith(400);
@@ -171,12 +198,46 @@ describe('startStrategyRun: with orchestrator', () => {
     const res = mockRes();
     await startStrategyRun(
       ctxReq(
-        { orchestrator, liveRuns },
-        { body: { strategyType: 'pairs_trading', config: { id: 'config-uuid-1', ...pairsConfig } } },
+        { orchestrator, liveRuns, executionMode: 'paper' },
+        { body: { strategyId: 'strat-1', versionId: 'ver-1' } },
       ),
       res,
     );
     expect(res.status).toHaveBeenCalledWith(409);
+    expect(liveRuns.activate).not.toHaveBeenCalled();
+  });
+
+  it('rejects a version that does not belong to the selected strategy', async () => {
+    mockGetVersion.mockResolvedValue({ id: 'ver-1', strategyId: 'strat-other', config: pairsConfig });
+    const liveRuns = makeLiveRuns();
+    const res = mockRes();
+
+    await startStrategyRun(
+      ctxReq(
+        { orchestrator: { hasStrategyWithConfigId: jest.fn() }, liveRuns, executionMode: 'paper' },
+        { body: { strategyId: 'strat-1', versionId: 'ver-1' } },
+      ),
+      res,
+    );
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(liveRuns.activate).not.toHaveBeenCalled();
+  });
+
+  it('enforces the per-member paper sandbox concurrency limit', async () => {
+    mockCountRunning.mockResolvedValue(2);
+    const liveRuns = makeLiveRuns();
+    const res = mockRes();
+
+    await startStrategyRun(
+      ctxReq(
+        { orchestrator: { hasStrategyWithConfigId: jest.fn().mockReturnValue(false) }, liveRuns, executionMode: 'paper' },
+        { body: { strategyId: 'strat-1', versionId: 'ver-1' } },
+      ),
+      res,
+    );
+
+    expect(res.status).toHaveBeenCalledWith(429);
     expect(liveRuns.activate).not.toHaveBeenCalled();
   });
 
@@ -186,7 +247,7 @@ describe('startStrategyRun: with orchestrator', () => {
     mockInsertRun.mockResolvedValue(undefined);
     const res = mockRes();
     await startStrategyRun(
-      ctxReq({ orchestrator, liveRuns }, { body: { strategyType: 'pairs_trading', config: pairsConfig } }),
+      ctxReq({ orchestrator, liveRuns, executionMode: 'paper' }, { body: { strategyId: 'strat-1', versionId: 'ver-1' } }),
       res,
     );
     expect(liveRuns.activate).toHaveBeenCalled();
@@ -202,7 +263,7 @@ describe('startStrategyRun: with orchestrator', () => {
     const liveRuns = makeLiveRuns();
     mockInsertRun.mockResolvedValue(undefined);
     await startStrategyRun(
-      ctxReq({ orchestrator, liveRuns }, { body: { strategyType: 'pairs_trading', config: { ...pairsConfig, id: 'strat-1' } } }),
+      ctxReq({ orchestrator, liveRuns, executionMode: 'paper' }, { body: { strategyId: 'strat-1', versionId: 'ver-1' } }),
       mockRes(),
     );
 
@@ -213,20 +274,17 @@ describe('startStrategyRun: with orchestrator', () => {
     expect(mockInsertRun.mock.invocationCallOrder[0]).toBeLessThan(liveRuns.activate.mock.invocationCallOrder[0]);
   });
 
-  it('gives an unsaved config the run id as its identity, never undefined', async () => {
+  it('rejects an unsaved config instead of trusting caller-supplied trading parameters', async () => {
     const orchestrator = { hasStrategyWithConfigId: jest.fn().mockReturnValue(false) };
     const liveRuns = makeLiveRuns();
     mockInsertRun.mockResolvedValue(undefined);
+    const res = mockRes();
     await startStrategyRun(
-      ctxReq({ orchestrator, liveRuns }, { body: { strategyType: 'pairs_trading', config: pairsConfig } }),
-      mockRes(),
+      ctxReq({ orchestrator, liveRuns, executionMode: 'paper' }, { body: { strategyType: 'pairs_trading', config: pairsConfig } }),
+      res,
     );
-
-    const run = mockInsertRun.mock.calls[0][0];
-    expect(run.config.id).toBe(run.id);
-    expect(run.strategyId).toBe(run.id);
-    const [, strategy] = liveRuns.activate.mock.calls[0] as unknown as [string, { id: string }];
-    expect(strategy.id).toBe(run.id);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(mockInsertRun).not.toHaveBeenCalled();
   });
 
   it('never starts trading when the row cannot be persisted', async () => {
@@ -235,7 +293,7 @@ describe('startStrategyRun: with orchestrator', () => {
     mockInsertRun.mockRejectedValue(new Error('db down'));
     const res = mockRes();
     await startStrategyRun(
-      ctxReq({ orchestrator, liveRuns }, { body: { strategyType: 'pairs_trading', config: pairsConfig } }),
+      ctxReq({ orchestrator, liveRuns, executionMode: 'paper' }, { body: { strategyId: 'strat-1', versionId: 'ver-1' } }),
       res,
     );
     expect(res.status).toHaveBeenCalledWith(500);
@@ -248,7 +306,7 @@ describe('startStrategyRun: with orchestrator', () => {
     mockInsertRun.mockRejectedValue(new repos.StrategyAlreadyLiveError('strat-1'));
     const res = mockRes();
     await startStrategyRun(
-      ctxReq({ orchestrator, liveRuns }, { body: { strategyType: 'pairs_trading', config: { ...pairsConfig, id: 'strat-1' } } }),
+      ctxReq({ orchestrator, liveRuns, executionMode: 'paper' }, { body: { strategyId: 'strat-1', versionId: 'ver-1' } }),
       res,
     );
     expect(res.status).toHaveBeenCalledWith(409);

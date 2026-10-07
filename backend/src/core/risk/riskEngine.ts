@@ -33,7 +33,11 @@ import type { PortfolioSnapshot } from "../../types/portfolio";
 
 export class RiskEngine {
   private config: RiskConfig;
-  /** Per-strategy last order timestamp (for cooldown enforcement) */
+  /**
+   * Last order timestamp per strategy and symbol (for cooldown enforcement).
+   * Keyed by symbol too: a strategy-wide key rejected a pair's second leg and
+   * all but one symbol of a multi-symbol strategy whose bars arrive together.
+   */
   private lastOrderTs: Map<string, number> = new Map();
   /** Equity at the start of the current session (set on first check) */
   private sessionStartEquity: number | null = null;
@@ -75,7 +79,7 @@ export class RiskEngine {
     if (failure) return { passed: false, intent, ...failure, ts };
 
     // All checks passed — record timestamp for cooldown tracking
-    this.lastOrderTs.set(intent.strategyId, ts);
+    this.lastOrderTs.set(this._cooldownKey(intent), ts);
     return { passed: true, intent, ts };
   }
 
@@ -409,16 +413,20 @@ export class RiskEngine {
     intent: OrderIntent,
     ts: number,
   ): { failedCheck: string; reason: string } | null {
-    const last = this.lastOrderTs.get(intent.strategyId);
+    const last = this.lastOrderTs.get(this._cooldownKey(intent));
     if (last === undefined) return null;
     const elapsed = ts - last;
     if (elapsed < this.config.orderCooldownMs) {
       return {
         failedCheck: "ORDER_COOLDOWN",
-        reason: `Order cooldown active — ${this.config.orderCooldownMs - elapsed}ms remaining for strategy ${intent.strategyId}`,
+        reason: `Order cooldown active — ${this.config.orderCooldownMs - elapsed}ms remaining for strategy ${intent.strategyId} on ${intent.symbol}`,
       };
     }
     return null;
+  }
+
+  private _cooldownKey(intent: OrderIntent): string {
+    return `${intent.strategyId}\u0000${intent.symbol}`;
   }
 
   private _checkMaxPositionSize(

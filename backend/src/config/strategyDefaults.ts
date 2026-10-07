@@ -15,6 +15,13 @@ import type { IStrategy } from "../strategies/base/strategy";
 import { DEFAULT_PAIRS_CONFIG } from "../strategies/pairs/pairsConfig";
 import { PairsStrategy } from "../strategies/pairs/pairsStrategy";
 import type { PairsStrategyConfig } from "../strategies/pairs/pairsTypes";
+import { MinuteReversalStrategy } from "../strategies/minuteReversal/minuteReversalStrategy";
+import {
+  createMinuteReversalConfig,
+  DEFAULT_MINUTE_REVERSAL_CONFIG,
+  DEFAULT_MINUTE_REVERSAL_SYMBOLS,
+} from "../strategies/minuteReversal/minuteReversalConfig";
+import type { MinuteReversalConfig } from "../strategies/minuteReversal/minuteReversalTypes";
 
 export interface StrategyDefinition {
   type: StrategyType;
@@ -38,6 +45,9 @@ export interface StrategyDefinition {
  */
 export const STRATEGY_FACTORY: Record<string, (config: Record<string, unknown>) => IStrategy> = {
   pairs_trading: (config) => new PairsStrategy(config as unknown as PairsStrategyConfig),
+  // Saved configs may omit tuning fields; fill them from the defaults.
+  minute_reversal: (config) =>
+    new MinuteReversalStrategy(createMinuteReversalConfig(config as Partial<MinuteReversalConfig>)),
 };
 
 export const STRATEGY_DEFINITIONS: Record<string, StrategyDefinition> = {
@@ -53,6 +63,19 @@ export const STRATEGY_DEFINITIONS: Record<string, StrategyDefinition> = {
       leg2Symbol: "QQQ",
       symbols: ["SPY", "QQQ"],
       name: "Pairs: SPY/QQQ",
+    },
+  },
+  minute_reversal: {
+    type: "minute_reversal",
+    label: "Minute Reversal (test)",
+    description:
+      "Order-path test: sells a symbol after its 1-minute bar closes up and buys after it closes down, " +
+      "one fixed share size per bar with a per-symbol position cap.",
+    algorithmVersion: MinuteReversalStrategy.VERSION,
+    defaultConfig: {
+      ...DEFAULT_MINUTE_REVERSAL_CONFIG,
+      symbols: [...DEFAULT_MINUTE_REVERSAL_SYMBOLS],
+      name: "Minute Reversal: large caps",
     },
   },
 };

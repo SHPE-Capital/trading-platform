@@ -21,6 +21,7 @@ import type { BaseStrategyConfig, StrategyType } from "./strategy";
 
 /** Club membership role. A lead may approve promotions; a member may not. */
 export type UserRole = "member" | "lead";
+export type MembershipStatus = "pending" | "active" | "suspended";
 
 /** A club member, mirrored from auth.users by the on_auth_user_created trigger. */
 export interface AppUser {
@@ -28,6 +29,7 @@ export interface AppUser {
   email: string;
   displayName: string | null;
   role: UserRole;
+  membershipStatus: MembershipStatus;
   createdAt?: EpochMs;
 }
 
@@ -36,6 +38,7 @@ export interface AuthenticatedUser {
   id: UUID;
   email: string;
   role: UserRole;
+  membershipStatus: MembershipStatus;
   displayName: string | null;
 }
 
@@ -59,6 +62,8 @@ export interface StrategyVersion {
   createdAt: EpochMs;
   /** Joined for display; not a column */
   createdByName?: string | null;
+  /** Present after save when this version advanced an open proposal. */
+  attachedToProposalId?: UUID | null;
 }
 
 // ------------------------------------------------------------------

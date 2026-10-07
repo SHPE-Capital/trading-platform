@@ -225,6 +225,19 @@ The `strategies/` directory is structured to accept new strategies by extending 
 
 ## Setup Instructions
 
+For the lowest-overhead local setup, install Node.js 22+ and Docker Desktop,
+then run:
+
+```bash
+npm install
+npm run dev:stack
+```
+
+This starts a project-local Supabase stack plus the frontend, API, paper runner,
+and backtest worker. See [LOCAL_DEVELOPMENT.md](./LOCAL_DEVELOPMENT.md) for the
+local account, service URLs, database workflow, membership model, and paper/live
+deployment boundary.
+
 ### Prerequisites
 
 - Node.js 20+

@@ -31,6 +31,9 @@ export interface BacktestJob {
   errorMessage: string | null;
   attempts: number;
   requestedBy: UUID | null;
+  runtimeOrigin?: string;
+  buildSha?: string;
+  buildDirty?: boolean;
   progress: BacktestJobProgress | null;
   createdAt: EpochMs;
   startedAt: EpochMs | null;

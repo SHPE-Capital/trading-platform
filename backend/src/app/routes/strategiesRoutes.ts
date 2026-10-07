@@ -42,7 +42,7 @@ router.post("/configs", requireAuth, createStrategy);
 router.put("/configs/:configId", requireAuth, updateStrategyConfig);
 
 /** DELETE /api/strategies/configs/:configId — remove a saved config */
-router.delete("/configs/:configId", deleteStrategyConfig);
+router.delete("/configs/:configId", requireAuth, deleteStrategyConfig);
 
 // ------------------------------------------------------------------
 // Run management
@@ -55,10 +55,10 @@ router.get("/", listStrategyRuns);
 router.get("/:id", getStrategyRun);
 
 /** POST /api/strategies/start — create and start a new strategy run */
-router.post("/start", startStrategyRun);
+router.post("/start", requireAuth, startStrategyRun);
 
 /** POST /api/strategies/:id/stop — stop a running strategy */
-router.post("/:id/stop", stopStrategyRun);
+router.post("/:id/stop", requireAuth, stopStrategyRun);
 
 // ------------------------------------------------------------------
 // Config version history

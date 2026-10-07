@@ -26,6 +26,14 @@ WORKDIR /app
 COPY . .
 RUN npm run build
 
+# Hot-reload target used only by docker-compose.dev.yml. Source is bind-mounted
+# over /app while node_modules remains in a named volume populated from here.
+FROM deps AS development
+WORKDIR /app
+ENV NODE_ENV=development
+COPY . .
+CMD ["npm", "run", "dev:api"]
+
 # Second, production-only install — the runtime image ships neither
 # devDependencies (typescript, ts-node, jest, eslint, ...) nor source .ts
 # files, only the compiled dist/ output and what it needs at runtime.

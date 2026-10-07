@@ -44,6 +44,7 @@ function mapUser(row: Record<string, unknown>): AppUser {
     email: row.email as string,
     displayName: (row.display_name as string | null) ?? null,
     role: (row.role as AppUser["role"]) ?? "member",
+    membershipStatus: (row.membership_status as AppUser["membershipStatus"]) ?? "pending",
     createdAt: row.created_at ? ms(row.created_at) : undefined,
   };
 }
@@ -89,7 +90,31 @@ function mapVersion(row: Record<string, unknown>): StrategyVersion {
     createdBy: (row.created_by as UUID | null) ?? null,
     createdAt: ms(row.created_at),
     createdByName: author?.display_name ?? null,
+    attachedToProposalId: (row.attached_to_proposal_id as UUID | null | undefined) ?? undefined,
   };
+}
+
+/** Atomically updates the latest config, appends its version, and advances an open proposal. */
+export async function saveStrategyVersion(input: {
+  strategyId: UUID;
+  name: string;
+  config: Record<string, unknown>;
+  changeSummary: string;
+  createdBy: UUID;
+}): Promise<StrategyVersion> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase.rpc("save_strategy_version", {
+    p_strategy: input.strategyId,
+    p_name: input.name,
+    p_config: input.config,
+    p_change_summary: input.changeSummary,
+    p_created_by: input.createdBy,
+  });
+  if (error || !data) {
+    logger.error("saveStrategyVersion failed", { error: error?.message });
+    throw new Error(`saveStrategyVersion failed: ${error?.message ?? "empty response"}`);
+  }
+  return mapVersion(data as Record<string, unknown>);
 }
 
 /**
@@ -172,7 +197,7 @@ export async function getBacktestsForVersion(versionId: UUID): Promise<Record<st
   const supabase = getSupabaseClient();
   const { data, error } = await supabase
     .from("backtest_results")
-    .select("id, status, metrics, started_at, completed_at, strategy_version_id")
+    .select("id, status, metrics, started_at, completed_at, strategy_version_id, strategy_version, runtime_origin, build_sha, build_dirty, owner_id, saved_at")
     .eq("strategy_version_id", versionId)
     .order("completed_at", { ascending: false });
   if (error) {
@@ -400,7 +425,12 @@ export async function updateProposalHead(
 export async function settleProposal(
   proposalId: UUID,
   next:
-    | { status: "approved"; approvedBy: UUID; approvedCapitalPct?: number | null }
+    | {
+        status: "approved";
+        approvedBy: UUID;
+        approvedCapitalPct?: number | null;
+        expectedHeadVersionId: UUID;
+      }
     | { status: "rejected"; rejectedBy: UUID; rejectionReason: string }
     | { status: "withdrawn" },
 ): Promise<StrategyProposal | null> {
@@ -418,11 +448,18 @@ export async function settleProposal(
     payload.rejection_reason = next.rejectionReason;
   }
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("strategy_proposals")
     .update(payload)
     .eq("id", proposalId)
-    .eq("status", "open")
+    .eq("status", "open");
+  // Approval is valid only for the exact version the lead reviewed. If an
+  // author pushes a new head between the read and this guarded update, zero
+  // rows are returned and the controller reports a conflict.
+  if (next.status === "approved") {
+    query = query.eq("head_version_id", next.expectedHeadVersionId);
+  }
+  const { data, error } = await query
     .select("*")
     .maybeSingle();
 

@@ -38,6 +38,7 @@ interface MigrationFile {
  * exists. Lets `status` tell "never ran" apart from "ran by hand, unrecorded".
  */
 const SIGNATURES: Record<string, string> = {
+  "0000": "select to_regclass('public.strategy_runs') is not null and to_regclass('public.strategies') is not null",
   "0001": "select to_regclass('public.backtest_jobs') is not null",
   "0002": "select to_regclass('public.bar_coverage') is not null",
   "0003": "select to_regclass('public.app_users') is not null",
@@ -48,7 +49,12 @@ const SIGNATURES: Record<string, string> = {
   "0008": "select exists (select 1 from pg_trigger where tgname = 'on_auth_user_created')",
   "0009": "select exists (select 1 from information_schema.columns where table_name = 'backtest_results' and column_name = 'saved_at')",
   "0010": "select to_regclass('public.proposal_summaries') is not null",
-  "0011": "select to_regprocedure('public.claim_backtest_job(text, integer, integer, integer)') is not null",
+  // 0012 deliberately replaces claim_backtest_job with a five-argument
+  // signature, so probe a 0011 function that remains stable afterward.
+  "0011": "select to_regprocedure('public.touch_backtest_job(uuid, text, integer, jsonb)') is not null",
+  "0012": "select exists (select 1 from information_schema.columns where table_name = 'strategy_runs' and column_name = 'runtime_origin')",
+  "0013": "select exists (select 1 from information_schema.columns where table_name = 'app_users' and column_name = 'membership_status')",
+  "0014": "select to_regprocedure('public.save_strategy_version(uuid, text, jsonb, text, uuid)') is not null",
 };
 
 function listMigrations(): MigrationFile[] {

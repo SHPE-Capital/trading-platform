@@ -40,11 +40,55 @@ function setup(overrides: Partial<Record<'buildStrategy' | 'warmUp', jest.Mock>>
     buildStrategy: overrides.buildStrategy ?? jest.fn(strategyFor),
     warmUp: overrides.warmUp ?? jest.fn(async () => 42),
     markRunErrored: jest.fn(async () => {}),
+    markRunExpired: jest.fn(async () => {}),
     now: () => now.t,
   };
   const coordinator = new LiveRunCoordinator('paper:host:1:abc', 90, deps as unknown as LiveRunCoordinatorDeps);
   return { coordinator, deps, registered, now };
 }
+
+describe('LiveRunCoordinator: position restore on adoption', () => {
+  it("re-applies an adopted run's fills before it trades", async () => {
+    const { coordinator, deps, registered } = setup();
+    const restorePositions = jest.fn(async () => 9);
+    Object.assign(deps, { restorePositions });
+    deps.leases.claimOrphans.mockResolvedValue([run('r1')]);
+
+    await coordinator.adoptOrphans();
+
+    expect(restorePositions).toHaveBeenCalledWith(expect.objectContaining({ id: 'r1' }));
+    expect(restorePositions.mock.invocationCallOrder[0]).toBeLessThan(deps.registry.registerStrategy.mock.invocationCallOrder[0]);
+    expect(registered.has('r1')).toBe(true);
+  });
+
+  it('does not apply the same run twice when this process re-adopts it', async () => {
+    const { coordinator, deps, registered } = setup();
+    const restorePositions = jest.fn(async () => 9);
+    Object.assign(deps, { restorePositions });
+    deps.leases.claimOrphans.mockResolvedValueOnce([run('r1')]);
+    await coordinator.adoptOrphans();
+
+    deps.leases.heartbeat.mockResolvedValueOnce([]); // another runner took it
+    await coordinator.tick();
+    expect(registered.has('r1')).toBe(false);
+
+    deps.leases.claimOrphans.mockResolvedValueOnce([run('r1')]); // and handed it back
+    await coordinator.adoptOrphans();
+    expect(registered.has('r1')).toBe(true);
+    expect(restorePositions).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves a run unadopted, lease released, when its positions cannot be read', async () => {
+    const { coordinator, deps, registered } = setup();
+    Object.assign(deps, { restorePositions: jest.fn(async () => { throw new Error('db down'); }) });
+    deps.leases.claimOrphans.mockResolvedValue([run('r1')]);
+
+    expect(await coordinator.adoptOrphans()).toEqual([]);
+    expect(registered.has('r1')).toBe(false);
+    expect(deps.leases.release).toHaveBeenCalledWith('r1');
+    expect(coordinator.isHeld('r1')).toBe(false);
+  });
+});
 
 describe('LiveRunCoordinator', () => {
   it('adopts orphaned runs: warms each up, then registers and subscribes it', async () => {
@@ -80,6 +124,22 @@ describe('LiveRunCoordinator', () => {
 
     expect(registered.size).toBe(0);
     expect(deps.markRunErrored).toHaveBeenCalledWith('r1', expect.stringContaining('No factory'));
+    expect(deps.leases.release).toHaveBeenCalledWith('r1');
+  });
+
+  it('refuses to adopt a run approved for a different algorithm version', async () => {
+    const { coordinator, deps, registered } = setup({
+      buildStrategy: jest.fn((r: StrategyRun) => ({
+        ...strategyFor(r),
+        version: 5,
+      })),
+    });
+    deps.leases.claimOrphans.mockResolvedValue([run('r1', { strategyVersion: 4 })]);
+
+    await coordinator.adoptOrphans();
+
+    expect(registered.size).toBe(0);
+    expect(deps.markRunErrored).toHaveBeenCalledWith('r1', expect.stringContaining('Algorithm changed from v4'));
     expect(deps.leases.release).toHaveBeenCalledWith('r1');
   });
 
@@ -135,6 +195,20 @@ describe('LiveRunCoordinator', () => {
     expect(registered.has('r1')).toBe(false);
     expect(deps.leases.release).toHaveBeenCalledWith('r1');
     expect(coordinator.isHeld('r1')).toBe(false);
+  });
+
+  it('expires a sandbox run, records the stop, and releases its lease', async () => {
+    const now = { t: 1_000_000 };
+    const { coordinator, deps, registered } = setup({}, now);
+    coordinator.activate('r1', strategyFor(run('r1')), now.t + 1_000);
+
+    now.t += 1_001;
+    const result = await coordinator.tick();
+
+    expect(result.expired).toEqual(['r1']);
+    expect(deps.markRunExpired).toHaveBeenCalledWith('r1', 'Paper sandbox run expired');
+    expect(deps.leases.release).toHaveBeenCalledWith('r1');
+    expect(registered.has('r1')).toBe(false);
   });
 
   it('releaseAll hands every lease back for an immediate successor', async () => {

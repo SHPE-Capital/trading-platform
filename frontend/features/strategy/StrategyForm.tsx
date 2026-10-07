@@ -12,16 +12,19 @@
 
 "use client";
 
+/* Form fields intentionally snapshot the selected persisted configuration. */
+/* eslint-disable react-hooks/set-state-in-effect */
+
 import { useState, useEffect } from "react";
 import type { PairsStrategyConfig, RiskBudget } from "../../types/strategy";
 import { useStrategyConfigs } from "../../hooks/useStrategyConfigs";
 import { useStrategyVersions } from "../../hooks/useStrategyVersions";
 import RiskBudgetSection, { type RiskBudgetState, defaultRiskBudgetState } from "../shared/RiskBudgetSection";
-import { createVersion, createProposal } from "../../services/proposalsService";
+import { createProposal } from "../../services/proposalsService";
 import { useAuth } from "../../context/AuthContext";
 
 interface Props {
-  onSubmit: (config: Omit<PairsStrategyConfig, "id">) => Promise<void>;
+  onSubmit: (selection: { strategyId: string; versionId: string }) => Promise<void>;
   isLoading?: boolean;
 }
 
@@ -157,14 +160,17 @@ export default function StrategyForm({ onSubmit, isLoading }: Props) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!durationsValid()) return;
-    const config = buildConfig();
-    // Pass the saved config's id so the backend sets strategy_id correctly,
-    // which lets getAllStrategyRuns JOIN to get the always-current strategy name.
-    const payload = selectedId !== "new"
-      ? { ...config, id: selectedId } as unknown as Omit<PairsStrategyConfig, "id">
-      : config;
-    await onSubmit(payload);
+    setSaveError(null);
+    if (selectedId === "new") {
+      setSaveError("Save this configuration before starting a paper sandbox.");
+      return;
+    }
+    const latest = versions[0];
+    if (!latest) {
+      setSaveError("This strategy has no saved version to run.");
+      return;
+    }
+    await onSubmit({ strategyId: selectedId, versionId: latest.id });
   };
 
   const handleSaveNew = async () => {
@@ -187,21 +193,12 @@ export default function StrategyForm({ onSubmit, isLoading }: Props) {
     if (!durationsValid()) return;
     const config = buildConfig() as Record<string, unknown>;
     try {
-      await update(selectedId, name, config);
-
-      // Record the edit as an immutable version. If this strategy has an open
-      // proposal, the backend re-points it at this version automatically — the
-      // reason the review page itself is never an editing surface.
-      if (user) {
-        const version = await createVersion(selectedId, config, changeSummary.trim() || undefined);
-        setChangeSummary("");
-        setReviewStatus(
-          version.attachedToProposalId
-            ? `Saved as v${version.versionNumber} and attached to the open proposal.`
-            : `Saved as v${version.versionNumber}. Backtest it, then propose it for review.`,
-        );
-        await refetchVersions();
-      }
+      const version = await update(selectedId, name, config, changeSummary.trim() || undefined);
+      setChangeSummary("");
+      setReviewStatus(version.attachedToProposalId
+        ? `Saved as v${version.versionNumber} and attached to the open proposal. Backtest this exact version before approval.`
+        : `Saved as v${version.versionNumber}. It is now available for backtest and paper trading.`);
+      await refetchVersions();
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "Save failed");
     }
@@ -578,7 +575,7 @@ export default function StrategyForm({ onSubmit, isLoading }: Props) {
           disabled={isLoading}
           className="rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-zinc-700 disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-900"
         >
-          {isLoading ? "Starting…" : "Start Strategy"}
+          {isLoading ? "Starting…" : "Start Latest Saved Version on Paper"}
         </button>
       </div>
     </form>

@@ -115,6 +115,54 @@ export async function insertFill(fill: Fill, isPaper = true): Promise<void> {
   if (error) logger.error("insertFill failed", { error: error.message });
 }
 
+/** Page size for reads that must see every row (PostgREST caps responses at max_rows). */
+const READ_PAGE_SIZE = 1000;
+
+/**
+ * Every fill of the orders a run placed, oldest first. Orders carry the
+ * strategy's config id rather than the run id, so the run's start time is what
+ * separates it from earlier runs of the same strategy. Throws on a read error:
+ * a caller rebuilding positions must not mistake a failed read for "flat".
+ */
+export async function getFillsForRun(
+  run: Pick<StrategyRun, "strategyId" | "startedAt" | "config">,
+  isPaper: boolean,
+): Promise<Fill[]> {
+  const supabase = getSupabaseClient();
+  const strategyKey = (run.config as { id?: string } | undefined)?.id ?? run.strategyId;
+  const since = new Date(run.startedAt ?? 0).toISOString();
+  const fills: Fill[] = [];
+  for (let from = 0; ; from += READ_PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("fills")
+      .select("*, orders!inner(strategy_id, submitted_at)")
+      .eq("orders.strategy_id", strategyKey)
+      .gte("orders.submitted_at", since)
+      .eq("is_paper", isPaper)
+      .order("ts", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, from + READ_PAGE_SIZE - 1);
+    if (error) throw new Error(`getFillsForRun failed: ${error.message}`);
+    const rows = (data ?? []) as Record<string, unknown>[];
+    for (const row of rows) {
+      fills.push({
+        id:         row.id as string,
+        orderId:    row.order_id as string,
+        symbol:     row.symbol as string,
+        side:       row.side as Fill["side"],
+        qty:        Number(row.qty),
+        price:      Number(row.price),
+        notional:   Number(row.notional),
+        commission: Number(row.commission ?? 0),
+        ts:         new Date(row.ts as string).getTime(),
+        isoTs:      row.ts as string,
+        exchange:   (row.exchange as string | null) ?? undefined,
+      });
+    }
+    if (rows.length < READ_PAGE_SIZE) return fills;
+  }
+}
+
 // ------------------------------------------------------------------
 // Portfolio Snapshots
 // ------------------------------------------------------------------
@@ -238,8 +286,12 @@ export function mapStrategyRun(row: Record<string, unknown>): StrategyRun {
     config: row.config as StrategyRun["config"],
     status: row.status as StrategyRun["status"],
     executionMode: row.execution_mode as string,
+    runtimeOrigin: (row.runtime_origin as string | undefined) ?? "legacy",
+    buildSha: (row.build_sha as string | undefined) ?? "unknown",
+    buildDirty: (row.build_dirty as boolean | undefined) ?? false,
     startedAt: row.started_at ? new Date(row.started_at as string).getTime() : undefined,
     stoppedAt: row.stopped_at ? new Date(row.stopped_at as string).getTime() : undefined,
+    expiresAt: msOrNull(row.expires_at),
     totalSignals: (row.total_signals as number) ?? 0,
     totalOrders: (row.total_orders as number) ?? 0,
     realizedPnl: (row.realized_pnl as number) ?? 0,
@@ -269,8 +321,12 @@ export async function insertStrategyRun(run: StrategyRun): Promise<void> {
     config: run.config,
     status: run.status,
     execution_mode: run.executionMode,
+    runtime_origin: run.runtimeOrigin ?? "legacy",
+    build_sha: run.buildSha ?? "unknown",
+    build_dirty: run.buildDirty ?? false,
     started_at: run.startedAt ? new Date(run.startedAt).toISOString() : null,
     stopped_at: run.stoppedAt ? new Date(run.stoppedAt).toISOString() : null,
+    expires_at: run.expiresAt ? new Date(run.expiresAt).toISOString() : null,
     total_signals: run.totalSignals,
     total_orders: run.totalOrders,
     realized_pnl: run.realizedPnl,
@@ -316,6 +372,7 @@ export async function updateStrategyRun(runId: UUID, updates: Partial<StrategyRu
   const payload: Record<string, unknown> = {};
   if (updates.status !== undefined)       payload.status         = updates.status;
   if (updates.stoppedAt !== undefined)    payload.stopped_at     = new Date(updates.stoppedAt).toISOString();
+  if (updates.expiresAt !== undefined)    payload.expires_at     = updates.expiresAt ? new Date(updates.expiresAt).toISOString() : null;
   if (updates.totalSignals !== undefined) payload.total_signals  = updates.totalSignals;
   if (updates.totalOrders !== undefined)  payload.total_orders   = updates.totalOrders;
   if (updates.realizedPnl !== undefined)  payload.realized_pnl   = updates.realizedPnl;
@@ -323,7 +380,10 @@ export async function updateStrategyRun(runId: UUID, updates: Partial<StrategyRu
   if (updates.consecutiveErrors !== undefined) payload.consecutive_errors = updates.consecutiveErrors;
   if (updates.disabledReason !== undefined)    payload.disabled_reason    = updates.disabledReason;
   const { error } = await supabase.from("strategy_runs").update(payload).eq("id", runId);
-  if (error) logger.error("updateStrategyRun failed", { error: error.message });
+  if (error) {
+    logger.error("updateStrategyRun failed", { error: error.message });
+    throw new Error(`updateStrategyRun failed: ${error.message}`);
+  }
 }
 
 /**
@@ -374,6 +434,23 @@ export async function getRunningRuns(executionMode: string): Promise<StrategyRun
     const name = nameById.get(r.strategy_id as string) ?? (r.config as Record<string, unknown>).name as string;
     return mapStrategyRun({ ...r, name });
   });
+}
+
+/** Counts active runs charged to one member inside one deployment boundary. */
+export async function countRunningRunsForOwner(
+  ownerId: UUID,
+  executionMode: string,
+  runtimeOrigin: string,
+): Promise<number> {
+  const { count, error } = await getSupabaseClient()
+    .from("strategy_runs")
+    .select("id", { count: "exact", head: true })
+    .eq("owner_id", ownerId)
+    .eq("execution_mode", executionMode)
+    .eq("runtime_origin", runtimeOrigin)
+    .eq("status", "running");
+  if (error) throw new Error(`countRunningRunsForOwner failed: ${error.message}`);
+  return count ?? 0;
 }
 
 /** Resolves the display name for a strategy run row.
@@ -462,6 +539,7 @@ export async function insertStrategy(input: {
   strategy_type: string;
   name: string;
   config: Record<string, unknown>;
+  owner_id: UUID;
 }): Promise<Strategy> {
   const supabase = getSupabaseClient();
   const { data, error } = await supabase
@@ -487,7 +565,29 @@ export async function updateStrategy(
 export async function deleteStrategy(id: UUID): Promise<void> {
   const supabase = getSupabaseClient();
   const { error } = await supabase.from("strategies").delete().eq("id", id);
-  if (error) logger.error("deleteStrategy failed", { error: error.message, id });
+  if (error) {
+    // Throw rather than log: a swallowed failure made the API report
+    // "Strategy deleted" while the row (and its history) remained.
+    logger.error("deleteStrategy failed", { error: error.message, id });
+    throw new Error(`deleteStrategy failed: ${error.message}`);
+  }
+}
+
+/**
+ * Counts the audit history attached to a saved strategy: every run (any
+ * status, any mode) and every proposal. A strategy with history cannot be
+ * deleted — strategy_runs.version_id references its versions, and deleting
+ * would erase the record of what traded and how it was reviewed.
+ */
+export async function getStrategyHistoryCounts(id: UUID): Promise<{ runs: number; proposals: number }> {
+  const supabase = getSupabaseClient();
+  const [runs, proposals] = await Promise.all([
+    supabase.from("strategy_runs").select("id", { count: "exact", head: true }).eq("strategy_id", id),
+    supabase.from("strategy_proposals").select("id", { count: "exact", head: true }).eq("strategy_id", id),
+  ]);
+  if (runs.error) throw new Error(`getStrategyHistoryCounts (runs) failed: ${runs.error.message}`);
+  if (proposals.error) throw new Error(`getStrategyHistoryCounts (proposals) failed: ${proposals.error.message}`);
+  return { runs: runs.count ?? 0, proposals: proposals.count ?? 0 };
 }
 
 // ------------------------------------------------------------------
@@ -647,6 +747,9 @@ export async function insertBacktestResult(result: BacktestResult, savedBy: UUID
   // "backtests for this version" lookup keys on.
   payload.strategy_version_id =
     result.config ? (result.config as { strategyVersionId?: string }).strategyVersionId ?? null : null;
+  payload.runtime_origin = result.config?.runtimeOrigin ?? "unknown";
+  payload.build_sha = result.config?.buildSha ?? "unknown";
+  payload.build_dirty = result.config?.buildDirty ?? false;
 
   payload.owner_id = savedBy;
   payload.saved_at = new Date().toISOString();

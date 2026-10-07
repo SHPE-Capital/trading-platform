@@ -53,6 +53,7 @@ import {
   insertStrategyRun,
   updateStrategyRun,
   findRunningStartupRun,
+  getFillsForRun,
 } from "../adapters/supabase/repositories";
 import {
   claimOrphanedRuns,
@@ -158,7 +159,7 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
     registry: orchestrator,
     subscribe: (symbols) => marketDataAdapter.subscribe(symbols),
     leases: {
-      claimOrphans: () => claimOrphanedRuns(owner, mode, leaseSeconds),
+      claimOrphans: () => claimOrphanedRuns(owner, mode, env.runtimeOrigin, leaseSeconds),
       heartbeat: (runIds) => heartbeatRunLeases(owner, runIds, leaseSeconds),
       release: (runId) => releaseRunLease(runId, owner),
     },
@@ -167,6 +168,15 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
       warmUpStrategy(strategy, (symbols, start, end) => historyLoader.loadBars(symbols, start, end, "1Min")),
     markRunErrored: (runId, reason) =>
       updateStrategyRun(runId, { status: "error", stoppedAt: nowMs(), disabledReason: reason }),
+    markRunExpired: (runId, reason) =>
+      updateStrategyRun(runId, { status: "stopped", stoppedAt: nowMs(), disabledReason: reason }),
+    // The book lives in memory; without this a restart or hand-off resumes a
+    // run as if flat while the broker still holds its positions.
+    restorePositions: async (run) => {
+      const fills = await getFillsForRun(run, isPaper);
+      for (const fill of fills) portfolioState.applyFill(fill);
+      return fills.length;
+    },
   });
   logger.info("bootstrap: runner identity", { owner, leaseSeconds });
 
@@ -207,6 +217,9 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
         config: { ...pairsConfig, id: strategy.id } as unknown as StrategyRun["config"],
         status: "running",
         executionMode: mode,
+        runtimeOrigin: env.runtimeOrigin,
+        buildSha: env.buildSha,
+        buildDirty: env.buildDirty,
         startedAt: nowMs(),
         totalSignals: 0,
         totalOrders: 0,
@@ -241,6 +254,15 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
   await marketDataAdapter.connect().catch((err) => {
     logger.error("bootstrap: market data connect failed — engine will start but no live data until reconnect", { err });
   });
+  // Alpaca does not replay trade_updates sent while the stream was down, so
+  // after a reconnect every order still open here is read back over REST.
+  orderAdapter.onReconnect(() => {
+    const open = orderState.getOpenOrders();
+    if (open.length === 0) return;
+    orderAdapter.reconcileOrders(open).catch((err) =>
+      logger.error("bootstrap: order reconciliation after reconnect failed", { err: String(err) }),
+    );
+  });
   await orderAdapter.connectTradeStream().catch((err) => {
     logger.error("bootstrap: order stream connect failed — fills will not be received until reconnect", { err });
   });
@@ -256,9 +278,9 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
   // a peer may adopt its runs.
   const leaseTimer = setInterval(() => {
     liveRuns.tick().then(
-      ({ lost, adopted: newlyAdopted }) => {
-        if (lost.length > 0 || newlyAdopted.length > 0) {
-          logger.info("bootstrap: lease maintenance", { lost, adopted: newlyAdopted });
+      ({ lost, adopted: newlyAdopted, expired }) => {
+        if (lost.length > 0 || newlyAdopted.length > 0 || expired.length > 0) {
+          logger.info("bootstrap: lease maintenance", { lost, adopted: newlyAdopted, expired });
         }
       },
       (err) => logger.error("bootstrap: lease maintenance failed", { err: String(err) }),
@@ -322,10 +344,13 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
       consecutiveErrors: event.consecutiveErrors,
       disabledReason: reason,
     })
-      .catch((err) => logger.error("persistence: auto-disable update failed", { err }))
       // Status first, then the lease: releasing a still-"running" row would let
       // another runner adopt the broken strategy straight back.
-      .finally(() => void liveRuns.deactivate(event.runKey));
+      .then(() => liveRuns.deactivate(event.runKey))
+      .catch((err) => logger.error(
+        "persistence: auto-disable update failed — retaining lease to prevent re-adoption",
+        { err },
+      ));
   });
 
   // Blocked orders, persisted for the contention view (Part 06).
@@ -383,8 +408,16 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
 
   // ------------------------------------------------------------------
   // Graceful shutdown
+  //
+  // Runs once. Under npm + nodemon (as in docker-compose.dev.yml) one stop
+  // delivers the signal twice; a second, concurrent pass found no leases left
+  // to release and exited before the first pass's release finished, so the
+  // successor had to wait out the lease instead of adopting at once.
   // ------------------------------------------------------------------
+  let shuttingDown = false;
   const shutdown = async (): Promise<void> => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     logger.warn(`bootstrap: shutting down [${mode} mode]`);
     clearInterval(snapshotTimer);
     clearInterval(leaseTimer);

@@ -42,6 +42,10 @@ export const env = {
   port: optionalNumber("PORT", 8080),
   nodeEnv: optional("NODE_ENV", "development"),
   corsOrigin: optional("CORS_ORIGIN", "http://localhost:3000"),
+  /** Isolation boundary for queues and live-run adoption (for example local/prod). */
+  runtimeOrigin: optional("APP_RUNTIME_ORIGIN", "local"),
+  buildSha: optional("APP_BUILD_SHA", "local"),
+  buildDirty: optionalBool("APP_BUILD_DIRTY", true),
 
   // Alpaca
   alpacaApiKey: requireEnv("ALPACA_API_KEY"),
@@ -75,6 +79,12 @@ export const env = {
   runLeaseSeconds: optionalNumber("RUN_LEASE_SECONDS", 90),
   /** evaluate() errors in a row before a live strategy is auto-disabled. */
   maxConsecutiveStrategyErrors: optionalNumber("MAX_CONSECUTIVE_STRATEGY_ERRORS", 5),
+  /** Maximum share of the paper book available to a self-service sandbox run. */
+  sandboxMaxCapitalPct: optionalNumber("SANDBOX_MAX_CAPITAL_PCT", 0.05),
+  /** Maximum concurrently running paper sandboxes owned by one member. */
+  sandboxMaxActiveRunsPerMember: optionalNumber("SANDBOX_MAX_ACTIVE_RUNS_PER_MEMBER", 2),
+  /** Automatic lifetime of a self-service paper sandbox. */
+  sandboxRunTtlHours: optionalNumber("SANDBOX_RUN_TTL_HOURS", 24),
 
   // Feature flags
   enableLiveTrading: optionalBool("ENABLE_LIVE_TRADING", false),

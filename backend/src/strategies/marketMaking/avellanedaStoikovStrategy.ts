@@ -62,6 +62,14 @@ import type {
 } from "./avellanedaStoikovTypes";
 
 export class AvellanedaStoikovStrategy extends BaseStrategy {
+  /**
+   * Algorithm version. Bump on any change that alters signals or sizing (CI
+   * enforces this for edits under strategies/marketMaking/). v1 is the current
+   * behaviour, including the known σ-units issue in handoff.md §1.2 — fixing
+   * that is a v2 change.
+   */
+  static readonly VERSION = 1;
+  readonly version = AvellanedaStoikovStrategy.VERSION;
   readonly type: StrategyType = "market_making";
 
   private readonly state: AvellanedaStoikovInternalState;

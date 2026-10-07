@@ -7,12 +7,14 @@ import {
   insertStrategy,
   insertStrategyRun,
   updateStrategyRun,
-  updateStrategy,
   deleteStrategy,
+  countRunningRunsForOwner,
+  getStrategyHistoryCounts,
   StrategyAlreadyLiveError,
 } from "../../adapters/supabase/repositories";
-import { insertStrategyVersion } from "../../adapters/supabase/reviewRepositories";
+import { getStrategyVersionById, insertStrategyVersion, saveStrategyVersion } from "../../adapters/supabase/reviewRepositories";
 import { STRATEGY_DEFINITIONS, STRATEGY_FACTORY } from "../../config/strategyDefaults";
+import { env } from "../../config/env";
 import { newId } from "../../utils/ids";
 import { nowMs } from "../../utils/time";
 import { logger } from "../../utils/logger";
@@ -63,7 +65,7 @@ export async function getStrategyRun(req: Request, res: Response): Promise<void>
 
 /**
  * POST /api/strategies/start
- * Body: { strategyType: string, config: BaseStrategyConfig }
+ * Body: { strategyId: UUID, versionId: UUID }
  *
  * Instantiates the strategy via STRATEGY_FACTORY, registers it with the
  * live orchestrator, persists a strategy_runs row, and returns the run record.
@@ -71,40 +73,80 @@ export async function getStrategyRun(req: Request, res: Response): Promise<void>
  * subscribed automatically.
  */
 export async function startStrategyRun(req: Request, res: Response): Promise<void> {
-  const { strategyType, config } = req.body as {
-    strategyType: string;
-    config: Record<string, unknown>;
+  const { strategyId, versionId } = req.body as {
+    strategyId?: string;
+    versionId?: string;
   };
-
-  if (!strategyType || !config) {
-    res.status(400).json({ error: "strategyType and config are required" });
+  if (!strategyId || !versionId) {
+    res.status(400).json({ error: "strategyId and versionId are required; sandbox runs use an immutable saved version" });
     return;
   }
-
-  const factory = STRATEGY_FACTORY[strategyType];
-  if (!factory) {
-    res.status(400).json({ error: `Unknown strategy type: ${strategyType}` });
-    return;
-  }
+  const configId = strategyId;
 
   const { orchestrator, liveRuns, executionMode } = req.app.locals.ctx as AppContext;
   if (!orchestrator || !liveRuns) {
     res.status(503).json({ error: "Orchestrator not available in this runtime mode" });
     return;
   }
+  if (executionMode !== "paper") {
+    res.status(403).json({
+      error: "Self-service starts are paper-only",
+      detail: "Real-money runs must be started through lead approval.",
+    });
+    return;
+  }
 
-  const configId = config.id as string | undefined;
-  if (configId && orchestrator.hasStrategyWithConfigId(configId)) {
+  const saved = await getStrategyById(configId);
+  if (!saved) {
+    res.status(404).json({ error: `Saved strategy ${configId} not found` });
+    return;
+  }
+  if (req.user!.role !== "lead" && saved.owner_id !== req.user!.id) {
+    res.status(403).json({ error: "Only the strategy owner or a lead may start this sandbox run" });
+    return;
+  }
+  const version = await getStrategyVersionById(versionId);
+  if (!version || version.strategyId !== configId) {
+    res.status(400).json({ error: "versionId does not belong to this strategy" });
+    return;
+  }
+  const strategyType = saved.strategy_type;
+  const factory = STRATEGY_FACTORY[strategyType];
+  if (!factory) {
+    res.status(400).json({ error: `Unknown strategy type: ${strategyType}` });
+    return;
+  }
+
+  if (orchestrator.hasStrategyWithConfigId(configId)) {
     res.status(409).json({ error: `A strategy from config ${configId} is already running` });
     return;
   }
 
-  // The run ID doubles as the orchestrator registry key, so stopStrategyRun can
-  // use the URL :id directly. An unsaved config borrows it as its identity too:
-  // strategy.id is what risk budgets and rejection attribution key on, and an
-  // undefined one would make every such strategy share a single budget.
+  const activeRuns = await countRunningRunsForOwner(req.user!.id, "paper", env.runtimeOrigin);
+  if (activeRuns >= env.sandboxMaxActiveRunsPerMember) {
+    res.status(429).json({
+      error: `Paper sandbox limit reached (${env.sandboxMaxActiveRunsPerMember} active runs per member)`,
+      detail: "Stop an existing sandbox before starting another.",
+    });
+    return;
+  }
+
+  const persistedConfig = version.config;
+  const requestedBudget = (persistedConfig.riskBudget as Record<string, unknown> | undefined) ?? {};
+  const requestedCap = typeof requestedBudget.maxCapitalPct === "number"
+    ? requestedBudget.maxCapitalPct
+    : env.sandboxMaxCapitalPct;
   const runId = newId();
-  const effectiveConfig = { ...config, id: configId ?? runId };
+  const expiresAt = nowMs() + env.sandboxRunTtlHours * 60 * 60 * 1000;
+  const effectiveConfig = {
+    ...persistedConfig,
+    id: configId,
+    name: saved.name,
+    riskBudget: {
+      ...requestedBudget,
+      maxCapitalPct: Math.min(requestedCap, env.sandboxMaxCapitalPct),
+    },
+  };
   const strategy = factory(effectiveConfig);
 
   await liveRuns.prepare(strategy);
@@ -114,14 +156,21 @@ export async function startStrategyRun(req: Request, res: Response): Promise<voi
     strategyId: effectiveConfig.id as UUID,
     strategyType: strategyType as StrategyType,
     strategyVersion: strategy.version,
-    name: (config.name as string | undefined) ?? `${strategyType} run`,
+    name: saved.name,
     config: effectiveConfig as unknown as StrategyRun["config"],
     status: "running",
-    executionMode: executionMode ?? "paper",
+    executionMode: "paper",
+    runtimeOrigin: env.runtimeOrigin,
+    buildSha: env.buildSha,
+    buildDirty: env.buildDirty,
     startedAt: nowMs(),
+    expiresAt,
     totalSignals: 0,
     totalOrders: 0,
     realizedPnl: 0,
+    versionId: version.id,
+    ownerId: req.user!.id,
+    meta: { sandbox: true },
     ...liveRuns.leaseFields(),
   };
 
@@ -140,7 +189,7 @@ export async function startStrategyRun(req: Request, res: Response): Promise<voi
     return;
   }
 
-  liveRuns.activate(runId, strategy);
+  liveRuns.activate(runId, strategy, expiresAt);
   logger.info("startStrategyRun: strategy started", { runId, strategyId: strategy.id, strategyType });
   res.status(201).json(run);
 }
@@ -159,6 +208,16 @@ export async function stopStrategyRun(req: Request, res: Response): Promise<void
     return;
   }
 
+  const run = await getStrategyRunById(id);
+  if (!run) {
+    res.status(404).json({ error: `Strategy run ${id} not found` });
+    return;
+  }
+  if (req.user!.role !== "lead" && run.ownerId !== req.user!.id) {
+    res.status(403).json({ error: "Only the run owner or a lead may stop this strategy" });
+    return;
+  }
+
   if (!orchestrator.hasStrategy(id)) {
     // Not traded here — either lost on restart or leased to another runner.
     // Marking the row stopped is still right: the runner holding it sees the
@@ -168,8 +227,14 @@ export async function stopStrategyRun(req: Request, res: Response): Promise<void
 
   // Row first, then the lease: releasing a still-"running" row would let another
   // runner adopt it straight back.
-  await updateStrategyRun(id, { status: "stopped", stoppedAt: nowMs() });
-  await liveRuns.deactivate(id);
+  try {
+    await updateStrategyRun(id, { status: "stopped", stoppedAt: nowMs() });
+    await liveRuns.deactivate(id);
+  } catch (err) {
+    logger.error("stopStrategyRun: status write failed — retaining lease", { id, err });
+    res.status(500).json({ error: "Failed to stop strategy safely" });
+    return;
+  }
   logger.info("stopStrategyRun: strategy stopped", { id });
   res.json({ message: `Strategy ${id} stopped` });
 }
@@ -231,7 +296,7 @@ export async function createStrategy(req: Request, res: Response): Promise<void>
     return;
   }
   try {
-    const strategy = await insertStrategy({ strategy_type, name, config });
+    const strategy = await insertStrategy({ strategy_type, name, config, owner_id: req.user!.id });
 
     try {
       await insertStrategyVersion({
@@ -255,10 +320,14 @@ export async function createStrategy(req: Request, res: Response): Promise<void>
   }
 }
 
-/** PUT /api/strategies/configs/:configId — body: { name, config } */
+/** PUT /api/strategies/configs/:configId — body: { name, config, changeSummary? } */
 export async function updateStrategyConfig(req: Request, res: Response): Promise<void> {
   const configId = String(req.params.configId);
-  const { name, config } = req.body as { name: string; config: Record<string, unknown> };
+  const { name, config, changeSummary } = req.body as {
+    name: string;
+    config: Record<string, unknown>;
+    changeSummary?: string;
+  };
   if (!name || !config) {
     res.status(400).json({ error: "name and config are required" });
     return;
@@ -269,8 +338,18 @@ export async function updateStrategyConfig(req: Request, res: Response): Promise
       res.status(404).json({ error: `Strategy ${configId} not found` });
       return;
     }
-    await updateStrategy(configId, name, config);
-    res.json({ message: "Strategy updated" });
+    if (req.user!.role !== "lead" && existing.owner_id !== req.user!.id) {
+      res.status(403).json({ error: "Only the strategy owner or a lead may edit this strategy" });
+      return;
+    }
+    const version = await saveStrategyVersion({
+      strategyId: configId,
+      name,
+      config,
+      changeSummary: changeSummary?.trim() || "Updated strategy configuration",
+      createdBy: req.user!.id,
+    });
+    res.json({ message: "Strategy updated", version });
   } catch (err) {
     logger.error("updateStrategyConfig error", { err });
     res.status(500).json({ error: "Failed to update strategy" });
@@ -281,6 +360,28 @@ export async function updateStrategyConfig(req: Request, res: Response): Promise
 export async function deleteStrategyConfig(req: Request, res: Response): Promise<void> {
   const configId = String(req.params.configId);
   try {
+    const existing = await getStrategyById(configId);
+    if (!existing) {
+      res.status(404).json({ error: `Strategy ${configId} not found` });
+      return;
+    }
+    if (req.user!.role !== "lead" && existing.owner_id !== req.user!.id) {
+      res.status(403).json({ error: "Only the strategy owner or a lead may delete this strategy" });
+      return;
+    }
+    // Only never-run, never-proposed drafts are deletable. The database would
+    // refuse the rest anyway (runs reference the versions a delete cascades to).
+    const history = await getStrategyHistoryCounts(configId);
+    if (history.runs > 0 || history.proposals > 0) {
+      res.status(409).json({
+        error: "This strategy has run or review history and can't be deleted",
+        detail:
+          `It has ${history.runs} run(s) and ${history.proposals} proposal(s). Deleting would erase the ` +
+          "record of what traded and how it was reviewed. Stop any active run and keep the strategy.",
+        history,
+      });
+      return;
+    }
     await deleteStrategy(configId);
     res.json({ message: "Strategy deleted" });
   } catch (err) {

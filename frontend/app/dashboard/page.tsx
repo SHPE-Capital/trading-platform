@@ -36,7 +36,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!wsMsg || wsMsg.type !== "STRATEGY_ERROR") return;
-    setStrategyErrors((prev) => [...prev, wsMsg]);
+    queueMicrotask(() => setStrategyErrors((prev) => [...prev, wsMsg]));
   }, [wsMsg]);
 
   return (

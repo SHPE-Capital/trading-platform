@@ -5,7 +5,7 @@ import { usePortfolio } from "../hooks/usePortfolio";
 import { useStrategies } from "../hooks/useStrategies";
 import { useSystemHealth } from "../hooks/useSystemHealth";
 import type { PortfolioSnapshot } from "../types/portfolio";
-import type { StrategyRun, PairsStrategyConfig } from "../types/strategy";
+import type { StrategyRun } from "../types/strategy";
 import type { SystemStatus } from "../types/api";
 
 interface PortfolioData {
@@ -21,7 +21,7 @@ interface StrategiesData {
   isLoading: boolean;
   error: string | null;
   refetch: () => void;
-  startStrategy: (config: Omit<PairsStrategyConfig, "id">) => Promise<void>;
+  startStrategy: (selection: { strategyId: string; versionId: string }) => Promise<void>;
   stopStrategy: (id: string) => Promise<void>;
 }
 

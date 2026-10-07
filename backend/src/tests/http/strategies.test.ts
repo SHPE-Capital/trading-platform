@@ -22,7 +22,9 @@ const mockGetUser = jest.fn();
 /** Signs the next request in as a club member. Config CRUD needs no special role. */
 function signedInAs(id = "user-1") {
   mockGetUser.mockResolvedValue({ data: { user: { id } }, error: null });
-  mockGetAppUser.mockResolvedValue({ id, email: "member@shpe.test", displayName: "Member", role: "member" });
+  mockGetAppUser.mockResolvedValue({
+    id, email: "member@shpe.test", displayName: "Member", role: "member", membershipStatus: "active",
+  });
 }
 
 describe("Strategies HTTP API", () => {
@@ -80,33 +82,37 @@ describe("Strategies HTTP API", () => {
   // -------------------------------------------------------------------------
   describe("POST /api/strategies/start", () => {
     test("returns 503 when no orchestrator context (API-only mode)", async () => {
+      signedInAs();
       const res = await request(app)
         .post("/api/strategies/start")
-        .send({ strategyType: "pairs_trading", config: { name: "test", symbols: ["SPY", "QQQ"] } });
+        .set("Authorization", "Bearer valid")
+        .send({ strategyId: "cfg-1", versionId: "ver-1" });
       expect(res.status).toBe(503);
     });
 
-    test("returns 400 when strategyType is missing", async () => {
+    test("returns 401 without a signed-in caller", async () => {
       const res = await request(app)
         .post("/api/strategies/start")
-        .send({ config: {} });
+        .send({ strategyId: "cfg-1", versionId: "ver-1" });
+      expect(res.status).toBe(401);
+    });
+
+    test("returns 400 when strategyId is missing", async () => {
+      signedInAs();
+      const res = await request(app)
+        .post("/api/strategies/start")
+        .set("Authorization", "Bearer valid")
+        .send({});
       expect(res.status).toBe(400);
     });
 
-    test("returns 400 when config is missing", async () => {
+    test("does not accept caller-supplied strategy configs", async () => {
+      signedInAs();
       const res = await request(app)
         .post("/api/strategies/start")
-        .send({ strategyType: "pairs_trading" });
-      expect(res.status).toBe(400);
-    });
-
-    test("returns 400 for unknown strategy type (with orchestrator would return 400 not 503)", async () => {
-      const res = await request(app)
-        .post("/api/strategies/start")
+        .set("Authorization", "Bearer valid")
         .send({ strategyType: "unknown_strategy", config: { name: "x" } });
-      // No orchestrator in test app, so 503 is returned before the factory check.
-      // This verifies the route is wired and reachable.
-      expect([400, 503]).toContain(res.status);
+      expect(res.status).toBe(400);
     });
   });
 
@@ -115,7 +121,10 @@ describe("Strategies HTTP API", () => {
   // -------------------------------------------------------------------------
   describe("POST /api/strategies/:id/stop", () => {
     test("returns 503 when no orchestrator context (API-only mode)", async () => {
-      const res = await request(app).post("/api/strategies/run-1/stop");
+      signedInAs();
+      const res = await request(app)
+        .post("/api/strategies/run-1/stop")
+        .set("Authorization", "Bearer valid");
       expect(res.status).toBe(503);
     });
   });
@@ -241,9 +250,10 @@ describe("Strategies HTTP API", () => {
       expect(res.status).toBe(400);
     });
 
-    test("any signed-in member (no special role) may update a config", async () => {
+    test("the owner may update a config and creates a new version", async () => {
       signedInAs("user-1");
-      mockGetStrategyById.mockResolvedValue({ id: "cfg-1", name: "old", config: {} });
+      mockGetStrategyById.mockResolvedValue({ id: "cfg-1", name: "old", config: {}, owner_id: "user-1" });
+      mockInsertStrategyVersion.mockResolvedValue({ id: "ver-2", versionNumber: 2 });
       const res = await request(app)
         .put("/api/strategies/configs/cfg-1")
         .set("Authorization", "Bearer valid")
@@ -253,11 +263,49 @@ describe("Strategies HTTP API", () => {
   });
 
   describe("DELETE /api/strategies/configs/:configId", () => {
-    test("returns 200 on successful delete", async () => {
+    test("returns 200 on successful delete of a draft with no history", async () => {
+      signedInAs("user-1");
+      mockGetStrategyById.mockResolvedValue({ id: "cfg-1", owner_id: "user-1" });
+      (repositories.getStrategyHistoryCounts as jest.Mock).mockResolvedValue({ runs: 0, proposals: 0 });
       (repositories.deleteStrategy as jest.Mock).mockResolvedValue(undefined);
-      const res = await request(app).delete("/api/strategies/configs/cfg-1");
+      const res = await request(app)
+        .delete("/api/strategies/configs/cfg-1")
+        .set("Authorization", "Bearer valid");
       expect(res.status).toBe(200);
       expect(res.body.message).toBeDefined();
+    });
+
+    test("refuses with 409 when the strategy has run history, without deleting", async () => {
+      signedInAs("user-1");
+      mockGetStrategyById.mockResolvedValue({ id: "cfg-1", owner_id: "user-1" });
+      (repositories.getStrategyHistoryCounts as jest.Mock).mockResolvedValue({ runs: 3, proposals: 0 });
+      const res = await request(app)
+        .delete("/api/strategies/configs/cfg-1")
+        .set("Authorization", "Bearer valid");
+      expect(res.status).toBe(409);
+      expect(res.body.history).toEqual({ runs: 3, proposals: 0 });
+      expect(repositories.deleteStrategy).not.toHaveBeenCalled();
+    });
+
+    test("reports 500 instead of success when the database rejects the delete", async () => {
+      signedInAs("user-1");
+      mockGetStrategyById.mockResolvedValue({ id: "cfg-1", owner_id: "user-1" });
+      (repositories.getStrategyHistoryCounts as jest.Mock).mockResolvedValue({ runs: 0, proposals: 0 });
+      (repositories.deleteStrategy as jest.Mock).mockRejectedValue(new Error("deleteStrategy failed: fk"));
+      const res = await request(app)
+        .delete("/api/strategies/configs/cfg-1")
+        .set("Authorization", "Bearer valid");
+      expect(res.status).toBe(500);
+    });
+
+    test("refuses a member deleting someone else's strategy", async () => {
+      signedInAs("user-2");
+      mockGetStrategyById.mockResolvedValue({ id: "cfg-1", owner_id: "user-1" });
+      const res = await request(app)
+        .delete("/api/strategies/configs/cfg-1")
+        .set("Authorization", "Bearer valid");
+      expect(res.status).toBe(403);
+      expect(repositories.deleteStrategy).not.toHaveBeenCalled();
     });
   });
 

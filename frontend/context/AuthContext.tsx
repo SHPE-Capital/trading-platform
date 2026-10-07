@@ -86,7 +86,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setError(null);
     const { error: otpError } = await supabase.auth.signInWithOtp({
       email,
-      options: { emailRedirectTo: typeof window !== "undefined" ? window.location.origin : undefined },
+      options: {
+        emailRedirectTo: typeof window !== "undefined" ? window.location.origin : undefined,
+        // Membership is provisioned by club leads. Never turn the public magic
+        // link form into an account-creation endpoint if the Supabase dashboard
+        // sign-up toggle is accidentally left enabled.
+        shouldCreateUser: false,
+      },
     });
     if (otpError) throw new Error(otpError.message);
   }, []);

@@ -10,6 +10,7 @@
  */
 
 import { apiGet, apiPost } from "./api";
+import { config } from "../config";
 import type {
   PendingApproval,
   ProposalComment,
@@ -83,10 +84,17 @@ export async function createProposal(input: {
  */
 export async function approveProposal(
   id: string,
+  expectedHeadVersionId: string,
   approvedCapitalPct?: number,
   note?: string,
 ): Promise<{ proposal: StrategyProposal; run: { id: string } }> {
-  return apiPost(`/proposals/${id}/approve`, { approvedCapitalPct, note });
+  // expectedHeadVersionId pins the approval to the version on screen; the
+  // server answers 409 if the author pushed a newer version since it loaded.
+  return apiPost(
+    `/proposals/${id}/approve`,
+    { expectedHeadVersionId, approvedCapitalPct, note },
+    config.liveApiBaseUrl,
+  );
 }
 
 /** Rejects with a required reason. Lead only. */

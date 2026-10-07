@@ -24,7 +24,8 @@ export type StrategyType =
   | "momentum"
   | "arbitrage"
   | "market_making"
-  | "neural_network";
+  | "neural_network"
+  | "minute_reversal";
 
 /** Strategy lifecycle status */
 export type StrategyRunStatus = "idle" | "running" | "paused" | "stopped" | "error";
@@ -165,8 +166,14 @@ export interface StrategyRun {
   config: BaseStrategyConfig;
   status: StrategyRunStatus;
   executionMode: string;
+  /** Deployment boundary; runners adopt only rows from their own origin. */
+  runtimeOrigin?: string;
+  buildSha?: string;
+  buildDirty?: boolean;
   startedAt?: EpochMs;
   stoppedAt?: EpochMs;
+  /** Automatic stop time for self-service paper sandbox runs. */
+  expiresAt?: EpochMs | null;
   totalSignals: number;
   totalOrders: number;
   realizedPnl: number;
@@ -210,4 +217,6 @@ export interface Strategy {
   config: Record<string, unknown>;
   created_at: string;
   updated_at: string;
+  /** Author who owns this saved strategy (0003_identity). */
+  owner_id?: UUID | null;
 }

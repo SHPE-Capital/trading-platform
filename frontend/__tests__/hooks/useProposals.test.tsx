@@ -57,7 +57,7 @@ describe("useAllProposals", () => {
 
 describe("useProposal", () => {
   beforeEach(() => {
-    svc.fetchProposal.mockResolvedValue({ proposal: { id: "p1", status: "open" } } as never);
+    svc.fetchProposal.mockResolvedValue({ proposal: { id: "p1", status: "open", headVersionId: "v3" } } as never);
   });
 
   it("refetches after an action so the page shows what the server did", async () => {
@@ -68,7 +68,8 @@ describe("useProposal", () => {
 
     await act(() => result.current.approve(0.1, "sized down"));
 
-    expect(svc.approveProposal).toHaveBeenCalledWith("p1", 0.1, "sized down");
+    // The head the page rendered travels with the approval.
+    expect(svc.approveProposal).toHaveBeenCalledWith("p1", "v3", 0.1, "sized down");
     expect(svc.fetchProposal).toHaveBeenCalledTimes(2);
   });
 

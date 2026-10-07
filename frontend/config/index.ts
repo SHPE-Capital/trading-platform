@@ -19,6 +19,10 @@ export const config = {
   backtestApiBaseUrl:
     process.env.NEXT_PUBLIC_BACKTEST_API_BASE_URL ?? "http://localhost:8082/api",
 
+  /** Real-money control plane. Only approval/start-live requests use this URL. */
+  liveApiBaseUrl:
+    process.env.NEXT_PUBLIC_LIVE_API_BASE_URL ?? "http://localhost:8081/api",
+
   /** Whether live WebSocket push updates are enabled */
   enableWebSocket: process.env.NEXT_PUBLIC_ENABLE_WEBSOCKET === "true",
 

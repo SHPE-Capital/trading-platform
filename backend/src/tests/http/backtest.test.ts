@@ -3,6 +3,8 @@ import { createApp } from "../../app/index";
 import { BacktestEngine } from "../../core/backtest/backtestEngine";
 import * as repositories from "../../adapters/supabase/repositories";
 import * as jobs from "../../adapters/supabase/backtestJobRepository";
+import * as review from "../../adapters/supabase/reviewRepositories";
+import { getSupabaseClient } from "../../adapters/supabase/client";
 
 jest.mock("../../core/backtest/backtestEngine");
 jest.mock("../../adapters/supabase/repositories", () => ({
@@ -11,6 +13,11 @@ jest.mock("../../adapters/supabase/repositories", () => ({
   backtestResultExists: jest.fn(),
 }));
 jest.mock("../../adapters/supabase/backtestJobRepository");
+jest.mock("../../adapters/supabase/reviewRepositories");
+jest.mock("../../adapters/supabase/client");
+
+const mockGetUser = jest.fn();
+(getSupabaseClient as jest.Mock).mockReturnValue({ auth: { getUser: mockGetUser } });
 
 const mockEnqueue = jobs.enqueueBacktestJob as jest.Mock;
 
@@ -19,6 +26,10 @@ describe("Backtest HTTP API", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockGetUser.mockResolvedValue({ data: { user: { id: "user-1" } }, error: null });
+    (review.getAppUserById as jest.Mock).mockResolvedValue({
+      id: "user-1", email: "member@shpe.test", displayName: "Member", role: "member", membershipStatus: "active",
+    });
     (repositories.findMatchingBacktestResult as jest.Mock).mockResolvedValue(null);
     (jobs.findReusableJob as jest.Mock).mockResolvedValue(null);
     mockEnqueue.mockImplementation(async ({ id }: { id: string }) => ({ jobId: id, status: "queued", deduped: false }));
@@ -33,7 +44,7 @@ describe("Backtest HTTP API", () => {
   };
 
   test("POST /api/backtests/run — queues a job and returns 202", async () => {
-    const response = await request(app).post("/api/backtests/run").send(payload);
+    const response = await request(app).post("/api/backtests/run").set("Authorization", "Bearer valid").send(payload);
 
     expect(response.status).toBe(202);
     expect(response.body.backtestId).toBeDefined();
@@ -50,7 +61,7 @@ describe("Backtest HTTP API", () => {
     test("a trading process enqueues instead of running the engine in-process", async () => {
       const tradingApp = createApp({ orchestrator: {} as never, executionMode: "paper" });
 
-      const response = await request(tradingApp).post("/api/backtests/run").send(payload);
+      const response = await request(tradingApp).post("/api/backtests/run").set("Authorization", "Bearer valid").send(payload);
 
       expect(response.status).toBe(202);
       expect(mockEnqueue).toHaveBeenCalledTimes(1);
@@ -58,14 +69,14 @@ describe("Backtest HTTP API", () => {
     });
 
     test("the API-only process behaves the same way", async () => {
-      const response = await request(createApp()).post("/api/backtests/run").send(payload);
+      const response = await request(createApp()).post("/api/backtests/run").set("Authorization", "Bearer valid").send(payload);
       expect(response.status).toBe(202);
       expect(BacktestEngine.prototype.run).not.toHaveBeenCalled();
     });
   });
 
   test("POST /api/backtests/run — handles missing fields with 400", async () => {
-    const response = await request(app).post("/api/backtests/run").send({ symbol: "SPY" });
+    const response = await request(app).post("/api/backtests/run").set("Authorization", "Bearer valid").send({ symbol: "SPY" });
 
     expect(response.status).toBe(400);
     expect(response.body.error).toContain("required");

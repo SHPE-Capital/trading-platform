@@ -34,6 +34,7 @@ export interface SystemStatus {
     alpaca: ServiceHealth;
   };
   mode: ExecutionMode;
+  build?: { origin: string; sha: string; dirty: boolean };
   ts: string;
 }
 

@@ -21,7 +21,9 @@ const mockSummary = rejections.getContentionSummary as jest.Mock;
 
 function signIn() {
   mockGetUser.mockResolvedValue({ data: { user: { id: "u1" } }, error: null });
-  (review.getAppUserById as jest.Mock).mockResolvedValue({ id: "u1", email: "m@shpe.test", displayName: "M", role: "member" });
+  (review.getAppUserById as jest.Mock).mockResolvedValue({
+    id: "u1", email: "m@shpe.test", displayName: "M", role: "member", membershipStatus: "active",
+  });
 }
 
 const app = createApp();

@@ -14,6 +14,9 @@ jest.mock('../../config/env', () => ({
     port: 8080,
     nodeEnv: 'test',
     corsOrigin: 'http://localhost:3000',
+    runtimeOrigin: 'test',
+    buildSha: 'test-sha',
+    buildDirty: false,
     logLevel: 'error',
     defaultRollingWindowMs: 60_000,
     maxPositionSizeUsd: 10_000,
@@ -39,13 +42,16 @@ import {
   createVersion,
   addComment,
   listProposalsHandler,
+  selectPromotionEvidence,
 } from '../../app/controllers/proposalsController';
+import { PairsStrategy } from '../../strategies/pairs/pairsStrategy';
 import type { StrategyProposal, StrategyVersion } from '../../types/review';
 
 const mockSettle = review.settleProposal as jest.Mock;
 const mockReopen = review.reopenProposal as jest.Mock;
 const mockGetProposal = review.getProposalById as jest.Mock;
 const mockGetVersion = review.getStrategyVersionById as jest.Mock;
+const mockGetBacktests = review.getBacktestsForVersion as jest.Mock;
 const mockGetOpen = review.getOpenProposalForStrategy as jest.Mock;
 const mockGetLatest = review.getLatestStrategyVersion as jest.Mock;
 const mockInsertProposal = review.insertProposal as jest.Mock;
@@ -124,10 +130,28 @@ function mockReq(overrides: Partial<Request> = {}, role: 'member' | 'lead' = 'le
     body: {},
     params: {},
     query: {},
-    user: { id: 'user-lead', email: 'lead@shpe.test', role, displayName: 'Lead' },
-    app: { locals: { ctx: { orchestrator, liveRuns, executionMode: 'paper' } } },
+    user: { id: 'user-lead', email: 'lead@shpe.test', role, displayName: 'Lead', membershipStatus: 'active' },
+    app: { locals: { ctx: { orchestrator, liveRuns, executionMode: 'live' } } },
     ...overrides,
   } as unknown as Request;
+}
+
+/** An approve request that names the reviewed head, as the review page sends it. */
+function approveReq(overrides: Partial<Request> = {}, role: 'member' | 'lead' = 'lead'): Request {
+  return mockReq({ ...overrides, body: { expectedHeadVersionId: 'ver-1', ...(overrides.body ?? {}) } }, role);
+}
+
+/** A saved backtest that satisfies every promotion-evidence rule under the mocked env. */
+function qualifyingBacktest(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: 'bt-1',
+    status: 'completed',
+    strategy_version: PairsStrategy.VERSION,
+    runtime_origin: 'test',
+    build_sha: 'test-sha',
+    build_dirty: false,
+    ...overrides,
+  };
 }
 
 function mockRes(): Response & { statusCode: number; payload: unknown } {
@@ -142,6 +166,7 @@ function mockRes(): Response & { statusCode: number; payload: unknown } {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockGetBacktests.mockResolvedValue([qualifyingBacktest()]);
   orchestrator.registerStrategy.mockReset();
   orchestrator.deregisterStrategy.mockReset();
 });
@@ -157,7 +182,7 @@ describe('approveProposal', () => {
     mockInsertRun.mockResolvedValue(undefined);
 
     const res = mockRes();
-    await approveProposal(mockReq({ params: { id: 'prop-1' } as never }), res);
+    await approveProposal(approveReq({ params: { id: 'prop-1' } as never }), res);
 
     expect(res.statusCode).toBe(201);
     expect(mockInsertRun).toHaveBeenCalledTimes(1);
@@ -186,7 +211,7 @@ describe('approveProposal', () => {
     mockSettle.mockResolvedValue(makeProposal({ status: 'approved' }));
     mockInsertRun.mockResolvedValue(undefined);
 
-    await approveProposal(mockReq({ params: { id: 'prop-1' } as never }), mockRes());
+    await approveProposal(approveReq({ params: { id: 'prop-1' } as never }), mockRes());
 
     // Otherwise strategy.id is undefined and every approved strategy shares one risk budget.
     expect(mockInsertRun.mock.calls[0][0].config.id).toBe('strat-1');
@@ -200,7 +225,7 @@ describe('approveProposal', () => {
     orchestrator.hasStrategyWithConfigId.mockReturnValueOnce(true);
 
     const res = mockRes();
-    await approveProposal(mockReq({ params: { id: 'prop-1' } as never }), res);
+    await approveProposal(approveReq({ params: { id: 'prop-1' } as never }), res);
 
     expect(res.statusCode).toBe(409);
     expect(mockSettle).not.toHaveBeenCalled();
@@ -215,7 +240,7 @@ describe('approveProposal', () => {
     mockInsertComment.mockRejectedValueOnce(new Error('comments down'));
 
     const res = mockRes();
-    await approveProposal(mockReq({ params: { id: 'prop-1' } as never, body: { note: 'lgtm' } }), res);
+    await approveProposal(approveReq({ params: { id: 'prop-1' } as never, body: { note: 'lgtm' } }), res);
 
     expect(res.statusCode).toBe(201);
     expect(mockReopen).not.toHaveBeenCalled();
@@ -230,7 +255,7 @@ describe('approveProposal', () => {
 
     const res = mockRes();
     await approveProposal(
-      mockReq({ params: { id: 'prop-1' } as never, body: { approvedCapitalPct: 0.1 } }),
+      approveReq({ params: { id: 'prop-1' } as never, body: { approvedCapitalPct: 0.1 } }),
       res,
     );
 
@@ -245,7 +270,7 @@ describe('approveProposal', () => {
     mockSettle.mockResolvedValue(makeProposal({ status: 'approved' }));
     mockInsertRun.mockResolvedValue(undefined);
 
-    await approveProposal(mockReq({ params: { id: 'prop-1' } as never }), mockRes());
+    await approveProposal(approveReq({ params: { id: 'prop-1' } as never }), mockRes());
 
     expect(mockInsertRun.mock.calls[0][0].config.riskBudget.maxCapitalPct).toBe(0.4);
   });
@@ -257,7 +282,7 @@ describe('approveProposal', () => {
     mockSettle.mockResolvedValue(null);
 
     const res = mockRes();
-    await approveProposal(mockReq({ params: { id: 'prop-1' } as never }), res);
+    await approveProposal(approveReq({ params: { id: 'prop-1' } as never }), res);
 
     expect(res.statusCode).toBe(409);
     expect(liveRuns.activate).not.toHaveBeenCalled();
@@ -271,7 +296,7 @@ describe('approveProposal', () => {
     mockInsertRun.mockRejectedValue(new Error('db down'));
 
     const res = mockRes();
-    await approveProposal(mockReq({ params: { id: 'prop-1' } as never }), res);
+    await approveProposal(approveReq({ params: { id: 'prop-1' } as never }), res);
 
     expect(res.statusCode).toBe(500);
     // Neither the engine nor the queue may be left claiming something that isn't true.
@@ -282,7 +307,7 @@ describe('approveProposal', () => {
   it('rejects a capital override outside 0–1 before touching anything', async () => {
     const res = mockRes();
     await approveProposal(
-      mockReq({ params: { id: 'prop-1' } as never, body: { approvedCapitalPct: 1.5 } }),
+      approveReq({ params: { id: 'prop-1' } as never, body: { approvedCapitalPct: 1.5 } }),
       res,
     );
 
@@ -292,7 +317,7 @@ describe('approveProposal', () => {
 
   it('returns 503 on a process with no orchestrator', async () => {
     const res = mockRes();
-    const req = mockReq({ params: { id: 'prop-1' } as never });
+    const req = approveReq({ params: { id: 'prop-1' } as never });
     (req.app.locals as { ctx: Record<string, unknown> }).ctx = {};
 
     await approveProposal(req, res);
@@ -305,10 +330,103 @@ describe('approveProposal', () => {
     mockGetProposal.mockResolvedValue(makeProposal({ status: 'rejected' }));
 
     const res = mockRes();
-    await approveProposal(mockReq({ params: { id: 'prop-1' } as never }), res);
+    await approveProposal(approveReq({ params: { id: 'prop-1' } as never }), res);
 
     expect(res.statusCode).toBe(409);
     expect(mockSettle).not.toHaveBeenCalled();
+  });
+
+  it('requires the reviewed head version in the request', async () => {
+    const res = mockRes();
+    await approveProposal(mockReq({ params: { id: 'prop-1' } as never, body: {} }), res);
+
+    expect(res.statusCode).toBe(400);
+    expect(mockGetProposal).not.toHaveBeenCalled();
+    expect(mockSettle).not.toHaveBeenCalled();
+  });
+
+  it('refuses when the head moved past the version the lead reviewed', async () => {
+    // The author pushed ver-2 after the lead loaded the page showing ver-1.
+    mockGetProposal.mockResolvedValue(makeProposal({ headVersionId: 'ver-2' }));
+
+    const res = mockRes();
+    await approveProposal(approveReq({ params: { id: 'prop-1' } as never }), res);
+
+    expect(res.statusCode).toBe(409);
+    expect(res.payload).toEqual(expect.objectContaining({ headVersionId: 'ver-2' }));
+    expect(mockSettle).not.toHaveBeenCalled();
+    expect(orchestrator.registerStrategy).not.toHaveBeenCalled();
+  });
+
+  it('refuses when no saved backtest qualifies, and says why each was rejected', async () => {
+    mockGetProposal.mockResolvedValue(makeProposal());
+    mockGetVersion.mockResolvedValue(makeVersion());
+    mockGetBacktests.mockResolvedValue([
+      qualifyingBacktest({ id: 'bt-old-algo', strategy_version: PairsStrategy.VERSION - 1 }),
+      qualifyingBacktest({ id: 'bt-laptop', runtime_origin: 'local' }),
+    ]);
+
+    const res = mockRes();
+    await approveProposal(approveReq({ params: { id: 'prop-1' } as never }), res);
+
+    expect(res.statusCode).toBe(409);
+    const payload = res.payload as { rejectedBacktests: { id: string; reason: string }[] };
+    expect(payload.rejectedBacktests.map((r) => r.id)).toEqual(['bt-old-algo', 'bt-laptop']);
+    expect(mockSettle).not.toHaveBeenCalled();
+  });
+
+  it('settles with the reviewed head as the guard', async () => {
+    mockGetProposal.mockResolvedValue(makeProposal());
+    mockGetVersion.mockResolvedValue(makeVersion());
+    mockSettle.mockResolvedValue(makeProposal({ status: 'approved', approvedBy: 'user-lead' }));
+    mockInsertRun.mockResolvedValue(undefined);
+
+    await approveProposal(approveReq({ params: { id: 'prop-1' } as never }), mockRes());
+
+    expect(mockSettle).toHaveBeenCalledWith(
+      'prop-1',
+      expect.objectContaining({ status: 'approved', expectedHeadVersionId: 'ver-1' }),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Promotion evidence rules
+// ---------------------------------------------------------------------------
+describe('selectPromotionEvidence', () => {
+  const clean = { origin: 'prod', dirty: false };
+  const row = (overrides: Record<string, unknown> = {}) => ({
+    id: 'bt', status: 'completed', strategy_version: 4, runtime_origin: 'prod', build_sha: 'abc', build_dirty: false,
+    ...overrides,
+  });
+
+  it('accepts a completed, current-algorithm, same-origin, clean-build backtest', () => {
+    const { qualifying, rejected } = selectPromotionEvidence([row()], 4, clean);
+    expect(qualifying).toHaveLength(1);
+    expect(rejected).toHaveLength(0);
+  });
+
+  it.each([
+    ['an incomplete run', row({ status: 'failed' }), /not completed/],
+    ['evidence for an older algorithm', row({ strategy_version: 3 }), /v3.*v4 is deployed/],
+    ['a run from another environment', row({ runtime_origin: 'local' }), /local environment/],
+    ['a run from an uncommitted build', row({ build_dirty: true, build_sha: 'local' }), /uncommitted build/],
+    ['a legacy row with no provenance', row({ runtime_origin: 'legacy', build_dirty: undefined }), /legacy environment/],
+  ])('rejects %s', (_label, candidate, reason) => {
+    const { qualifying, rejected } = selectPromotionEvidence([candidate], 4, clean);
+    expect(qualifying).toHaveLength(0);
+    expect(rejected[0].reason).toMatch(reason);
+  });
+
+  it('lets a dirty local runtime approve dirty local evidence so the workflow stays testable', () => {
+    const local = { origin: 'local', dirty: true };
+    const { qualifying } = selectPromotionEvidence([row({ runtime_origin: 'local', build_dirty: true })], 4, local);
+    expect(qualifying).toHaveLength(1);
+  });
+
+  it('skips the algorithm check for a strategy type with no declared version', () => {
+    const { qualifying } = selectPromotionEvidence([row({ strategy_version: null })], undefined, clean);
+    expect(qualifying).toHaveLength(1);
   });
 });
 

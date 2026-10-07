@@ -29,6 +29,10 @@ frontend/build/
 frontend/*.tsbuildinfo
 frontend/next-env.d.ts
 
+# Supabase CLI machine-local state and generated runtime secrets
+supabase/.branches/
+supabase/.temp/
+
 # ── Test / coverage ───────────────────────────────────────────────────────────
 coverage/
 backend/coverage/

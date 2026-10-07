@@ -21,6 +21,7 @@ import type {
   BacktestJobStatus,
   EnqueueResult,
 } from "../../types/backtestJob";
+import { env } from "../../config/env";
 
 /** Orders/fills per staged artifact row — matches the save path's insert chunking. */
 const ARTIFACT_CHUNK = 1_000;
@@ -44,6 +45,9 @@ function mapJob(row: Record<string, unknown>): BacktestJob {
     errorMessage: (row.error_message as string | null) ?? null,
     attempts: Number(row.attempts ?? 0),
     requestedBy: (row.requested_by as UUID | null) ?? null,
+    runtimeOrigin: (row.runtime_origin as string | undefined) ?? "legacy",
+    buildSha: (row.build_sha as string | undefined) ?? "unknown",
+    buildDirty: (row.build_dirty as boolean | undefined) ?? false,
     progress: (row.progress as BacktestJobProgress | null) ?? null,
     createdAt: new Date(row.created_at as string).getTime(),
     startedAt: msOrNull(row.started_at),
@@ -78,6 +82,9 @@ export async function enqueueBacktestJob(input: {
       config: input.config,
       strategy_version: input.config.strategyVersion ?? null,
       requested_by: input.requestedBy,
+      runtime_origin: env.runtimeOrigin,
+      build_sha: env.buildSha,
+      build_dirty: env.buildDirty,
     });
     if (!error) return { jobId: input.id, status: "queued", deduped: false };
     if (error.code !== UNIQUE_VIOLATION) {
@@ -88,6 +95,7 @@ export async function enqueueBacktestJob(input: {
       .from("backtest_jobs")
       .select("id, status")
       .eq("config_key", input.configKey)
+      .eq("runtime_origin", env.runtimeOrigin)
       .in("status", ["queued", "running"])
       .maybeSingle();
     if (lookupError) throw new Error(`enqueueBacktestJob lookup failed: ${lookupError.message}`);
@@ -117,6 +125,7 @@ export async function findReusableJob(configKey: string): Promise<BacktestJob | 
     .from("backtest_jobs")
     .select("*")
     .eq("config_key", configKey)
+    .eq("runtime_origin", env.runtimeOrigin)
     .eq("status", "succeeded")
     .gt("result_expires_at", new Date().toISOString())
     .order("finished_at", { ascending: false })
@@ -196,6 +205,7 @@ export async function claimBacktestJob(workerId: string, opts: ClaimOptions): Pr
     p_lease_seconds: opts.leaseSeconds,
     p_max_attempts: opts.maxAttempts,
     p_per_user_cap: opts.perUserCap,
+    p_runtime_origin: env.runtimeOrigin,
   });
   if (error) throw new Error(`claim_backtest_job failed: ${error.message}`);
   const rows = (data ?? []) as Record<string, unknown>[];

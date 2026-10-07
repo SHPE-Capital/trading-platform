@@ -129,10 +129,18 @@ export class BacktestEngine {
 
     // Register strategies and any per-strategy capital budgets
     const strategies = strategyFactory({ symbolState, portfolioState, orderState, eventBus });
-    // Derive strategyVersion from the first strategy that declares one, so the DB
-    // column is populated even when the caller doesn't set it explicitly in config.
-    const effectiveStrategyVersion =
-      config.strategyVersion ?? strategies.find((s) => s.version != null)?.version;
+    // Record the algorithm version of the code that actually runs here. The API
+    // that queued the job stamps config.strategyVersion from its own build; during
+    // a deploy a worker on a different build may claim it, and labelling the
+    // result with the API's version would attribute it to code that never ran.
+    const builtVersion = strategies.find((s) => s.version != null)?.version;
+    if (config.strategyVersion != null && builtVersion != null && config.strategyVersion !== builtVersion) {
+      throw new Error(
+        `Backtest was queued for algorithm v${config.strategyVersion}, but this worker runs ` +
+        `v${builtVersion}. Re-run it once the deploy has finished.`,
+      );
+    }
+    const effectiveStrategyVersion = builtVersion ?? config.strategyVersion;
     for (const strategy of strategies) {
       const budget = (strategy.config as BaseStrategyConfig).riskBudget;
       if (budget) riskEngine.registerStrategyBudget({ ...budget, strategyId: strategy.id });

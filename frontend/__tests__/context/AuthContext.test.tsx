@@ -76,7 +76,7 @@ describe("AuthProvider", () => {
 
   it("loads the club profile — and its role — for an existing session", async () => {
     state.session = { access_token: "t" };
-    mockFetchMe.mockResolvedValue({ id: "u1", email: "lead@shpe.test", role: "lead", displayName: "Lead" });
+    mockFetchMe.mockResolvedValue({ id: "u1", email: "lead@shpe.test", role: "lead", displayName: "Lead", membershipStatus: "active" });
 
     renderProvider();
 
@@ -102,7 +102,7 @@ describe("AuthProvider", () => {
   });
 
   it("follows auth state changes after sign-in", async () => {
-    mockFetchMe.mockResolvedValue({ id: "u2", email: "m@shpe.test", role: "member", displayName: null });
+    mockFetchMe.mockResolvedValue({ id: "u2", email: "m@shpe.test", role: "member", displayName: null, membershipStatus: "active" });
     renderProvider();
     await waitFor(() => expect(screen.getByTestId("loading")).toHaveTextContent("false"));
 
@@ -116,7 +116,7 @@ describe("AuthProvider", () => {
 
   it("signs in through Supabase and signs out clearing the user", async () => {
     state.session = { access_token: "t" };
-    mockFetchMe.mockResolvedValue({ id: "u1", email: "a@shpe.test", role: "member", displayName: null });
+    mockFetchMe.mockResolvedValue({ id: "u1", email: "a@shpe.test", role: "member", displayName: null, membershipStatus: "active" });
     renderProvider();
     await waitFor(() => expect(screen.getByTestId("user")).toHaveTextContent("a@shpe.test"));
 

@@ -159,6 +159,18 @@ describe('order cooldown', () => {
     const result = engine.check(makeIntent({ strategyId: 'strat-B' }), makePortfolio());
     expect(result.passed).toBe(true);
   });
+
+  it('cooldown is per-symbol: a strategy can order a second symbol at once', () => {
+    const engine = new RiskEngine({ orderCooldownMs: 5_000 });
+    mockNowMs.mockReturnValue(10_000);
+    engine.check(makeIntent({ symbol: 'SPY' }), makePortfolio());
+
+    mockNowMs.mockReturnValue(10_001);
+    expect(engine.check(makeIntent({ symbol: 'QQQ' }), makePortfolio()).passed).toBe(true);
+    const again = engine.check(makeIntent({ symbol: 'SPY' }), makePortfolio());
+    expect(again.passed).toBe(false);
+    expect(again.failedCheck).toBe('ORDER_COOLDOWN');
+  });
 });
 
 // ---------------------------------------------------------------------------

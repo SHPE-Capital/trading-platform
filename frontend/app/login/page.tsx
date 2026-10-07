@@ -65,9 +65,12 @@ export default function LoginPage() {
 NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon key>`}
         </pre>
         <p className="mt-4 text-sm text-zinc-600 dark:text-zinc-400">
-          Members are provisioned automatically on first sign-in by the
+          Authentication creates a pending profile through the
           <code className="mx-1 rounded bg-zinc-100 px-1 py-0.5 text-xs dark:bg-zinc-800">on_auth_user_created</code>
-          trigger in migration 0008. Promote someone to approver with{" "}
+          trigger. Activate a verified club member with{" "}
+          <code className="rounded bg-zinc-100 px-1 py-0.5 text-xs dark:bg-zinc-800">
+            update app_users set membership_status = &apos;active&apos; where email = &apos;…&apos;
+          </code>. Promote an active member to approver with{" "}
           <code className="rounded bg-zinc-100 px-1 py-0.5 text-xs dark:bg-zinc-800">
             update app_users set role = &apos;lead&apos; where email = &apos;…&apos;
           </code>.

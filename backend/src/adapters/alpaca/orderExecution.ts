@@ -19,12 +19,37 @@ import type { EventBus } from "../../core/engine/eventBus";
 import type { OrderIntent, Order, Fill } from "../../types/orders";
 import type { ExecutionMode } from "../../types/common";
 
+/** Trade stream reconnect backoff: 1 s, doubling, capped at 30 s. */
+const RECONNECT_BASE_MS = 1_000;
+const RECONNECT_MAX_MS = 30_000;
+/**
+ * Ping cadence for the trade stream. A socket that has not answered the
+ * previous ping by the next one is presumed half-open (host sleep, NAT drop)
+ * and is torn down so the reconnect path takes over.
+ */
+const HEARTBEAT_INTERVAL_MS = 30_000;
+/** Orders whose stream-reported fills are remembered for reconciliation. */
+const STREAM_FILLS_CAPACITY = 10_000;
+
 export class AlpacaOrderExecutionAdapter {
   private tradeStreamWs: WebSocket | null = null;
   private isConnected = false;
+  /** Cleared by disconnect(): any other close is unexpected and reconnects. */
+  private keepTradeStreamOpen = false;
+  private reconnectTimer: NodeJS.Timeout | null = null;
+  private reconnectAttempts = 0;
+  private heartbeatTimer: NodeJS.Timeout | null = null;
+  private tradeStreamAlive = false;
+  private readonly reconnectHandlers: Array<() => void> = [];
   /** Cumulative filled qty seen so far per orderId — used to derive per-event
    * delta qty if `data.qty` is absent on a trade_updates payload. */
   private lastFilledCumulative: Map<string, number> = new Map();
+  /**
+   * Cumulative filled qty per order as the stream reported it, kept after the
+   * order is terminal (bounded, oldest evicted). Reconciliation consults it so
+   * a fill the stream already delivered is never published twice.
+   */
+  private readonly streamFilledQty: Map<string, number> = new Map();
 
   constructor(
     private readonly eventBus: EventBus,
@@ -42,6 +67,10 @@ export class AlpacaOrderExecutionAdapter {
     const url = `${baseUrl}/v2/orders`;
 
     const body: Record<string, unknown> = {
+      // Alpaca echoes this value on trade_updates. Internal reservations and
+      // persistence are keyed by the intent id, so omitting it makes fills
+      // impossible to correlate with the submitted order.
+      client_order_id: intent.id,
       symbol: intent.symbol,
       qty: String(intent.qty),
       side: intent.side,
@@ -113,33 +142,45 @@ export class AlpacaOrderExecutionAdapter {
   /**
    * Connects to the Alpaca trade update WebSocket stream.
    * Publishes fill, cancel, and rejection events to the EventBus.
+   *
+   * Without this stream the engine never learns about fills, so it is kept
+   * open: any close other than disconnect() reconnects with backoff, and a
+   * ping heartbeat catches half-open sockets that never report a close.
    * @returns Promise that resolves when the stream is authenticated
    */
   connectTradeStream(): Promise<void> {
+    this.keepTradeStreamOpen = true;
     return new Promise((resolve, reject) => {
       const url = this.mode === "live" ? env.alpacaLiveStreamUrl : env.alpacaPaperStreamUrl;
       logger.info("AlpacaOrderExecution: connecting trade stream", { url });
-      this.tradeStreamWs = new WebSocket(url);
+      const ws = new WebSocket(url);
+      this.tradeStreamWs = ws;
 
-      this.tradeStreamWs.on("open", () => {
-        this.tradeStreamWs!.send(JSON.stringify({
-          action: "authenticate",
-          data: { key_id: env.alpacaApiKey, secret_key: env.alpacaApiSecret },
-        }));
+      ws.on("open", () => {
+        // Alpaca deprecated {action: "authenticate", data: {key_id, secret_key}}
+        // for this flat form; replies are the same either way.
+        ws.send(JSON.stringify({ action: "auth", key: env.alpacaApiKey, secret: env.alpacaApiSecret }));
       });
 
-      this.tradeStreamWs.on("message", (data) => {
+      ws.on("message", (data) => {
         this._handleTradeStreamMessage(data, resolve, reject);
       });
 
-      this.tradeStreamWs.on("error", (err) => {
+      ws.on("pong", () => {
+        this.tradeStreamAlive = true;
+      });
+
+      ws.on("error", (err) => {
         logger.error("AlpacaOrderExecution: trade stream error", { message: err.message });
         reject(err);
       });
 
-      this.tradeStreamWs.on("close", () => {
+      ws.on("close", () => {
         logger.warn("AlpacaOrderExecution: trade stream closed");
+        if (this.tradeStreamWs !== ws) return; // an older socket, already replaced
         this.isConnected = false;
+        this._stopHeartbeat();
+        if (this.keepTradeStreamOpen) this._scheduleReconnect();
       });
     });
   }
@@ -148,9 +189,66 @@ export class AlpacaOrderExecutionAdapter {
    * Disconnects the trade update WebSocket stream.
    */
   disconnect(): void {
+    this.keepTradeStreamOpen = false;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this._stopHeartbeat();
     this.tradeStreamWs?.close();
     this.tradeStreamWs = null;
     this.isConnected = false;
+  }
+
+  /**
+   * Registers a callback for each time the trade stream comes back after an
+   * unexpected close (not the first connect). Fills that happened while it was
+   * down are not replayed by Alpaca; pair this with reconcileOrders().
+   */
+  onReconnect(handler: () => void): void {
+    this.reconnectHandlers.push(handler);
+  }
+
+  /**
+   * Publishes whatever the stream missed for orders the engine still believes
+   * are open. Each is read back over REST; a fill not yet seen, or a terminal
+   * state, is published exactly as the stream would have delivered it.
+   * @returns number of events published
+   */
+  async reconcileOrders(orders: Array<Pick<Order, "id" | "filledQty">>): Promise<number> {
+    let published = 0;
+    for (const order of orders) {
+      let raw: Record<string, unknown>;
+      try {
+        raw = await this._fetchOrderByClientId(order.id);
+      } catch (err) {
+        logger.warn("AlpacaOrderExecution: could not read order back for reconciliation", {
+          orderId: order.id, err: String(err),
+        });
+        continue;
+      }
+      const status = String(raw["status"] ?? "");
+      const filledQty = parseFloat(String(raw["filled_qty"] ?? 0));
+      const knownQty = Math.max(order.filledQty, this.streamFilledQty.get(order.id) ?? 0);
+      const missedQty = filledQty - knownQty;
+      if (missedQty > 1e-9) {
+        this._handleTradeUpdate({
+          event: status === "filled" ? "fill" : "partial_fill",
+          order: raw,
+          qty: String(missedQty),
+          price: raw["filled_avg_price"],
+        });
+        published++;
+      }
+      if (status === "canceled" || status === "expired" || status === "rejected") {
+        this._handleTradeUpdate({ event: status, order: raw });
+        published++;
+      }
+    }
+    logger.info("AlpacaOrderExecution: reconciled orders after trade stream gap", {
+      checked: orders.length, published,
+    });
+    return published;
   }
 
   // ------------------------------------------------------------------
@@ -172,16 +270,21 @@ export class AlpacaOrderExecutionAdapter {
     const stream = msg["stream"] as string | undefined;
 
     if (stream === "authorization") {
-      const action = (msg["data"] as Record<string, unknown>)?.["action"];
-      if (action === "authenticate") {
+      const status = (msg["data"] as Record<string, unknown>)?.["status"];
+      if (status === "authorized") {
+        logger.info("AlpacaOrderExecution: trade stream authenticated");
         this.isConnected = true;
+        this.reconnectAttempts = 0;
         this.tradeStreamWs!.send(JSON.stringify({
           action: "listen",
           data: { streams: ["trade_updates"] },
         }));
+        this._startHeartbeat();
         authResolve?.();
       } else {
         authReject?.(new Error("Alpaca trade stream auth failed"));
+        // Close so the reconnect path retries rather than idling unauthenticated.
+        this.tradeStreamWs?.close();
       }
       return;
     }
@@ -218,6 +321,7 @@ export class AlpacaOrderExecutionAdapter {
         // fill can derive its delta even if `data.qty` is missing.
         const newCumulative = Math.max(prevCumulative, cumulativeFilled, prevCumulative + fillQty);
         this.lastFilledCumulative.set(orderId, newCumulative);
+        this._rememberStreamFill(orderId, newCumulative);
 
         const fill: Fill = {
           id: newId(),
@@ -297,6 +401,74 @@ export class AlpacaOrderExecutionAdapter {
    */
   trackedOrderCount(): number {
     return this.lastFilledCumulative.size;
+  }
+
+  private _rememberStreamFill(orderId: string, cumulative: number): void {
+    this.streamFilledQty.delete(orderId); // re-insert as newest
+    this.streamFilledQty.set(orderId, cumulative);
+    if (this.streamFilledQty.size > STREAM_FILLS_CAPACITY) {
+      const oldest = this.streamFilledQty.keys().next().value;
+      if (oldest !== undefined) this.streamFilledQty.delete(oldest);
+    }
+  }
+
+  private _scheduleReconnect(): void {
+    if (this.reconnectTimer) return;
+    const delayMs = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** this.reconnectAttempts);
+    this.reconnectAttempts++;
+    logger.info("AlpacaOrderExecution: trade stream reconnect scheduled", {
+      delayMs, attempt: this.reconnectAttempts,
+    });
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.connectTradeStream().then(
+        () => {
+          logger.info("AlpacaOrderExecution: trade stream reconnected");
+          for (const handler of this.reconnectHandlers) handler();
+        },
+        // A failed attempt closes its socket, which schedules the next one.
+        (err) => logger.error("AlpacaOrderExecution: trade stream reconnect failed", { err: String(err) }),
+      );
+    }, delayMs);
+  }
+
+  private _startHeartbeat(): void {
+    this._stopHeartbeat();
+    this.tradeStreamAlive = true;
+    this.heartbeatTimer = setInterval(() => {
+      const ws = this.tradeStreamWs;
+      if (!ws) return;
+      if (!this.tradeStreamAlive) {
+        logger.warn("AlpacaOrderExecution: trade stream missed a heartbeat — reconnecting");
+        ws.terminate(); // emits close, which reconnects
+        return;
+      }
+      this.tradeStreamAlive = false;
+      ws.ping();
+    }, HEARTBEAT_INTERVAL_MS);
+    this.heartbeatTimer.unref?.();
+  }
+
+  private _stopHeartbeat(): void {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+  }
+
+  private async _fetchOrderByClientId(clientOrderId: string): Promise<Record<string, unknown>> {
+    const baseUrl = this.mode === "live" ? env.alpacaLiveBaseUrl : env.alpacaPaperBaseUrl;
+    const url = `${baseUrl}/v2/orders:by_client_order_id?client_order_id=${encodeURIComponent(clientOrderId)}`;
+    const response = await fetch(url, {
+      headers: {
+        "APCA-API-KEY-ID": env.alpacaApiKey,
+        "APCA-API-SECRET-KEY": env.alpacaApiSecret,
+      },
+    });
+    if (!response.ok) {
+      throw new Error(`Alpaca order lookup failed (${response.status}): ${await response.text()}`);
+    }
+    return (await response.json()) as Record<string, unknown>;
   }
 
   private _rawToOrder(raw: Record<string, unknown>, intent: OrderIntent): Order {

@@ -1,0 +1,2 @@
+-- Keep local data deterministic and non-sensitive. The local-stack script
+-- creates and activates lead@local.test after migrations and seeding finish.

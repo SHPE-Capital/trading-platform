@@ -22,10 +22,16 @@ export async function acquireRunLease(runId: UUID, owner: string, leaseSeconds: 
 }
 
 /** Takes every running run of this mode with no live lease, and returns them. */
-export async function claimOrphanedRuns(owner: string, executionMode: string, leaseSeconds: number): Promise<StrategyRun[]> {
+export async function claimOrphanedRuns(
+  owner: string,
+  executionMode: string,
+  runtimeOrigin: string,
+  leaseSeconds: number,
+): Promise<StrategyRun[]> {
   const { data, error } = await getSupabaseClient().rpc("claim_orphaned_runs", {
     p_owner: owner,
     p_execution_mode: executionMode,
+    p_runtime_origin: runtimeOrigin,
     p_lease_seconds: leaseSeconds,
   });
   if (error) throw new Error(`claim_orphaned_runs failed: ${error.message}`);

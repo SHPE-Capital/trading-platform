@@ -115,6 +115,7 @@ const TEST_USER: AuthenticatedUser = {
   email: 'a@example.com',
   role: 'member',
   displayName: 'A. Member',
+  membershipStatus: 'active',
 };
 
 function mockReq(overrides: Partial<Request> = {}): Request {
