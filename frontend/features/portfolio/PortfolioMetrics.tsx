@@ -1,23 +1,24 @@
 /**
  * features/portfolio/PortfolioMetrics.tsx
  *
- * Detailed portfolio metrics panel combining summary card, positions table,
- * orders table, fills table, and equity curve chart in a tabbed layout.
- *
- * Inputs:  PortfolioSnapshot, equity curve, and orders from hooks/API.
- * Outputs: Full portfolio metrics view with tabs for different data.
+ * The account in detail: the broker's view of equity, history and positions
+ * (falling back to the runtime's own book when this process has no broker
+ * connection), and every order and fill with the run that made it.
  */
 
 "use client";
 
 import { useState, useEffect } from "react";
 import PortfolioSummaryCard from "../../components/cards/PortfolioSummaryCard";
+import BrokerAccountCard from "../../components/cards/BrokerAccountCard";
 import PositionsTable from "../../components/tables/PositionsTable";
+import BrokerPositionsTable from "../../components/tables/BrokerPositionsTable";
 import OrdersTable from "../../components/tables/OrdersTable";
 import FillsTable from "../../components/tables/FillsTable";
 import PnLChart from "../../components/charts/PnLChart";
 import { usePortfolio } from "../../hooks/usePortfolio";
-import { fetchOrders } from "../../services/portfolioService";
+import { useBroker } from "../../hooks/useBroker";
+import { fetchOrders, fetchRecentFills } from "../../services/portfolioService";
 import type { Order, Fill } from "../../types/portfolio";
 
 const TABS = ["Overview", "Positions", "Orders", "Fills"] as const;
@@ -25,26 +26,24 @@ type Tab = (typeof TABS)[number];
 
 export default function PortfolioMetrics() {
   const { snapshot, equityCurve, isLoading, error } = usePortfolio();
+  const broker = useBroker("3M");
   const [activeTab, setActiveTab] = useState<Tab>("Overview");
   const [orders, setOrders] = useState<Order[]>([]);
   const [fills, setFills] = useState<Fill[]>([]);
 
   useEffect(() => {
-    fetchOrders()
-      .then((fetched) => {
-        setOrders(fetched);
-        setFills(fetched.flatMap((o) => o.fills ?? []));
-      })
-      .catch(() => {});
+    fetchOrders().then(setOrders).catch(() => {});
+    fetchRecentFills().then(setFills).catch(() => {});
   }, []);
 
-  if (isLoading) return <p className="text-sm text-zinc-400">Loading portfolio…</p>;
-  if (error) return <p className="text-sm text-red-500">{error}</p>;
-  if (!snapshot) return <p className="text-sm text-zinc-400">No portfolio data available.</p>;
+  const fromBroker = !!broker.account;
+  if (isLoading && broker.isLoading) return <p className="text-sm text-zinc-400">Loading portfolio…</p>;
+  if (!fromBroker && error) return <p className="text-sm text-red-500">{error}</p>;
+  if (!fromBroker && !snapshot) return <p className="text-sm text-zinc-400">No portfolio data available.</p>;
 
   return (
     <div className="flex flex-col gap-6">
-      <PortfolioSummaryCard snapshot={snapshot} />
+      {fromBroker ? <BrokerAccountCard account={broker.account!} /> : <PortfolioSummaryCard snapshot={snapshot!} />}
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-zinc-200 dark:border-zinc-800">
@@ -64,10 +63,14 @@ export default function PortfolioMetrics() {
         ))}
       </div>
 
-      {activeTab === "Overview"   && <PnLChart data={equityCurve} height={300} />}
-      {activeTab === "Positions"  && <PositionsTable positions={snapshot.positions} />}
-      {activeTab === "Orders"     && <OrdersTable orders={orders} />}
-      {activeTab === "Fills"      && <FillsTable fills={fills} />}
+      {activeTab === "Overview" && (
+        <PnLChart data={fromBroker ? broker.history.map((h) => ({ ts: h.ts, equity: h.equity })) : equityCurve} height={300} />
+      )}
+      {activeTab === "Positions" && (fromBroker
+        ? <BrokerPositionsTable positions={broker.positions} drift={broker.drift} />
+        : <PositionsTable positions={snapshot!.positions} />)}
+      {activeTab === "Orders" && <OrdersTable orders={orders} showRun />}
+      {activeTab === "Fills" && <FillsTable fills={fills} />}
     </div>
   );
 }

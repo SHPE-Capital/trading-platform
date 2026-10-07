@@ -217,9 +217,9 @@ function mapOrder(row: Record<string, unknown>): Order {
     strategyId:    row.strategy_id as string,
     symbol:        row.symbol as string,
     side:          row.side as Order["side"],
-    qty:           row.qty as number,
-    filledQty:     (row.filled_qty as number) ?? 0,
-    avgFillPrice:  row.avg_fill_price as number | undefined,
+    qty:           Number(row.qty),
+    filledQty:     Number(row.filled_qty ?? 0),
+    avgFillPrice:  row.avg_fill_price === null || row.avg_fill_price === undefined ? undefined : Number(row.avg_fill_price),
     orderType:     row.order_type as Order["orderType"],
     limitPrice:    row.limit_price as number | undefined,
     stopPrice:     row.stop_price as number | undefined,
@@ -230,7 +230,35 @@ function mapOrder(row: Record<string, unknown>): Order {
     closedAt:      row.closed_at ? new Date(row.closed_at as string).getTime() : undefined,
     fills:         [],
     meta:          row.meta as Order["meta"],
+    runId:         (row.run_id as string | null) ?? undefined,
+    signalId:      (row.signal_id as string | null) ?? undefined,
+    clientOrderId: (row.client_order_id as string | null) ?? undefined,
+    decisionPrice: row.decision_price === null || row.decision_price === undefined ? undefined : Number(row.decision_price),
   };
+}
+
+/** The most recent fills across every run, newest first, with the run that made each. */
+export async function getRecentFills(limit = 500): Promise<(Fill & { runId?: string })[]> {
+  const { data, error } = await getSupabaseClient()
+    .from("fills").select("*").order("ts", { ascending: false }).limit(limit);
+  if (error) {
+    logger.error("getRecentFills failed", { error: error.message });
+    return [];
+  }
+  return (data ?? []).map((row) => ({
+    id:         row.id as string,
+    orderId:    row.order_id as string,
+    symbol:     row.symbol as string,
+    side:       row.side as Fill["side"],
+    qty:        Number(row.qty),
+    price:      Number(row.price),
+    notional:   Number(row.notional),
+    commission: Number(row.commission ?? 0),
+    ts:         new Date(row.ts as string).getTime(),
+    isoTs:      row.ts as string,
+    exchange:   (row.exchange as string | null) ?? undefined,
+    runId:      (row.run_id as string | null) ?? undefined,
+  }));
 }
 
 // Maps a raw Supabase portfolio_snapshots row (snake_case, ts as ISO string)

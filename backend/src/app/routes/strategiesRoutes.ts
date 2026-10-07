@@ -31,10 +31,10 @@ const router = Router();
 // ------------------------------------------------------------------
 
 /** GET /api/strategies/configs — list all saved strategy configs */
-router.get("/configs", listStrategies);
+router.get("/configs", requireAuth, listStrategies);
 
 /** GET /api/strategies/configs/defaults/:type — hardcoded type defaults */
-router.get("/configs/defaults/:type", getStrategyDefaults);
+router.get("/configs/defaults/:type", requireAuth, getStrategyDefaults);
 
 /** POST /api/strategies/configs — create a new saved config (also its v1 version, so requires an author) */
 router.post("/configs", requireAuth, createStrategy);
@@ -50,10 +50,10 @@ router.delete("/configs/:configId", requireAuth, deleteStrategyConfig);
 // ------------------------------------------------------------------
 
 /** GET /api/strategies — list all strategy runs */
-router.get("/", listStrategyRuns);
+router.get("/", requireAuth, listStrategyRuns);
 
 /** GET /api/strategies/:id — get a specific strategy run */
-router.get("/:id", getStrategyRun);
+router.get("/:id", requireAuth, getStrategyRun);
 
 /** POST /api/strategies/start — create and start a new strategy run */
 router.post("/start", requireAuth, startStrategyRun);

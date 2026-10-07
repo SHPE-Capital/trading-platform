@@ -66,6 +66,10 @@ export interface Order {
   updatedAt: number;
   closedAt?: number;
   fills: Fill[];
+  /** Run that sent the order; absent for orders no run accounts for. */
+  runId?: string;
+  /** Price when the strategy decided — the slippage baseline. */
+  decisionPrice?: number;
 }
 
 export interface PerformanceMetrics {

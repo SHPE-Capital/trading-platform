@@ -11,8 +11,8 @@
 "use client";
 
 import PnLChart from "../../components/charts/PnLChart";
+import PerformancePanel from "../performance/PerformancePanel";
 import type { BacktestResult } from "../../types/api";
-import { formatPercent, formatCurrency } from "../../utils/formatting";
 import { formatDuration, formatTimestamp } from "../../utils/dates";
 
 interface Props {
@@ -113,27 +113,11 @@ export default function BacktestResults({ result, onRerun, onSave, isSaving = fa
         </div>
       </div>
 
-      {metrics && (
-        <dl className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-          {([
-            { label: "Total Return",  value: formatPercent(metrics.totalReturnPct) },
-            { label: "Max Drawdown",  value: formatPercent(-metrics.maxDrawdown) },
-            { label: "Win Rate",      value: formatPercent(metrics.winRate) },
-            { label: "Total Trades",  value: String(metrics.totalTrades) },
-            { label: "Sharpe Ratio",  value: metrics.sharpeRatio != null ? metrics.sharpeRatio.toFixed(2) : "—" },
-            { label: "Sortino Ratio", value: metrics.sortinoRatio != null ? metrics.sortinoRatio.toFixed(2) : "—" },
-            { label: "Avg Win",       value: formatCurrency(metrics.avgWin) },
-            { label: "Avg Loss",      value: formatCurrency(metrics.avgLoss) },
-          ] as { label: string; value: string }[]).map(({ label, value }) => (
-            <div key={label}>
-              <dt className="text-xs text-zinc-500">{label}</dt>
-              <dd className="mt-1 text-base font-semibold tabular-nums text-zinc-900 dark:text-zinc-50">{value}</dd>
-            </div>
-          ))}
-        </dl>
+      {metrics ? (
+        <PerformancePanel metrics={metrics} curve={equityCurve} showChart={showChart} />
+      ) : (
+        showChart && <PnLChart data={equityCurve} height={280} />
       )}
-
-      {showChart && <PnLChart data={equityCurve} height={280} />}
     </div>
   );
 }

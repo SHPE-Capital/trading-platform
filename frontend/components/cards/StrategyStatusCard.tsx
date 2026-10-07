@@ -11,6 +11,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import type { StrategyRun } from "../../types/strategy";
 import { formatCurrency } from "../../utils/formatting";
 
@@ -59,7 +60,9 @@ export default function StrategyStatusCard({ run, onStop }: Props) {
     <div className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
       <div className="flex items-start justify-between">
         <div>
-          <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">{run.name}</p>
+          <Link href={`/runs/${run.id}`} className="text-sm font-semibold text-zinc-900 hover:underline dark:text-zinc-50">
+            {(run.meta?.displayName as string | undefined) ?? run.name}
+          </Link>
           <div className="flex items-center gap-1.5">
             <p className="text-xs text-zinc-400">{run.strategyType}</p>
             {run.strategyVersion != null && (
@@ -74,7 +77,7 @@ export default function StrategyStatusCard({ run, onStop }: Props) {
         </span>
       </div>
 
-      <dl className="mt-4 grid grid-cols-3 gap-3 text-xs">
+      <dl className="mt-4 grid grid-cols-4 gap-3 text-xs">
         <div>
           <dt className="text-zinc-500">Signals</dt>
           <dd className="font-semibold text-zinc-900 dark:text-zinc-50">{run.totalSignals}</dd>
@@ -89,6 +92,12 @@ export default function StrategyStatusCard({ run, onStop }: Props) {
             {formatCurrency(run.realizedPnl)}
           </dd>
         </div>
+        <div>
+          <dt className="text-zinc-500">Open PnL</dt>
+          <dd className={`font-semibold ${(run.unrealizedPnl ?? 0) >= 0 ? "text-green-600" : "text-red-600"}`}>
+            {formatCurrency(run.unrealizedPnl ?? 0)}
+          </dd>
+        </div>
       </dl>
 
       {run.status === "error" && run.disabledReason && (
@@ -99,6 +108,11 @@ export default function StrategyStatusCard({ run, onStop }: Props) {
       {errorStreak > 0 && (
         <p className="mt-3 text-xs text-amber-600 dark:text-amber-400">
           {errorStreak} evaluation error{errorStreak === 1 ? "" : "s"} in a row — the runner disables it if this continues.
+        </p>
+      )}
+      {run.status !== "running" && (run.stats?.openPositions.length ?? 0) > 0 && (
+        <p className="mt-3 text-xs text-amber-600 dark:text-amber-400">
+          Stopped, but still holds {run.stats!.openPositions.map((p) => `${p.symbol} ${p.qty}`).join(", ")} — nothing is managing these.
         </p>
       )}
       {awaitingRunner && (

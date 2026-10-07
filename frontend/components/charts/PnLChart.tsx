@@ -5,17 +5,18 @@
  * Receives live PortfolioSnapshot[] fed by the PORTFOLIO_UPDATED WebSocket
  * event stream (via usePortfolio) and also the initial REST poll on mount.
  *
- * Inputs:  PortfolioSnapshot[] equityCurve data array.
+ * Inputs:  equity curve points (portfolio snapshots, backtest curves, or a live
+ *          run's PnL curve) — only ts and equity are read.
  * Outputs: SVG line chart with Y-axis equity labels and X-axis time labels.
  */
 
 "use client";
 
-import type { PortfolioSnapshot } from "../../types/portfolio";
 import { formatCurrency } from "../../utils/formatting";
 
 interface Props {
-  data: PortfolioSnapshot[];
+  /** Starting capital, drawn as a baseline; defaults to the first point's initialCapital, else its equity. */
+  data: { ts: number | string; equity: number; initialCapital?: number }[];
   height?: number;
 }
 
@@ -95,7 +96,7 @@ export default function PnLChart({ data, height = 240 }: Props) {
   });
 
   // Baseline — where initialCapital sits (if within visible range)
-  const initialCapital = first.initialCapital;
+  const initialCapital = first.initialCapital ?? first.equity;
   const showBaseline =
     initialCapital >= minEquity && initialCapital <= maxEquity && equityRange > 1;
   const baselineY = toY(initialCapital);

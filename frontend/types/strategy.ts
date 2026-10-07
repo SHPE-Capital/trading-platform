@@ -4,8 +4,11 @@
  * Frontend types for strategy definitions, runtime state, and signals.
  */
 
+import type { StrategyRunStats } from "./analytics";
+
 export type StrategyType =
   | "pairs_trading"
+  | "minute_reversal"
   | "momentum"
   | "arbitrage"
   | "market_making"
@@ -27,9 +30,21 @@ export interface StrategyRun {
   executionMode: string;
   startedAt?: number;
   stoppedAt?: number;
+  /** Derived from the ledger (fills, orders, signals) — see `stats` for the full breakdown. */
   totalSignals: number;
   totalOrders: number;
   realizedPnl: number;
+  unrealizedPnl?: number;
+  stats?: StrategyRunStats;
+  /** Deployment the run was started on (e.g. aws-prod, local-docker, legacy). */
+  runtimeOrigin?: string;
+  /** Broker account the run trades: an Alpaca account number, or sim:<host>. */
+  brokerAccount?: string | null;
+  /** Capital set aside at start; the denominator of the run's returns. */
+  allocatedCapital?: number | null;
+  /** The saved strategy version this run executed. */
+  versionId?: string;
+  meta?: Record<string, unknown>;
   /** Algorithm version snapshot at the time this run was started. */
   strategyVersion?: number;
   /** Trading runtime currently holding this run's lease (only it trades the run). */

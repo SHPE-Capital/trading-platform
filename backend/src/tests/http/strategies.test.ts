@@ -38,11 +38,13 @@ describe("Strategies HTTP API", () => {
   // GET /api/strategies — list all runs
   // -------------------------------------------------------------------------
   describe("GET /api/strategies", () => {
+    beforeEach(() => signedInAs());
+
     test("returns 200 with enriched runs (isLive=false, no orchestrator)", async () => {
       const runs = [{ id: "run-1", status: "running" }, { id: "run-2", status: "stopped" }];
       mockGetAll.mockResolvedValue(runs);
 
-      const res = await request(app).get("/api/strategies");
+      const res = await request(app).get("/api/strategies").set("Authorization", "Bearer valid");
 
       expect(res.status).toBe(200);
       expect(res.body).toHaveLength(2);
@@ -52,7 +54,7 @@ describe("Strategies HTTP API", () => {
 
     test("returns 200 with empty array when no runs exist", async () => {
       mockGetAll.mockResolvedValue([]);
-      const res = await request(app).get("/api/strategies");
+      const res = await request(app).get("/api/strategies").set("Authorization", "Bearer valid");
       expect(res.status).toBe(200);
       expect(res.body).toEqual([]);
     });
@@ -62,16 +64,18 @@ describe("Strategies HTTP API", () => {
   // GET /api/strategies/:id — single run
   // -------------------------------------------------------------------------
   describe("GET /api/strategies/:id", () => {
+    beforeEach(() => signedInAs());
+
     test("returns 200 with isLive=false when run exists but not in orchestrator", async () => {
       mockGetById.mockResolvedValue({ id: "run-1", status: "running" });
-      const res = await request(app).get("/api/strategies/run-1");
+      const res = await request(app).get("/api/strategies/run-1").set("Authorization", "Bearer valid");
       expect(res.status).toBe(200);
       expect(res.body).toMatchObject({ id: "run-1", isLive: false });
     });
 
     test("returns 404 when run does not exist", async () => {
       mockGetById.mockResolvedValue(null);
-      const res = await request(app).get("/api/strategies/missing-id");
+      const res = await request(app).get("/api/strategies/missing-id").set("Authorization", "Bearer valid");
       expect(res.status).toBe(404);
       expect(res.body.error).toBeDefined();
     });
@@ -136,7 +140,7 @@ describe("Strategies HTTP API", () => {
     test("returns 200 with array of saved configs enriched with algorithmVersion", async () => {
       const configs = [{ id: "cfg-1", name: "My Pairs", strategy_type: "pairs_trading" }];
       mockGetAllStrategies.mockResolvedValue(configs);
-      const res = await request(app).get("/api/strategies/configs");
+      const res = await request(app).get("/api/strategies/configs").set("Authorization", "Bearer valid");
       expect(res.status).toBe(200);
       // Derived at runtime from the strategy class, so assert against the constant
       // rather than a literal — a VERSION bump is a deliberate change, not a break.
@@ -148,14 +152,14 @@ describe("Strategies HTTP API", () => {
 
   describe("GET /api/strategies/configs/defaults/:type", () => {
     test("returns 200 with default config for pairs_trading", async () => {
-      const res = await request(app).get("/api/strategies/configs/defaults/pairs_trading");
+      const res = await request(app).get("/api/strategies/configs/defaults/pairs_trading").set("Authorization", "Bearer valid");
       expect(res.status).toBe(200);
       expect(res.body.type).toBe("pairs_trading");
       expect(res.body.defaultConfig).toBeDefined();
     });
 
     test("returns 404 for unknown strategy type", async () => {
-      const res = await request(app).get("/api/strategies/configs/defaults/unknown_type");
+      const res = await request(app).get("/api/strategies/configs/defaults/unknown_type").set("Authorization", "Bearer valid");
       expect(res.status).toBe(404);
     });
   });
@@ -315,16 +319,26 @@ describe("Strategies HTTP API", () => {
   describe("GET /api/portfolio/orders", () => {
     test("returns all orders when strategyRunId is absent", async () => {
       (repositories.getAllOrders as jest.Mock).mockResolvedValue([{ id: "o1" }]);
-      const res = await request(app).get("/api/portfolio/orders");
+      const res = await request(app).get("/api/portfolio/orders").set("Authorization", "Bearer valid");
       expect(res.status).toBe(200);
       expect(res.body).toHaveLength(1);
     });
 
     test("returns filtered orders when strategyRunId is provided", async () => {
       (repositories.getOrdersByStrategyRun as jest.Mock).mockResolvedValue([{ id: "o2" }]);
-      const res = await request(app).get("/api/portfolio/orders?strategyRunId=run-1");
+      const res = await request(app).get("/api/portfolio/orders?strategyRunId=run-1").set("Authorization", "Bearer valid");
       expect(res.status).toBe(200);
       expect(res.body).toHaveLength(1);
     });
   });
+});
+
+describe("Read routes require a signed-in member", () => {
+  test.each(["/api/strategies", "/api/strategies/configs", "/api/portfolio/orders", "/api/portfolio/fills", "/api/runs/run-1/performance", "/api/broker/account"])(
+    "GET %s without a token is 401",
+    async (path) => {
+      const res = await request(createApp({})).get(path);
+      expect(res.status).toBe(401);
+    },
+  );
 });
