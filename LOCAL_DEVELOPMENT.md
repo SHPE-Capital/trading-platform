@@ -30,9 +30,38 @@ between host and Linux installations.
 - Supabase Studio: http://localhost:54323
 - Local login: `lead@local.test` / `local-development-only`
 
-Without Alpaca credentials the stack boots with local placeholders, but calls
-that need Alpaca data or order execution will fail. Set `ALPACA_API_KEY` and
-`ALPACA_API_SECRET` in your shell before starting for end-to-end paper testing.
+Local runners never trade the club's Alpaca account. The paper runner starts
+with `EXECUTION_TARGET=sim`: orders fill locally against market data and are
+recorded in your local Supabase, which acts as the sim broker's ledger.
+
+| You have | Set in your shell before `npm run dev:stack` | What happens |
+|---|---|---|
+| Nothing | — | Sim book, replaying cached bars. Seed them with `npm run data:pull` (below). |
+| Free Alpaca account (data only) | `ALPACA_DATA_KEY`, `ALPACA_DATA_SECRET` | Sim book on live IEX bars. |
+| Your own Alpaca paper account | `EXECUTION_TARGET=alpaca-paper`, `ALPACA_API_KEY`, `ALPACA_API_SECRET` | Orders go to **your** paper account and sync into your local Supabase. |
+
+The club account is listed in `backend/src/config/protectedAccounts.ts`; a
+runner that resolves to it from any origin other than `aws-prod` exits at boot
+with the reason. Your own account registers itself in the local
+`broker_accounts` table the first time it boots.
+
+### Seeding replay data
+
+`npm run data:pull` copies bars from the club's hosted bar cache into your
+local one. It reads only what backtests have already cached there and never
+calls Alpaca:
+
+```bash
+cd backend
+HOSTED_API_URL=https://<hosted-api>/api \
+HOSTED_SUPABASE_URL=... HOSTED_SUPABASE_ANON_KEY=... \
+HOSTED_EMAIL=you@ufl.edu HOSTED_PASSWORD=... \
+SUPABASE_URL=http://127.0.0.1:54321 SUPABASE_SERVICE_ROLE_KEY=<local key> \
+npm run data:pull -- --symbols SPY,QQQ --from 2026-10-01 --to 2026-10-07
+```
+
+Then start the stack with `REPLAY_FROM=2026-10-06 REPLAY_TO=2026-10-07` (and
+optionally `REPLAY_SPEED=10`).
 
 ## Database boundaries
 
@@ -85,10 +114,9 @@ approval step to paper launches.
   accepted only by the live runtime. The frontend sends approval to the
   separately configured `NEXT_PUBLIC_LIVE_API_BASE_URL`; the default local
   stack deliberately does not launch a real-money runtime.
-- Keep Alpaca paper trading as the shared integration environment. Backtests
-  already supply the deterministic clock and simulated execution needed for
-  reproducible research; duplicating a second paper broker would add another
-  execution model to reconcile without replacing broker-level validation.
+- The club's Alpaca paper account is the shared book, traded only by the
+  `aws-prod` runtime. Everyone else tests in a sim book or on their own Alpaca
+  paper account, so a local experiment can never move the club's positions.
 
 ## Reset or stop
 

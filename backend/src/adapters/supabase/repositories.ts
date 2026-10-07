@@ -287,6 +287,7 @@ export function mapStrategyRun(row: Record<string, unknown>): StrategyRun {
     status: row.status as StrategyRun["status"],
     executionMode: row.execution_mode as string,
     runtimeOrigin: (row.runtime_origin as string | undefined) ?? "legacy",
+    brokerAccount: (row.broker_account as string | null | undefined) ?? null,
     buildSha: (row.build_sha as string | undefined) ?? "unknown",
     buildDirty: (row.build_dirty as boolean | undefined) ?? false,
     startedAt: row.started_at ? new Date(row.started_at as string).getTime() : undefined,
@@ -322,6 +323,9 @@ export async function insertStrategyRun(run: StrategyRun): Promise<void> {
     status: run.status,
     execution_mode: run.executionMode,
     runtime_origin: run.runtimeOrigin ?? "legacy",
+    // Only sent when known, so processes that never trade keep working against
+    // a database that predates 0015.
+    ...(run.brokerAccount ? { broker_account: run.brokerAccount } : {}),
     build_sha: run.buildSha ?? "unknown",
     build_dirty: run.buildDirty ?? false,
     started_at: run.startedAt ? new Date(run.startedAt).toISOString() : null,

@@ -54,8 +54,8 @@ export class AlpacaMarketDataAdapter {
         logger.info("AlpacaMarketDataAdapter: WebSocket open — authenticating");
         ws.send(JSON.stringify({
           action: "auth",
-          key: env.alpacaApiKey,
-          secret: env.alpacaApiSecret,
+          key: env.alpacaDataKey,
+          secret: env.alpacaDataSecret,
         }));
       });
 

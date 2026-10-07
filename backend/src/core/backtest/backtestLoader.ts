@@ -333,8 +333,8 @@ export class BacktestLoader {
   ): AsyncGenerator<Bar[]> {
     const baseUrl = "https://data.alpaca.markets/v2";
     const headers = {
-      "APCA-API-KEY-ID": env.alpacaApiKey,
-      "APCA-API-SECRET-KEY": env.alpacaApiSecret,
+      "APCA-API-KEY-ID": env.alpacaDataKey,
+      "APCA-API-SECRET-KEY": env.alpacaDataSecret,
     };
     let pageToken: string | undefined;
 

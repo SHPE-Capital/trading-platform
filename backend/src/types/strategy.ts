@@ -168,6 +168,8 @@ export interface StrategyRun {
   executionMode: string;
   /** Deployment boundary; runners adopt only rows from their own origin. */
   runtimeOrigin?: string;
+  /** Broker account the run trades (0015); absent on runs from before broker accounts. */
+  brokerAccount?: string | null;
   buildSha?: string;
   buildDirty?: boolean;
   startedAt?: EpochMs;

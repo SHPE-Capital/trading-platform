@@ -18,8 +18,14 @@
  *
  * The two entry points differ only in:
  *   - mode ("paper" | "live") — selects Alpaca paper vs live endpoints
- *   - sinkFactory — PaperExecutionSink vs LiveExecutionSink
+ *   - target — EXECUTION_TARGET: "sim" fills orders locally and never contacts
+ *     a broker; the alpaca targets trade the account behind the configured keys
+ *   - sinkFactory — PaperExecutionSink vs LiveExecutionSink (alpaca targets)
  *   - initialCapital — starting equity for the in-memory portfolio tracker
+ *
+ * Before anything connects, the broker account check (core/broker/
+ * brokerPreflight.ts) resolves the account this process will trade and refuses
+ * to start against an account owned by another deployment.
  */
 
 import http from "http";
@@ -38,12 +44,19 @@ import { warmUpStrategy } from "../core/live/strategyWarmer";
 import { RiskRejectionRecorder } from "../core/live/riskRejectionRecorder";
 import { AlpacaMarketDataAdapter } from "../adapters/alpaca/marketData";
 import { AlpacaOrderExecutionAdapter } from "../adapters/alpaca/orderExecution";
+import { alpacaGet, alpacaTradingBaseUrl } from "../adapters/alpaca/rest";
+import { ReplayBarFeed } from "../adapters/replay/replayBarFeed";
+import { SimulatedExecutionSink } from "../core/execution/simulatedExecution";
+import { BrokerPreflightError, runBrokerPreflight } from "../core/broker/brokerPreflight";
+import { AlpacaClockHours, alwaysOpen, type AlpacaClock } from "../core/market/marketHours";
+import { findBrokerAccount, registerBrokerAccount } from "../adapters/supabase/brokerAccountRepository";
+import { PROTECTED_BROKER_ACCOUNTS } from "../config/protectedAccounts";
 import { SupabaseBarCache } from "../adapters/supabase/barCacheRepository";
 import { PairsStrategy } from "../strategies/pairs/pairsStrategy";
 import { createPairsConfig } from "../strategies/pairs/pairsConfig";
 import { createApp } from "../app/index";
 import { attachWebSocketServer } from "../app/websocket";
-import { env } from "../config/env";
+import { env, type ExecutionTarget } from "../config/env";
 import { DEFAULT_SNAPSHOT_INTERVAL_MS } from "../config/defaults";
 import {
   insertOrder,
@@ -83,9 +96,12 @@ import { logger } from "../utils/logger";
 export interface RuntimeConfig {
   /** "paper" uses Alpaca paper endpoints; "live" uses real-money endpoints. */
   mode: "paper" | "live";
+  /** Where orders go. "sim" needs no broker keys and never contacts a broker. */
+  target: ExecutionTarget;
   /**
    * Factory receives the already-constructed order adapter so the sink can
    * delegate to it without the entry point needing to hold the EventBus.
+   * Unused by "sim", which fills locally.
    */
   sinkFactory: (adapter: AlpacaOrderExecutionAdapter) => IExecutionSink;
   /** Starting equity for the in-memory portfolio state manager. Set via INITIAL_CAPITAL env var. */
@@ -117,8 +133,43 @@ function buildRunStrategy(run: StrategyRun): IStrategy {
  * gate checks have passed.
  */
 export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
-  const { mode, sinkFactory, initialCapital, startupLeg1, startupLeg2 } = config;
+  const { mode, target, sinkFactory, initialCapital, startupLeg1, startupLeg2 } = config;
   const isPaper = mode === "paper";
+
+  // ------------------------------------------------------------------
+  // Broker account check — before any stream opens or order can be sent.
+  // ------------------------------------------------------------------
+  const tradingCreds = { key: env.alpacaApiKey, secret: env.alpacaApiSecret };
+  let brokerAccount: string;
+  try {
+    const preflight = await runBrokerPreflight({
+      target,
+      runtimeOrigin: env.runtimeOrigin,
+      expectedAccount: env.expectedBrokerAccount,
+      hostname: os.hostname(),
+      protectedAccounts: PROTECTED_BROKER_ACCOUNTS,
+      fetchAccount: async () => {
+        if (!tradingCreds.key || !tradingCreds.secret) {
+          throw new BrokerPreflightError(`ALPACA_API_KEY and ALPACA_API_SECRET are required for EXECUTION_TARGET=${target}`);
+        }
+        const account = await alpacaGet<{ account_number: string; status: string }>(
+          alpacaTradingBaseUrl(mode), "/v2/account", tradingCreds,
+        );
+        return { accountNumber: account.account_number, status: account.status };
+      },
+      findRegistered: findBrokerAccount,
+      register: registerBrokerAccount,
+    });
+    brokerAccount = preflight.brokerAccount;
+    logger.info("bootstrap: broker account check passed", {
+      target, brokerAccount, kind: preflight.kind, newlyRegistered: preflight.registered, origin: env.runtimeOrigin,
+    });
+  } catch (err) {
+    logger.error("bootstrap: broker account check failed — this runtime will not trade", {
+      target, origin: env.runtimeOrigin, reason: err instanceof Error ? err.message : String(err),
+    });
+    throw err;
+  }
 
   // ------------------------------------------------------------------
   // Engine components
@@ -129,11 +180,34 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
   const orderState = new OrderStateManager();
   const riskEngine = new RiskEngine();
 
-  const marketDataAdapter = new AlpacaMarketDataAdapter(eventBus, mode);
-  const orderAdapter = new AlpacaOrderExecutionAdapter(eventBus, mode);
+  // Market data: Alpaca's stream when data keys exist; otherwise (sim only) a
+  // replay of cached bars through the same events.
+  const hasDataKeys = !!(env.alpacaDataKey && env.alpacaDataSecret);
+  const marketDataAdapter = hasDataKeys
+    ? new AlpacaMarketDataAdapter(eventBus, mode)
+    : new ReplayBarFeed(eventBus, mode, new SupabaseBarCache(), replayWindow());
 
-  const sink = sinkFactory(orderAdapter);
+  // Orders: a sim book fills locally on the next bar; the alpaca targets send
+  // them to the account the check above resolved.
+  const orderAdapter = target === "sim" ? null : new AlpacaOrderExecutionAdapter(eventBus, mode);
+  const sink = orderAdapter
+    ? sinkFactory(orderAdapter)
+    : new SimulatedExecutionSink(eventBus, symbolState, mode, 5, 0.005, {});
   const executionEngine = new ExecutionEngine(sink);
+
+  // Orders are only sent during the regular session. Alpaca's clock knows
+  // holidays; a replayed session is in-session by construction.
+  let clockHours: AlpacaClockHours | null = null;
+  if (hasDataKeys) {
+    const clockCreds = target === "sim" ? { key: env.alpacaDataKey, secret: env.alpacaDataSecret } : tradingCreds;
+    clockHours = new AlpacaClockHours(() =>
+      alpacaGet<AlpacaClock>(alpacaTradingBaseUrl(target === "alpaca-live" ? "live" : "paper"), "/v2/clock", clockCreds),
+    );
+    await clockHours.start();
+    riskEngine.setMarketHours(clockHours);
+  } else {
+    riskEngine.setMarketHours(alwaysOpen);
+  }
 
   const orchestrator = new Orchestrator(
     eventBus,
@@ -159,13 +233,17 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
     registry: orchestrator,
     subscribe: (symbols) => marketDataAdapter.subscribe(symbols),
     leases: {
-      claimOrphans: () => claimOrphanedRuns(owner, mode, env.runtimeOrigin, leaseSeconds),
+      claimOrphans: () => claimOrphanedRuns(owner, mode, env.runtimeOrigin, leaseSeconds, brokerAccount),
       heartbeat: (runIds) => heartbeatRunLeases(owner, runIds, leaseSeconds),
       release: (runId) => releaseRunLease(runId, owner),
     },
     buildStrategy: buildRunStrategy,
-    warmUp: (strategy) =>
-      warmUpStrategy(strategy, (symbols, start, end) => historyLoader.loadBars(symbols, start, end, "1Min")),
+    // A keyless sim replays history through the strategy itself; there is no
+    // live "now" to warm up to and no keys to fetch history with.
+    warmUp: hasDataKeys
+      ? (strategy) =>
+        warmUpStrategy(strategy, (symbols, start, end) => historyLoader.loadBars(symbols, start, end, "1Min"))
+      : async () => 0,
     markRunErrored: (runId, reason) =>
       updateStrategyRun(runId, { status: "error", stoppedAt: nowMs(), disabledReason: reason }),
     markRunExpired: (runId, reason) =>
@@ -177,6 +255,7 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
       for (const fill of fills) portfolioState.applyFill(fill);
       return fills.length;
     },
+    brokerAccount,
   });
   logger.info("bootstrap: runner identity", { owner, leaseSeconds });
 
@@ -254,18 +333,20 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
   await marketDataAdapter.connect().catch((err) => {
     logger.error("bootstrap: market data connect failed — engine will start but no live data until reconnect", { err });
   });
-  // Alpaca does not replay trade_updates sent while the stream was down, so
-  // after a reconnect every order still open here is read back over REST.
-  orderAdapter.onReconnect(() => {
-    const open = orderState.getOpenOrders();
-    if (open.length === 0) return;
-    orderAdapter.reconcileOrders(open).catch((err) =>
-      logger.error("bootstrap: order reconciliation after reconnect failed", { err: String(err) }),
-    );
-  });
-  await orderAdapter.connectTradeStream().catch((err) => {
-    logger.error("bootstrap: order stream connect failed — fills will not be received until reconnect", { err });
-  });
+  if (orderAdapter) {
+    // Alpaca does not replay trade_updates sent while the stream was down, so
+    // after a reconnect every order still open here is read back over REST.
+    orderAdapter.onReconnect(() => {
+      const open = orderState.getOpenOrders();
+      if (open.length === 0) return;
+      orderAdapter.reconcileOrders(open).catch((err) =>
+        logger.error("bootstrap: order reconciliation after reconnect failed", { err: String(err) }),
+      );
+    });
+    await orderAdapter.connectTradeStream().catch((err) => {
+      logger.error("bootstrap: order stream connect failed — fills will not be received until reconnect", { err });
+    });
+  }
 
   orchestrator.start();
 
@@ -398,6 +479,8 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
     riskEngine,
     marketDataAdapter,
     executionMode: mode,
+    executionTarget: target,
+    brokerAccount,
     liveRuns,
   });
   const server = http.createServer(app);
@@ -423,7 +506,8 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
     clearInterval(leaseTimer);
     orchestrator.stop();
     marketDataAdapter.disconnect();
-    orderAdapter.disconnect();
+    orderAdapter?.disconnect();
+    clockHours?.stop();
     await rejections.stop();
     // Hand leases back so a successor adopts these runs now instead of after
     // they lapse. The rows stay "running" — they are paused, not stopped.
@@ -434,4 +518,17 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
 
   process.on("SIGINT",  () => { shutdown().catch(() => process.exit(1)); });
   process.on("SIGTERM", () => { shutdown().catch(() => process.exit(1)); });
+}
+
+/**
+ * Window a keyless sim runtime replays: REPLAY_FROM..REPLAY_TO, defaulting to
+ * whatever is cached for the last five days.
+ */
+function replayWindow(): { fromMs: number; toMs: number; speed: number } {
+  const toMs = env.replayTo ? new Date(env.replayTo).getTime() : nowMs();
+  const fromMs = env.replayFrom ? new Date(env.replayFrom).getTime() : toMs - 5 * 86_400_000;
+  if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || fromMs >= toMs) {
+    throw new Error("REPLAY_FROM must be a date before REPLAY_TO");
+  }
+  return { fromMs, toMs, speed: env.replaySpeed };
 }

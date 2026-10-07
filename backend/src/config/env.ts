@@ -37,6 +37,22 @@ function optionalBool(key: string, defaultValue: boolean): boolean {
   return raw.toLowerCase() === "true";
 }
 
+/**
+ * Where a trading runtime's orders go. "sim" fills them locally against market
+ * data and never contacts a broker; the alpaca targets trade the account whose
+ * keys are configured, subject to the startup account check.
+ */
+export type ExecutionTarget = "sim" | "alpaca-paper" | "alpaca-live";
+
+function executionTarget(): ExecutionTarget {
+  const raw = optional("EXECUTION_TARGET", "sim");
+  if (raw === "sim" || raw === "alpaca-paper" || raw === "alpaca-live") return raw;
+  throw new Error(`EXECUTION_TARGET must be sim, alpaca-paper or alpaca-live, got: "${raw}"`);
+}
+
+const alpacaApiKey = optional("ALPACA_API_KEY", "");
+const alpacaApiSecret = optional("ALPACA_API_SECRET", "");
+
 export const env = {
   // Server
   port: optionalNumber("PORT", 8080),
@@ -47,9 +63,20 @@ export const env = {
   buildSha: optional("APP_BUILD_SHA", "local"),
   buildDirty: optionalBool("APP_BUILD_DIRTY", true),
 
-  // Alpaca
-  alpacaApiKey: requireEnv("ALPACA_API_KEY"),
-  alpacaApiSecret: requireEnv("ALPACA_API_SECRET"),
+  // Execution
+  executionTarget: executionTarget(),
+  /**
+   * Account number this runtime must be trading. Mandatory on the AWS origin;
+   * optional for a member's own paper account.
+   */
+  expectedBrokerAccount: optional("EXPECTED_BROKER_ACCOUNT", ""),
+
+  // Alpaca. Trading keys are only needed by the alpaca targets; data keys
+  // (market data and the market clock) fall back to them when unset.
+  alpacaApiKey,
+  alpacaApiSecret,
+  alpacaDataKey: optional("ALPACA_DATA_KEY", alpacaApiKey),
+  alpacaDataSecret: optional("ALPACA_DATA_SECRET", alpacaApiSecret),
   alpacaTradingMode: optional("ALPACA_TRADING_MODE", "paper") as "paper" | "live",
   alpacaPaperBaseUrl: optional("ALPACA_PAPER_BASE_URL", "https://paper-api.alpaca.markets"),
   alpacaLiveBaseUrl: optional("ALPACA_LIVE_BASE_URL", "https://api.alpaca.markets"),
@@ -85,6 +112,13 @@ export const env = {
   sandboxMaxActiveRunsPerMember: optionalNumber("SANDBOX_MAX_ACTIVE_RUNS_PER_MEMBER", 2),
   /** Automatic lifetime of a self-service paper sandbox. */
   sandboxRunTtlHours: optionalNumber("SANDBOX_RUN_TTL_HOURS", 24),
+
+  // Sim replay — used by a sim runtime with no data keys. Cached 1-minute bars
+  // from REPLAY_FROM to REPLAY_TO are published as if live, REPLAY_SPEED times
+  // faster than they happened.
+  replayFrom: optional("REPLAY_FROM", ""),
+  replayTo: optional("REPLAY_TO", ""),
+  replaySpeed: optionalNumber("REPLAY_SPEED", 1),
 
   // Feature flags
   enableLiveTrading: optionalBool("ENABLE_LIVE_TRADING", false),

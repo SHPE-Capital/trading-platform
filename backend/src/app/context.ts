@@ -20,6 +20,10 @@ export interface AppContext {
   marketDataAdapter?: MarketDataSubscriber;
   /** Execution mode of the current runtime — used to label strategy runs created via the API. */
   executionMode?: string;
+  /** EXECUTION_TARGET of a trading runtime: "sim", "alpaca-paper" or "alpaca-live". */
+  executionTarget?: string;
+  /** Broker account a trading runtime resolved at boot (Alpaca account number or sim:<host>). */
+  brokerAccount?: string;
   /**
    * Lease-holding run registry of a trading runtime (Part 05). Starting a run
    * goes through it so the run is warmed up and leased to this process;

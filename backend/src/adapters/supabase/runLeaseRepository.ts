@@ -21,18 +21,23 @@ export async function acquireRunLease(runId: UUID, owner: string, leaseSeconds: 
   return data === true;
 }
 
-/** Takes every running run of this mode with no live lease, and returns them. */
+/**
+ * Takes every running run of this mode on this broker account with no live
+ * lease, and returns them. Runs from before broker accounts match by origin.
+ */
 export async function claimOrphanedRuns(
   owner: string,
   executionMode: string,
   runtimeOrigin: string,
   leaseSeconds: number,
+  brokerAccount: string,
 ): Promise<StrategyRun[]> {
   const { data, error } = await getSupabaseClient().rpc("claim_orphaned_runs", {
     p_owner: owner,
     p_execution_mode: executionMode,
     p_runtime_origin: runtimeOrigin,
     p_lease_seconds: leaseSeconds,
+    p_broker_account: brokerAccount,
   });
   if (error) throw new Error(`claim_orphaned_runs failed: ${error.message}`);
   return ((data ?? []) as Record<string, unknown>[]).map((row) =>

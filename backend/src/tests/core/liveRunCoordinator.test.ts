@@ -226,4 +226,19 @@ describe('LiveRunCoordinator', () => {
     const { coordinator } = setup({}, { t: 5_000 });
     expect(coordinator.leaseFields()).toEqual({ leaseOwner: 'paper:host:1:abc', leaseExpiresAt: 5_000 + 90_000 });
   });
+
+  it('stamps new runs with the broker account it trades', () => {
+    const deps = {
+      registry: { registerStrategy: jest.fn(), deregisterStrategy: jest.fn() },
+      subscribe: jest.fn(),
+      leases: { claimOrphans: jest.fn(), heartbeat: jest.fn(), release: jest.fn() },
+      buildStrategy: jest.fn(), warmUp: jest.fn(), markRunErrored: jest.fn(), markRunExpired: jest.fn(),
+      brokerAccount: 'PAMEMBER9',
+      now: () => 5_000,
+    };
+    const coordinator = new LiveRunCoordinator('paper:host:1:abc', 90, deps as unknown as LiveRunCoordinatorDeps);
+    expect(coordinator.leaseFields()).toEqual({
+      leaseOwner: 'paper:host:1:abc', leaseExpiresAt: 95_000, brokerAccount: 'PAMEMBER9',
+    });
+  });
 });

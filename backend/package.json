@@ -11,6 +11,7 @@
     "dev:real-trading": "nodemon --config nodemon.real-trading.json",
     "dev:backtest": "nodemon --exec ts-node src/runtime/backtest.ts",
     "dev:replay": "nodemon --exec ts-node src/runtime/replay.ts",
+    "data:pull": "ts-node src/runtime/dataPull.ts",
     "build": "tsc",
     "typecheck": "tsc --noEmit -p tsconfig.spec.json",
     "start": "node dist/index.js",

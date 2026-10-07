@@ -48,6 +48,8 @@ export interface LiveRunCoordinatorDeps {
    * adopted runs start from an empty book.
    */
   restorePositions?(run: StrategyRun): Promise<number>;
+  /** Broker account this runner trades; stamped on every run it inserts. */
+  brokerAccount?: string;
   now?: () => number;
 }
 
@@ -72,9 +74,16 @@ export class LiveRunCoordinator {
     this.lastHeartbeatOkAt = this.now();
   }
 
-  /** Lease columns for a run this runner is about to insert itself. */
-  leaseFields(): { leaseOwner: string; leaseExpiresAt: number } {
-    return { leaseOwner: this.owner, leaseExpiresAt: this.now() + this.leaseSeconds * 1000 };
+  /**
+   * Ownership columns for a run this runner is about to insert itself: the
+   * lease, and the broker account the run will trade.
+   */
+  leaseFields(): { leaseOwner: string; leaseExpiresAt: number; brokerAccount?: string } {
+    return {
+      leaseOwner: this.owner,
+      leaseExpiresAt: this.now() + this.leaseSeconds * 1000,
+      ...(this.deps.brokerAccount ? { brokerAccount: this.deps.brokerAccount } : {}),
+    };
   }
 
   /** Primes a strategy from history. Never throws — a cold start beats no start. */

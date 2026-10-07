@@ -29,7 +29,7 @@ const REQUIRED_RELATIONS = [
   "proposal_comments", "backtest_results", "backtest_orders", "backtest_fills", "backtest_jobs",
   "backtest_job_artifacts", "bars", "bar_coverage", "risk_rejections", "orders", "fills",
   "portfolio_snapshots", "pending_approvals", "proposal_timeline", "proposal_summaries",
-  "member_contention_daily",
+  "member_contention_daily", "broker_accounts",
 ];
 
 const BACKEND_FUNCTIONS = [
@@ -41,7 +41,7 @@ const BACKEND_FUNCTIONS = [
   "sweep_backtest_jobs(integer)",
   "get_bars(text, text, timestamptz, timestamptz)",
   "acquire_run_lease(uuid, text, integer)",
-  "claim_orphaned_runs(text, text, text, integer)",
+  "claim_orphaned_runs(text, text, text, integer, text)",
   "heartbeat_run_leases(text, uuid[], integer)",
   "release_run_lease(uuid, text)",
   "save_strategy_version(uuid, text, jsonb, text, uuid)",
@@ -52,6 +52,7 @@ const REQUIRED_INDEXES = [
   "strategy_runs_single_live",
   "strategy_proposals_one_open",
   "strategy_runs_sandbox_expiry",
+  "strategy_runs_broker_account",
 ];
 
 const quoted = (xs: string[]) => xs.map((x) => `'${x}'`).join(", ");
@@ -79,11 +80,12 @@ const CHECKS: Check[] = [
     // 0012 defines the index on (strategy_id, execution_mode, runtime_origin).
     // Match each column rather than one exact column list, so the check accepts
     // that definition and still rejects the original strategy_id-only index.
-    name: "Live-run uniqueness is scoped by execution mode and runtime origin",
+    name: "Live-run uniqueness is scoped by broker account (legacy rows by mode and origin)",
     sql: `select indexdef from pg_indexes
           where schemaname = 'public' and indexname = 'strategy_runs_single_live'
-            and (indexdef not ilike '%execution_mode%' or indexdef not ilike '%runtime_origin%')`,
-    describe: () => "strategy_runs_single_live must include execution_mode and runtime_origin",
+            and (indexdef not ilike '%broker_account%' or indexdef not ilike '%execution_mode%'
+                 or indexdef not ilike '%runtime_origin%')`,
+    describe: () => "strategy_runs_single_live must key on broker_account, falling back to execution_mode and runtime_origin",
   },
   {
     name: "Every public table has row level security",
@@ -126,9 +128,11 @@ async function main(): Promise<void> {
     throw new Error("DATABASE_URL is not set to a real database (see src/runtime/migrate.ts).");
   }
   const caPath = process.env.DATABASE_CA_CERT;
+  // The local Supabase stack's Postgres does not offer TLS.
+  const local = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
   const client = new Client({
     connectionString: url,
-    ssl: caPath ? { ca: fs.readFileSync(caPath, "utf8") } : { rejectUnauthorized: false },
+    ssl: local ? false : caPath ? { ca: fs.readFileSync(caPath, "utf8") } : { rejectUnauthorized: false },
   });
   await client.connect();
 

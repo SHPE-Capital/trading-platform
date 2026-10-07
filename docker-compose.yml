@@ -44,6 +44,11 @@ services:
     env_file: ./backend/.env
     environment:
       PORT: "8080"
+      # Production trades the club account (APP_RUNTIME_ORIGIN=aws-prod and
+      # EXPECTED_BROKER_ACCOUNT come from SSM). Anywhere else the boot check
+      # refuses the club account, so run this with your own paper keys or
+      # EXECUTION_TARGET=sim.
+      EXECUTION_TARGET: ${EXECUTION_TARGET:-alpaca-paper}
     ports:
       - "8080:8080"
     restart: unless-stopped
@@ -61,6 +66,7 @@ services:
     env_file: ./backend/.env
     environment:
       PORT: "8081"
+      EXECUTION_TARGET: alpaca-live
     ports:
       - "8081:8081"
     profiles: ["real-trading"]

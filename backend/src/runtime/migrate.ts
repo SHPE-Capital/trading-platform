@@ -79,8 +79,10 @@ async function connect(): Promise<Client> {
   // Configuration → Download certificate) to verify the server; without it the
   // connection is still encrypted but the server's identity goes unchecked.
   const caPath = process.env.DATABASE_CA_CERT;
-  const ssl = caPath ? { ca: fs.readFileSync(caPath, "utf8") } : { rejectUnauthorized: false };
-  if (!caPath) console.warn("DATABASE_CA_CERT not set — TLS is on, but the server certificate is not verified.");
+  // The local Supabase stack's Postgres does not offer TLS.
+  const local = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
+  const ssl = local ? false : caPath ? { ca: fs.readFileSync(caPath, "utf8") } : { rejectUnauthorized: false };
+  if (!caPath && !local) console.warn("DATABASE_CA_CERT not set — TLS is on, but the server certificate is not verified.");
   const client = new Client({ connectionString: url, ssl });
   await client.connect();
   await client.query(`

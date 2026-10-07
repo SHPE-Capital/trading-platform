@@ -5,12 +5,13 @@
  * Boots with an empty strategy registry — strategies are started via the
  * frontend or REST API.
  *
- * DUAL FEATURE GATE — both of the following must be explicitly set before
+ * TRIPLE FEATURE GATE — all of the following must be explicitly set before
  * this runtime will start:
  *   ALPACA_TRADING_MODE=live
  *   ENABLE_LIVE_TRADING=true
+ *   EXECUTION_TARGET=alpaca-live
  *
- * Either gate failing causes an immediate logged exit before any connection
+ * Any gate failing causes an immediate logged exit before any connection
  * to Alpaca live systems is opened. This prevents accidental real-money
  * trading from a misconfigured environment.
  *
@@ -48,10 +49,19 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  if (env.executionTarget !== "alpaca-live") {
+    logger.error(
+      "runtime/real-trading: EXECUTION_TARGET must be 'alpaca-live' to run this runtime. " +
+      `Current value: '${env.executionTarget}'. Exiting.`,
+    );
+    process.exit(1);
+  }
+
   logger.warn("runtime/real-trading: REAL MONEY TRADING MODE — real money at risk");
 
   await bootstrapRuntime({
     mode: "live",
+    target: "alpaca-live",
     sinkFactory: (adapter) => new LiveExecutionSink(adapter),
     initialCapital: env.initialCapital,
     startupLeg1: env.startupLeg1 || undefined,

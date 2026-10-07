@@ -30,6 +30,7 @@ import { DEFAULT_RISK_CONFIG } from "../../config/defaults";
 import type { RiskConfig, RiskCheckResult, StrategyRiskBudget, PortfolioRiskViolation } from "../../types/risk";
 import type { OrderIntent } from "../../types/orders";
 import type { PortfolioSnapshot } from "../../types/portfolio";
+import type { MarketHours } from "../market/marketHours";
 
 export class RiskEngine {
   private config: RiskConfig;
@@ -43,6 +44,11 @@ export class RiskEngine {
   private sessionStartEquity: number | null = null;
   /** Per-strategy capital budgets registered at engine startup */
   private readonly _strategyBudgets = new Map<string, StrategyRiskBudget>();
+  /**
+   * Live runtimes set this so orders are not sent while the market is closed.
+   * Unset (backtests, replay analysis), the check is skipped.
+   */
+  private marketHours: MarketHours | null = null;
 
   /**
    * Creates the risk engine with optional custom config.
@@ -165,6 +171,11 @@ export class RiskEngine {
   //   Blocks a quote bundle when |quote_mid - fairMid| / fairMid > maxDeviationBps.
   //   Also rejects crossed quotes (bid ≥ ask) which indicate a stale fair-value
   //   estimate or a bug in the spread engine.
+
+  /** Enables the MARKET_CLOSED check against the given market calendar. */
+  setMarketHours(hours: MarketHours | null): void {
+    this.marketHours = hours;
+  }
 
   /**
    * Activates or deactivates the global kill switch.
@@ -352,6 +363,7 @@ export class RiskEngine {
   ): { failedCheck: string; reason: string } | null {
     const checks = [
       () => this._checkKillSwitch(intent),
+      () => this._checkMarketOpen(ts),
       () => this._checkStaleQuote(referenceTs),
       () => this._checkCooldown(intent, ts),
       () => this._checkMaxPositionSize(intent, portfolio, referencePrice),
@@ -371,6 +383,11 @@ export class RiskEngine {
   // ------------------------------------------------------------------
   // Private checks — return { failedCheck, reason } on failure, null on pass
   // ------------------------------------------------------------------
+
+  private _checkMarketOpen(ts: number): { failedCheck: string; reason: string } | null {
+    if (!this.marketHours || this.marketHours.isOpen(ts)) return null;
+    return { failedCheck: "MARKET_CLOSED", reason: "The market is closed; orders are only sent during the regular session" };
+  }
 
   private _applyFillBuffer(side: "buy" | "sell", rawPrice: number): number {
     const bps = (this.config.gapBufferBps + this.config.spreadBufferBps) / 10_000;
