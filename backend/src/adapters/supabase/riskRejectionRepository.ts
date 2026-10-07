@@ -18,6 +18,8 @@ export interface RiskRejectionRow {
   failed_check: string;
   reason: string | null;
   intent: unknown;
+  signal_id?: string;
+  run_id?: string;
 }
 
 export async function insertRiskRejections(rows: RiskRejectionRow[]): Promise<void> {

@@ -59,7 +59,9 @@ export type EventType =
   // Replay events
   | "REPLAY_TICK"
   // Post-fill portfolio risk
-  | "PORTFOLIO_RISK_VIOLATION";
+  | "PORTFOLIO_RISK_VIOLATION"
+  // Ledger
+  | "BROKER_DRIFT";
 
 // ------------------------------------------------------------------
 // Base Event
@@ -167,6 +169,10 @@ export interface StrategySignalCreatedEvent extends BaseEvent {
   type: "STRATEGY_SIGNAL_CREATED";
   strategyId: string;
   payload: StrategySignal;
+  /** Registry key of the emitting strategy — its strategy_runs.id when run-managed. */
+  runKey?: string;
+  /** Identifies this signal across its intents, rejections and orders. */
+  signalId?: UUID;
 }
 
 export interface StrategyStartedEvent extends BaseEvent {
@@ -260,6 +266,10 @@ export interface CapitalUnavailableEvent extends BaseEvent {
   intentId: UUID;
   /** Strategy that submitted the intent */
   strategyId: string;
+  /** Signal the intent came from. */
+  signalId?: UUID;
+  /** Run that emitted the signal. */
+  runId?: UUID;
   /** USD amount required */
   required: number;
   /** USD amount available after existing reservations */
@@ -384,7 +394,24 @@ export type TradingEvent =
   | EngineStoppedEvent
   | HeartbeatEvent
   | ReplayTickEvent
-  | PortfolioRiskViolationEvent;
+  | PortfolioRiskViolationEvent
+  | BrokerDriftEvent;
+
+/**
+ * The broker holds positions the ledger cannot attribute to a running run —
+ * unattributed shares, or shares left behind by a stopped run.
+ */
+export interface BrokerDriftEvent extends BaseEvent {
+  type: "BROKER_DRIFT";
+  brokerAccount: string;
+  rows: Array<{
+    symbol: string;
+    brokerQty: number;
+    runningQty: number;
+    stoppedQty: number;
+    unattributedQty: number;
+  }>;
+}
 
 /** Typed event handler callback */
 export type EventHandler<E extends TradingEvent = TradingEvent> = (event: E) => void | Promise<void>;

@@ -57,6 +57,8 @@ export class Orchestrator {
   private readonly capitalReservation = new CapitalReservationManager();
   /** intentId → reservationId, for releasing on any terminal order event */
   private readonly _reservationByIntent = new Map<UUID, UUID>();
+  /** Registry keys that are strategy_runs ids (registered with an explicit runId). */
+  private readonly _runKeys = new Set<string>();
   /** registry key → evaluate() errors in a row */
   private readonly _consecutiveErrors = new Map<string, number>();
 
@@ -83,6 +85,7 @@ export class Orchestrator {
   registerStrategy(strategy: IStrategy, runId?: string): void {
     const key = runId ?? strategy.id;
     this.strategies.set(key, strategy);
+    if (runId) this._runKeys.add(runId);
 
     const cfg = strategy.config as BaseStrategyConfig;
     if (cfg.riskBudget) {
@@ -122,6 +125,7 @@ export class Orchestrator {
     if (!strategy) return false;
     strategy.stop();
     this.strategies.delete(strategyId);
+    this._runKeys.delete(strategyId);
     this._consecutiveErrors.delete(strategyId);
     this.eventBus.publish({
       id: newId(), type: "STRATEGY_STOPPED", ts: nowMs(), mode: this.mode,
@@ -317,6 +321,8 @@ export class Orchestrator {
           mode: this.mode,
           strategyId: strategy.id,
           payload: signal,
+          runKey: key,
+          signalId: newId(),
         });
       }
     }
@@ -364,13 +370,19 @@ export class Orchestrator {
   private _onStrategySignal(event: any): void {
     const signal = event.payload;
     if (!signal) return;
+    // Every intent built from this signal carries the run that emitted it and
+    // the signal's id, so orders, rejections and fills trace back to both.
+    const origin = {
+      ...(event.runKey && this._runKeys.has(event.runKey) ? { runId: event.runKey as UUID } : {}),
+      ...(event.signalId ? { signalId: event.signalId as UUID } : {}),
+    };
 
     if (signal.meta?.kind === "maker_quotes") {
-      this._onMakerQuoteSignal(signal, event.mode);
+      this._onMakerQuoteSignal(signal, event.mode, origin);
       return;
     }
 
-    const legs = this._buildSignalLegs(signal);
+    const legs = this._buildSignalLegs(signal).map((leg) => ({ ...leg, ...origin }));
     if (legs.length === 0) return;
 
     // Pre-flight: for multi-leg signals, verify the combined worst-case cost fits available
@@ -407,7 +419,7 @@ export class Orchestrator {
       if (allBuyPricesKnown && combined > this.capitalReservation.getAvailableCash(portfolio.cash)) {
         this.eventBus.publish({
           id: newId(), type: "CAPITAL_UNAVAILABLE", ts: nowMs(), mode: event.mode,
-          intentId: legs[0].id, strategyId: signal.strategyId,
+          intentId: legs[0].id, strategyId: signal.strategyId, ...origin,
           required: combined,
           available: this.capitalReservation.getAvailableCash(portfolio.cash),
         });
@@ -509,7 +521,7 @@ export class Orchestrator {
    *
    * No-op when makerQuotes is empty (e.g. kill-switch state).
    */
-  private _onMakerQuoteSignal(signal: any, mode: ExecutionMode): void {
+  private _onMakerQuoteSignal(signal: any, mode: ExecutionMode, origin: { runId?: UUID; signalId?: UUID } = {}): void {
     const meta = signal.meta as {
       kind: "maker_quotes";
       makerQuotes?: Array<{ side: "buy" | "sell"; price: number; qty: number }>;
@@ -532,6 +544,7 @@ export class Orchestrator {
         timeInForce: tif,
         reason: signal.triggerLabel,
         ts: nowMs(),
+        ...origin,
       };
       this.eventBus.publish({
         id: newId(),
@@ -550,9 +563,12 @@ export class Orchestrator {
    * → capital reservation → execution submission.
    */
   private _onOrderIntent(event: OrderIntentCreatedEvent): void {
-    const intent = event.payload;
-    const symState = this.symbolState.get(intent.symbol);
+    const symState = this.symbolState.get(event.payload.symbol);
     const mid = symState?.latestMid ?? symState?.latestBar?.close ?? null;
+    // The price the strategy acted on: the baseline that fills are measured against.
+    const intent = mid !== null && event.payload.decisionPrice === undefined
+      ? { ...event.payload, decisionPrice: mid }
+      : event.payload;
     const portfolio = this.portfolioState.getSnapshot();
 
     // Stage 1: signal-time risk checks (kill switch, cooldown, position/cash/concentration)
@@ -605,6 +621,8 @@ export class Orchestrator {
         id: newId(), type: "CAPITAL_UNAVAILABLE", ts: nowMs(), mode: this.mode,
         intentId: intent.id,
         strategyId: intent.strategyId,
+        signalId: intent.signalId,
+        runId: intent.runId,
         required: worstCaseNotional,
         available: this.capitalReservation.getAvailableCash(portfolio.cash),
       });

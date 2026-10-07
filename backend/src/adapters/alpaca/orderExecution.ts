@@ -15,6 +15,7 @@ import { env } from "../../config/env";
 import { logger } from "../../utils/logger";
 import { nowMs } from "../../utils/time";
 import { newId } from "../../utils/ids";
+import { buildClientOrderId, parseClientOrderId } from "../../core/ledger/clientOrderId";
 import type { EventBus } from "../../core/engine/eventBus";
 import type { OrderIntent, Order, Fill } from "../../types/orders";
 import type { ExecutionMode } from "../../types/common";
@@ -69,8 +70,9 @@ export class AlpacaOrderExecutionAdapter {
     const body: Record<string, unknown> = {
       // Alpaca echoes this value on trade_updates. Internal reservations and
       // persistence are keyed by the intent id, so omitting it makes fills
-      // impossible to correlate with the submitted order.
-      client_order_id: intent.id,
+      // impossible to correlate with the submitted order. Prefixed with the run
+      // id, so Alpaca's own records say which run sent each order.
+      client_order_id: buildClientOrderId(intent.id, intent.runId),
       symbol: intent.symbol,
       qty: String(intent.qty),
       side: intent.side,
@@ -215,12 +217,12 @@ export class AlpacaOrderExecutionAdapter {
    * state, is published exactly as the stream would have delivered it.
    * @returns number of events published
    */
-  async reconcileOrders(orders: Array<Pick<Order, "id" | "filledQty">>): Promise<number> {
+  async reconcileOrders(orders: Array<Pick<Order, "id" | "filledQty" | "clientOrderId">>): Promise<number> {
     let published = 0;
     for (const order of orders) {
       let raw: Record<string, unknown>;
       try {
-        raw = await this._fetchOrderByClientId(order.id);
+        raw = await this._fetchOrderByClientId(order.clientOrderId ?? order.id);
       } catch (err) {
         logger.warn("AlpacaOrderExecution: could not read order back for reconciliation", {
           orderId: order.id, err: String(err),
@@ -300,7 +302,8 @@ export class AlpacaOrderExecutionAdapter {
     if (!event || !order) return;
 
     const ts = nowMs();
-    const orderId = order["client_order_id"] as string ?? newId();
+    const clientOrderId = order["client_order_id"] as string | undefined;
+    const orderId = clientOrderId ? parseClientOrderId(clientOrderId).intentId : newId();
 
     switch (event) {
       case "fill":
@@ -491,6 +494,10 @@ export class AlpacaOrderExecutionAdapter {
       updatedAt: ts,
       fills: [],
       meta: intent.meta,
+      runId: intent.runId,
+      signalId: intent.signalId,
+      clientOrderId: (raw["client_order_id"] as string | undefined) ?? buildClientOrderId(intent.id, intent.runId),
+      decisionPrice: intent.decisionPrice,
     };
   }
 }

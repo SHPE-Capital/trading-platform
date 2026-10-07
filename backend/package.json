@@ -12,6 +12,7 @@
     "dev:backtest": "nodemon --exec ts-node src/runtime/backtest.ts",
     "dev:replay": "nodemon --exec ts-node src/runtime/replay.ts",
     "data:pull": "ts-node src/runtime/dataPull.ts",
+    "broker:backfill": "ts-node src/runtime/backfillBroker.ts",
     "build": "tsc",
     "typecheck": "tsc --noEmit -p tsconfig.spec.json",
     "start": "node dist/index.js",

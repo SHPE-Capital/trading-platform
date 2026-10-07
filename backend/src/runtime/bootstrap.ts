@@ -51,6 +51,18 @@ import { BrokerPreflightError, runBrokerPreflight } from "../core/broker/brokerP
 import { AlpacaClockHours, alwaysOpen, type AlpacaClock } from "../core/market/marketHours";
 import { findBrokerAccount, registerBrokerAccount } from "../adapters/supabase/brokerAccountRepository";
 import { PROTECTED_BROKER_ACCOUNTS } from "../config/protectedAccounts";
+import { AlpacaBroker } from "../adapters/alpaca/alpacaBroker";
+import { SimBroker } from "../adapters/sim/simBroker";
+import { JournaledExecutionSink } from "../core/execution/journaledExecution";
+import { BrokerSyncService } from "../core/ledger/brokerSync";
+import { LedgerMaintainer } from "../core/ledger/ledgerMaintainer";
+import {
+  SupabaseLedgerStore,
+  SupabaseOrderJournal,
+  insertRuntimeFill,
+  markOrderSubmitted,
+} from "../adapters/supabase/ledgerRepository";
+import type { IBroker } from "../core/broker/IBroker";
 import { SupabaseBarCache } from "../adapters/supabase/barCacheRepository";
 import { PairsStrategy } from "../strategies/pairs/pairsStrategy";
 import { createPairsConfig } from "../strategies/pairs/pairsConfig";
@@ -59,8 +71,6 @@ import { attachWebSocketServer } from "../app/websocket";
 import { env, type ExecutionTarget } from "../config/env";
 import { DEFAULT_SNAPSHOT_INTERVAL_MS } from "../config/defaults";
 import {
-  insertOrder,
-  insertFill,
   updateOrder,
   insertPortfolioSnapshot,
   insertStrategyRun,
@@ -80,7 +90,10 @@ import type { IStrategy } from "../strategies/base/strategy";
 import type {
   OrderSubmittedEvent,
   OrderFilledEvent,
+  OrderPartialFillEvent,
   OrderCanceledEvent,
+  OrderRejectedEvent,
+  OrderExpiredEvent,
   StrategyErrorEvent,
   StrategyRecoveredEvent,
   StrategyAutoDisabledEvent,
@@ -190,10 +203,41 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
   // Orders: a sim book fills locally on the next bar; the alpaca targets send
   // them to the account the check above resolved.
   const orderAdapter = target === "sim" ? null : new AlpacaOrderExecutionAdapter(eventBus, mode);
-  const sink = orderAdapter
+  const brokerSink = orderAdapter
     ? sinkFactory(orderAdapter)
     : new SimulatedExecutionSink(eventBus, symbolState, mode, 5, 0.005, {});
+  // Every order is written to the ledger before it is sent; if it cannot be,
+  // it is not sent (core/execution/journaledExecution.ts).
+  const sink = new JournaledExecutionSink(
+    brokerSink,
+    new SupabaseOrderJournal(brokerAccount, isPaper),
+    (intent, err) => eventBus.publish({
+      id: newId(), type: "RISK_REJECTED", ts: nowMs(), mode,
+      strategyId: intent.strategyId,
+      reason: err.message,
+      failedCheck: "JOURNAL_UNAVAILABLE",
+      rejectedIntent: intent,
+    }),
+  );
   const executionEngine = new ExecutionEngine(sink);
+
+  // The broker's own records, read for the ledger sync, drift, and account views.
+  const broker: IBroker = orderAdapter
+    ? new AlpacaBroker(brokerAccount, alpacaTradingBaseUrl(mode), tradingCreds)
+    : new SimBroker(brokerAccount, initialCapital, (symbol) => {
+      const s = symbolState.get(symbol);
+      return s?.latestMid ?? s?.latestBar?.close ?? null;
+    });
+  const ledgerStore = new SupabaseLedgerStore();
+  const ledger = new LedgerMaintainer({
+    broker,
+    // A sim book writes its own fills; only a real broker needs copying from.
+    sync: orderAdapter ? new BrokerSyncService(broker, ledgerStore, { isPaper }) : null,
+    driftStore: ledgerStore,
+    eventBus,
+    mode,
+    intervalMs: env.brokerSyncIntervalMs,
+  });
 
   // Orders are only sent during the regular session. Alpaca's clock knows
   // holidays; a replayed session is in-session by construction.
@@ -349,6 +393,7 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
   }
 
   orchestrator.start();
+  ledger.start();
 
   // This process is now trading. Claim the clock so that a backtest started
   // here by any path fails loudly instead of silently feeding simulated time to
@@ -371,36 +416,44 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
   // ------------------------------------------------------------------
   // Persistence hooks — fire-and-forget; DB errors never crash the engine
   // ------------------------------------------------------------------
+  // The order row was journaled before sending; these record what happened to
+  // it. For an Alpaca book the fill rows come from the broker sync (keyed on
+  // Alpaca's execution ids); a sim book is its own broker and writes them here.
   eventBus.on<OrderSubmittedEvent>("ORDER_SUBMITTED", (event) => {
-    insertOrder(event.payload, isPaper).catch((err) =>
-      logger.error("persistence: insertOrder failed", { err }),
+    markOrderSubmitted(event.payload).catch((err) =>
+      logger.error("persistence: markOrderSubmitted failed", { err: String(err) }),
     );
   });
 
-  eventBus.on<OrderFilledEvent>("ORDER_FILLED", (event) => {
-    insertFill(event.fill, isPaper).catch((err) =>
-      logger.error("persistence: insertFill failed", { err }),
-    );
+  const onFill = (event: OrderFilledEvent | OrderPartialFillEvent, terminal: boolean): void => {
+    // The orchestrator applied the fill first, so the order holds the cumulative quantity.
+    const order = orderState.getOrder(event.orderId);
     updateOrder(event.orderId, {
-      status: "filled",
-      filledQty: event.fill.qty,
-      avgFillPrice: event.fill.price,
-      closedAt: event.fill.ts,
+      status: terminal ? "filled" : "partial_fill",
+      filledQty: order?.filledQty ?? event.fill.qty,
+      avgFillPrice: order?.avgFillPrice ?? event.fill.price,
       updatedAt: event.fill.ts,
-    }).catch((err) =>
-      logger.error("persistence: updateOrder (filled) failed", { err }),
-    );
-  });
+      ...(terminal ? { closedAt: event.fill.ts } : {}),
+    }).catch((err) => logger.error("persistence: updateOrder (fill) failed", { err }));
+    if (orderAdapter) {
+      ledger.requestSoon();
+    } else {
+      insertRuntimeFill(event.fill, order, brokerAccount, isPaper).catch((err) =>
+        logger.error("persistence: insertRuntimeFill failed", { err: String(err) }),
+      );
+    }
+  };
+  eventBus.on<OrderFilledEvent>("ORDER_FILLED", (event) => onFill(event, true));
+  eventBus.on<OrderPartialFillEvent>("ORDER_PARTIAL_FILL", (event) => onFill(event, false));
 
-  eventBus.on<OrderCanceledEvent>("ORDER_CANCELED", (event) => {
-    updateOrder(event.orderId, {
-      status: "canceled",
-      updatedAt: event.ts,
-      closedAt: event.ts,
-    }).catch((err) =>
-      logger.error("persistence: updateOrder (canceled) failed", { err }),
+  const onClosed = (status: "canceled" | "rejected" | "expired") => (event: { orderId: string; ts: number }): void => {
+    updateOrder(event.orderId, { status, updatedAt: event.ts, closedAt: event.ts }).catch((err) =>
+      logger.error(`persistence: updateOrder (${status}) failed`, { err }),
     );
-  });
+  };
+  eventBus.on<OrderCanceledEvent>("ORDER_CANCELED", onClosed("canceled"));
+  eventBus.on<OrderRejectedEvent>("ORDER_REJECTED", onClosed("rejected"));
+  eventBus.on<OrderExpiredEvent>("ORDER_EXPIRED", onClosed("expired"));
 
   // Error streaks are persisted so the UI can show a strategy degrading before
   // the runner disables it.
@@ -449,6 +502,8 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
       failedCheck: event.failedCheck ?? "UNKNOWN",
       reason: event.reason,
       intent: event.rejectedIntent,
+      signalId: event.rejectedIntent?.signalId ?? null,
+      runId: event.rejectedIntent?.runId ?? null,
     });
   });
 
@@ -460,11 +515,13 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
       failedCheck: "CAPITAL_UNAVAILABLE",
       reason: `Needed $${event.required.toFixed(2)}; $${event.available.toFixed(2)} unreserved`,
       intent: { intentId: event.intentId, required: event.required, available: event.available },
+      signalId: event.signalId ?? null,
+      runId: event.runId ?? null,
     });
   });
 
   const snapshotTimer = setInterval(() => {
-    insertPortfolioSnapshot(portfolioState.getSnapshot()).catch((err) =>
+    insertPortfolioSnapshot(portfolioState.getSnapshot(), brokerAccount).catch((err) =>
       logger.error("persistence: insertPortfolioSnapshot failed", { err }),
     );
   }, DEFAULT_SNAPSHOT_INTERVAL_MS);
@@ -481,6 +538,8 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
     executionMode: mode,
     executionTarget: target,
     brokerAccount,
+    broker,
+    ledgerStore,
     liveRuns,
   });
   const server = http.createServer(app);
@@ -508,6 +567,7 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
     marketDataAdapter.disconnect();
     orderAdapter?.disconnect();
     clockHours?.stop();
+    ledger.stop();
     await rejections.stop();
     // Hand leases back so a successor adopts these runs now instead of after
     // they lapse. The rows stay "running" — they are paused, not stopped.

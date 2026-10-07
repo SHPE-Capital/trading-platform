@@ -61,13 +61,13 @@ export async function updateOrder(orderId: UUID, updates: Partial<Order>): Promi
   if (error) logger.error("updateOrder failed", { error: error.message, orderId });
 }
 
-/** Fetches all orders for a given strategy run. */
+/** Fetches all orders a strategy run sent, oldest first. */
 export async function getOrdersByStrategyRun(strategyRunId: UUID): Promise<Order[]> {
   const supabase = getSupabaseClient();
   const { data, error } = await supabase
     .from("orders")
     .select("*")
-    .eq("strategy_id", strategyRunId)
+    .eq("run_id", strategyRunId)
     .order("submitted_at", { ascending: true });
   if (error) {
     logger.error("getOrdersByStrategyRun failed", { error: error.message });
@@ -119,29 +119,46 @@ export async function insertFill(fill: Fill, isPaper = true): Promise<void> {
 const READ_PAGE_SIZE = 1000;
 
 /**
- * Every fill of the orders a run placed, oldest first. Orders carry the
- * strategy's config id rather than the run id, so the run's start time is what
- * separates it from earlier runs of the same strategy. Throws on a read error:
- * a caller rebuilding positions must not mistake a failed read for "flat".
+ * Every fill of the orders a run placed, oldest first. Fills carry their run
+ * (0016); fills from before that are matched the old way — orders carry the
+ * strategy's config id, and the run's start time separates it from earlier
+ * runs of the same strategy. Throws on a read error: a caller rebuilding
+ * positions must not mistake a failed read for "flat".
  */
 export async function getFillsForRun(
-  run: Pick<StrategyRun, "strategyId" | "startedAt" | "config">,
+  run: Pick<StrategyRun, "id" | "strategyId" | "startedAt" | "config">,
   isPaper: boolean,
 ): Promise<Fill[]> {
   const supabase = getSupabaseClient();
+  const byRun = await readFillPages((from, to) => supabase
+    .from("fills")
+    .select("*")
+    .eq("run_id", run.id)
+    .eq("is_paper", isPaper)
+    .order("ts", { ascending: true })
+    .order("id", { ascending: true })
+    .range(from, to));
+  if (byRun.length > 0) return byRun;
+
   const strategyKey = (run.config as { id?: string } | undefined)?.id ?? run.strategyId;
   const since = new Date(run.startedAt ?? 0).toISOString();
+  return readFillPages((from, to) => supabase
+    .from("fills")
+    .select("*, orders!inner(strategy_id, submitted_at)")
+    .eq("orders.strategy_id", strategyKey)
+    .gte("orders.submitted_at", since)
+    .eq("is_paper", isPaper)
+    .order("ts", { ascending: true })
+    .order("id", { ascending: true })
+    .range(from, to));
+}
+
+async function readFillPages(
+  page: (from: number, to: number) => PromiseLike<{ data: unknown[] | null; error: { message: string } | null }>,
+): Promise<Fill[]> {
   const fills: Fill[] = [];
   for (let from = 0; ; from += READ_PAGE_SIZE) {
-    const { data, error } = await supabase
-      .from("fills")
-      .select("*, orders!inner(strategy_id, submitted_at)")
-      .eq("orders.strategy_id", strategyKey)
-      .gte("orders.submitted_at", since)
-      .eq("is_paper", isPaper)
-      .order("ts", { ascending: true })
-      .order("id", { ascending: true })
-      .range(from, from + READ_PAGE_SIZE - 1);
+    const { data, error } = await page(from, from + READ_PAGE_SIZE - 1);
     if (error) throw new Error(`getFillsForRun failed: ${error.message}`);
     const rows = (data ?? []) as Record<string, unknown>[];
     for (const row of rows) {
@@ -168,7 +185,7 @@ export async function getFillsForRun(
 // ------------------------------------------------------------------
 
 /** Persists a portfolio snapshot to the database. */
-export async function insertPortfolioSnapshot(snapshot: PortfolioSnapshot): Promise<void> {
+export async function insertPortfolioSnapshot(snapshot: PortfolioSnapshot, brokerAccount?: string): Promise<void> {
   const supabase = getSupabaseClient();
   const { error } = await supabase.from("portfolio_snapshots").insert({
     id:                   snapshot.id,
@@ -183,6 +200,7 @@ export async function insertPortfolioSnapshot(snapshot: PortfolioSnapshot): Prom
     return_pct:           snapshot.returnPct,
     positions:            snapshot.positions,
     position_count:       snapshot.positionCount,
+    ...(brokerAccount ? { broker_account: brokerAccount } : {}),
     // snapshot.isoTs and snapshot.strategyBreakdowns are not DB columns
     // strategy_run_id is not populated here (no run context at snapshot time)
   });

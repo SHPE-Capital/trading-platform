@@ -4,6 +4,8 @@ import type { PortfolioStateManager } from "../core/state/portfolioState";
 import type { ReplayEngine } from "../core/replay/replayEngine";
 import type { RiskEngine } from "../core/risk/riskEngine";
 import type { LiveRunCoordinator } from "../core/live/liveRunCoordinator";
+import type { IBroker } from "../core/broker/IBroker";
+import type { SupabaseLedgerStore } from "../adapters/supabase/ledgerRepository";
 
 /** Minimal interface for subscribing to market data symbols at runtime. */
 export interface MarketDataSubscriber {
@@ -24,6 +26,10 @@ export interface AppContext {
   executionTarget?: string;
   /** Broker account a trading runtime resolved at boot (Alpaca account number or sim:<host>). */
   brokerAccount?: string;
+  /** Read side of that account (Alpaca, or the local sim book). */
+  broker?: IBroker;
+  /** Ledger storage, for drift reads. */
+  ledgerStore?: SupabaseLedgerStore;
   /**
    * Lease-holding run registry of a trading runtime (Part 05). Starting a run
    * goes through it so the run is warmed up and leased to this process;

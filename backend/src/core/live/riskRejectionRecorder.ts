@@ -18,6 +18,8 @@ export interface RejectionInput {
   failedCheck: string;
   reason: string | null;
   intent: unknown;
+  signalId?: string | null;
+  runId?: string | null;
 }
 
 export interface RiskRejectionRecorderDeps {
@@ -102,6 +104,8 @@ export class RiskRejectionRecorder {
           failed_check: r.failedCheck,
           reason: r.reason,
           intent: r.intent ?? null,
+          ...(r.signalId ? { signal_id: r.signalId } : {}),
+          ...(r.runId ? { run_id: r.runId } : {}),
         });
       }
       await this.deps.insert(rows);

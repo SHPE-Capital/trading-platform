@@ -32,6 +32,7 @@ import {
   type FillModelConfig,
 } from "./fillModel";
 import type { IExecutionSink } from "./IExecutionSink";
+import { buildClientOrderId } from "../ledger/clientOrderId";
 import type { OrderIntent, Order, Fill } from "../../types/orders";
 import type { ExecutionMode, Symbol } from "../../types/common";
 import type { Bar } from "../../types/market";
@@ -121,6 +122,10 @@ export class SimulatedExecutionSink implements IExecutionSink {
       submittedAt: ts,
       updatedAt: ts,
       fills: [],
+      runId: intent.runId,
+      signalId: intent.signalId,
+      clientOrderId: buildClientOrderId(intent.id, intent.runId),
+      decisionPrice: intent.decisionPrice,
     };
 
     const list = this.pending.get(intent.symbol) ?? [];
