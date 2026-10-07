@@ -29,6 +29,9 @@ import { planBackfill, type PlannedRun } from "../core/ledger/backfillPlan";
 import { computeDrift, checkDrift } from "../core/ledger/driftCheck";
 import { positionsFromFills } from "../core/ledger/positions";
 import { newId } from "../utils/ids";
+import { RunStatsService } from "../core/analytics/runStatsService";
+import { loadRunLedger, runIdsForOrders, upsertRunStats } from "../adapters/supabase/analyticsRepository";
+import { getStrategyRunById } from "../adapters/supabase/repositories";
 
 const IN_CHUNK = 150;
 
@@ -221,6 +224,19 @@ async function main(): Promise<void> {
       new Set(),
     )
     : await checkDrift(account, brokerPositions, ledger);
+  if (!args.dryRun) {
+    // Every run with orders in this history gets its stats rebuilt from the ledger.
+    const runIds = await runIdsForOrders(orders.map((o) => o.id));
+    const marks = new Map(brokerPositions.map((p) => [p.symbol, p.currentPrice]));
+    const stats = await new RunStatsService({ getRun: getStrategyRunById, loadLedger: loadRunLedger, upsert: upsertRunStats })
+      .refresh(runIds, marks);
+    console.log("\nRun stats:");
+    for (const s of stats) {
+      console.log(`  ${s.runId}: ${s.orders} orders, ${s.fills} fills, ${s.closedTrades} trades, `
+        + `realized ${s.realizedPnl.toFixed(2)}, unrealized ${s.unrealizedPnl.toFixed(2)}`);
+    }
+  }
+
   console.log("\nDrift (positions not held by a running run):");
   for (const r of drift) {
     console.log(`  ${r.symbol}: broker ${r.brokerQty}, stopped runs ${r.stoppedQty}, unattributed ${r.unattributedQty}`);

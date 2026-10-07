@@ -31,6 +31,9 @@
 
 import type { PortfolioSnapshot } from "../../types/portfolio";
 
+/** All the analytics read from a curve point — a backtest snapshot or a live run's PnL curve. */
+export type EquityPoint = Pick<PortfolioSnapshot, "ts" | "equity">;
+
 const MIN_PERIODS_FOR_RATIOS = 4;
 const MS_PER_YEAR = 365.25 * 24 * 3_600_000;
 const MS_PER_DAY = 24 * 3_600_000;
@@ -42,7 +45,7 @@ const VARIANCE_EPS = 1e-12;
  * market-neutral strategies (e.g. pairs trading with near-zero net exposure)
  * does not inflate the period count or drive stdev toward zero.
  */
-function _dailyReturns(equityCurve: PortfolioSnapshot[]): number[] {
+function _dailyReturns(equityCurve: EquityPoint[]): number[] {
   if (equityCurve.length < 2) return [];
   const byDay = new Map<number, number>();
   for (const snap of equityCurve) {
@@ -65,7 +68,7 @@ function _dailyReturns(equityCurve: PortfolioSnapshot[]): number[] {
  * Appropriate for intraday/HFT strategies (e.g. Avellaneda-Stoikov) where
  * the relevant risk unit is the bar interval, not the calendar day.
  */
-function _perBarReturns(equityCurve: PortfolioSnapshot[]): number[] {
+function _perBarReturns(equityCurve: EquityPoint[]): number[] {
   if (equityCurve.length < 2) return [];
   const returns: number[] = [];
   for (let i = 1; i < equityCurve.length; i++) {
@@ -160,7 +163,7 @@ export interface AnalyticsResult {
  *                         compute the benchmark return.
  */
 export function computeAnalytics(
-  equityCurve: PortfolioSnapshot[],
+  equityCurve: EquityPoint[],
   tradePnls: number[],
   periodStart: number,
   periodEnd: number,

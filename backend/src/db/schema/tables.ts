@@ -52,9 +52,7 @@ export interface StrategyRunsRow {
   execution_mode: string;   // "live" | "paper" | "backtest" | "replay"
   started_at: string | null;
   stopped_at: string | null;
-  total_signals: number;
-  total_orders: number;
-  realized_pnl: number;
+  allocated_capital: number | null;
   meta: object | null;
   created_at: string;
 }

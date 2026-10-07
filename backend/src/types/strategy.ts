@@ -8,6 +8,7 @@
  * Outputs: StrategySignal or OrderIntent emitted to the execution pipeline.
  */
 
+import type { StrategyRunStats } from "./analytics";
 import type { UUID, EpochMs, Symbol, Metadata, ExecutionAlgoType, SizerType } from "./common";
 import type { StrategyRiskBudget } from "./risk";
 
@@ -119,38 +120,6 @@ export interface StrategySignal {
 }
 
 // ------------------------------------------------------------------
-// Strategy Runtime State
-// ------------------------------------------------------------------
-
-/** Snapshot of a strategy's current runtime state */
-export interface StrategyRuntimeState {
-  /** Strategy instance ID */
-  id: UUID;
-  /** Strategy type */
-  type: StrategyType;
-  /** Human-readable name */
-  name: string;
-  /** Lifecycle status */
-  status: StrategyRunStatus;
-  /** When this strategy run started */
-  startedAt?: EpochMs;
-  /** When this strategy run stopped */
-  stoppedAt?: EpochMs;
-  /** Number of signals generated this run */
-  signalCount: number;
-  /** Number of orders placed this run */
-  orderCount: number;
-  /** Realized PnL this run */
-  realizedPnl: number;
-  /** Last signal generated */
-  lastSignal?: StrategySignal;
-  /** Last error if status is "error" */
-  lastError?: string;
-  /** Strategy-specific state snapshot (serializable) */
-  internalState?: Record<string, unknown>;
-}
-
-// ------------------------------------------------------------------
 // Strategy Run Record (persisted)
 // ------------------------------------------------------------------
 
@@ -176,9 +145,17 @@ export interface StrategyRun {
   stoppedAt?: EpochMs;
   /** Automatic stop time for self-service paper sandbox runs. */
   expiresAt?: EpochMs | null;
-  totalSignals: number;
-  totalOrders: number;
-  realizedPnl: number;
+  /**
+   * Derived from the ledger (strategy_run_stats), never stored on the run.
+   * Kept as flat fields for the run cards; `stats` has the full breakdown.
+   */
+  totalSignals?: number;
+  totalOrders?: number;
+  realizedPnl?: number;
+  unrealizedPnl?: number;
+  stats?: StrategyRunStats;
+  /** Capital set aside when the run started; the denominator of its returns. */
+  allocatedCapital?: number | null;
   meta?: Metadata;
 
   /**

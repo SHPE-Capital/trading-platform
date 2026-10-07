@@ -14,6 +14,8 @@
  */
 
 import type { Request, Response } from "express";
+import { insertRunEvent } from "../../adapters/supabase/analyticsRepository";
+import { allocatedCapital } from "../../core/analytics/runPerformance";
 import {
   insertStrategyVersion,
   getStrategyVersions,
@@ -404,7 +406,7 @@ export async function approveProposal(req: Request, res: Response): Promise<void
     return;
   }
 
-  const { orchestrator, liveRuns, executionMode } = req.app.locals.ctx as AppContext;
+  const { orchestrator, liveRuns, executionMode, portfolioState } = req.app.locals.ctx as AppContext;
   if (!orchestrator || !liveRuns) {
     res.status(503).json({
       error: "Orchestrator not available in this runtime mode",
@@ -536,12 +538,10 @@ export async function approveProposal(req: Request, res: Response): Promise<void
       buildSha: env.buildSha,
       buildDirty: env.buildDirty,
       startedAt: nowMs(),
-      totalSignals: 0,
-      totalOrders: 0,
-      realizedPnl: 0,
       versionId: version.id,
       proposalId: proposal.id,
       ownerId: proposal.requestedBy,
+      allocatedCapital: allocatedCapital(config as { riskBudget?: { maxCapitalPct?: number } }, portfolioState?.getSnapshot().equity),
       ...liveRuns.leaseFields(),
     };
     // Persist before trading: a crash between the two leaves a leased running
@@ -562,6 +562,8 @@ export async function approveProposal(req: Request, res: Response): Promise<void
   }
 
   liveRuns.activate(runId, strategy);
+  insertRunEvent(runId, "STARTED", `approved by ${req.user!.email ?? req.user!.id}`)
+    .catch((err) => logger.warn("approveProposal: run event not recorded", { runId, err: String(err) }));
 
   // The run is live; a note that fails to post must not undo that.
   if (note && note.trim()) {

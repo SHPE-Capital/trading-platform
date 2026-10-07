@@ -22,6 +22,7 @@ import {
 } from "../controllers/strategiesController";
 import { listVersions, createVersion } from "../controllers/proposalsController";
 import { requireAuth } from "../middleware/requireAuth";
+import { getStrategyPerformance } from "../controllers/performanceController";
 
 const router = Router();
 
@@ -66,6 +67,9 @@ router.post("/:id/stop", requireAuth, stopStrategyRun);
 
 /** GET /api/strategies/:strategyId/versions — full config history */
 router.get("/:strategyId/versions", requireAuth, listVersions);
+
+/** GET /api/strategies/:strategyId/performance — lifetime performance across every run of a saved strategy */
+router.get("/:strategyId/performance", requireAuth, getStrategyPerformance);
 
 /** POST /api/strategies/:strategyId/versions — append an immutable edit */
 router.post("/:strategyId/versions", requireAuth, createVersion);

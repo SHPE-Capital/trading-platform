@@ -18,6 +18,8 @@ import authRoutes from "./authRoutes";
 import governanceRoutes from "./governanceRoutes";
 import replayRoutes from "./replayRoutes";
 import marketDataRoutes from "./marketDataRoutes";
+import runsRoutes from "./runsRoutes";
+import brokerRoutes from "./brokerRoutes";
 
 const router = Router();
 
@@ -30,5 +32,7 @@ router.use("/auth", authRoutes);
 router.use("/governance", governanceRoutes);
 router.use("/replay", replayRoutes);
 router.use("/market-data", marketDataRoutes);
+router.use("/runs", runsRoutes);
+router.use("/broker", brokerRoutes);
 
 export default router;

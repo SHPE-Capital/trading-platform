@@ -29,7 +29,8 @@ const REQUIRED_RELATIONS = [
   "proposal_comments", "backtest_results", "backtest_orders", "backtest_fills", "backtest_jobs",
   "backtest_job_artifacts", "bars", "bar_coverage", "risk_rejections", "orders", "fills",
   "portfolio_snapshots", "pending_approvals", "proposal_timeline", "proposal_summaries",
-  "member_contention_daily", "broker_accounts",
+  "member_contention_daily", "broker_accounts", "broker_fees", "broker_sync_state", "broker_drift",
+  "signals", "ledger_run_positions", "run_snapshots", "strategy_run_stats", "run_events",
 ];
 
 const BACKEND_FUNCTIONS = [

@@ -12,7 +12,7 @@ import { newId } from "../../utils/ids";
 import { nowMs } from "../../utils/time";
 import { checkDrift, type DriftRow, type DriftStore } from "./driftCheck";
 import type { BrokerSyncService } from "./brokerSync";
-import type { IBroker } from "../broker/IBroker";
+import type { BrokerPosition, IBroker } from "../broker/IBroker";
 import type { EventBus } from "../engine/eventBus";
 import type { ExecutionMode } from "../../types/common";
 
@@ -25,6 +25,8 @@ export interface LedgerMaintainerDeps {
   intervalMs: number;
   /** Delay before a requested pass, so a burst of fills is synced once. */
   debounceMs?: number;
+  /** After each pass: the broker's positions and the ledger orders the sync wrote. */
+  afterPass?(positions: BrokerPosition[], touchedOrderIds: string[]): Promise<void>;
 }
 
 export class LedgerMaintainer {
@@ -78,8 +80,10 @@ export class LedgerMaintainer {
   private async _pass(): Promise<void> {
     const { broker, sync, driftStore } = this.deps;
     try {
+      let touched: string[] = [];
       if (sync) {
         const result = await sync.syncOnce();
+        touched = result.touchedOrderIds;
         if (result.unattributedOrders > 0) {
           logger.warn("LedgerMaintainer: broker has orders no run sent", {
             account: broker.accountId, count: result.unattributedOrders,
@@ -89,6 +93,7 @@ export class LedgerMaintainer {
       const positions = await broker.getPositions();
       const rows = await checkDrift(broker.accountId, positions, driftStore);
       this._reportDrift(rows);
+      await this.deps.afterPass?.(positions, touched);
     } catch (err) {
       logger.error("LedgerMaintainer: ledger pass failed", { account: broker.accountId, err: String(err) });
     }

@@ -14,6 +14,7 @@ import type { PortfolioSnapshot } from "../../types/portfolio";
 import type { StrategyRun, Strategy } from "../../types/strategy";
 import type { BacktestConfig, BacktestResult } from "../../types/backtest";
 import type { UUID } from "../../types/common";
+import { mapRunStats } from "./analyticsRepository";
 
 // ------------------------------------------------------------------
 // Orders
@@ -293,6 +294,23 @@ function msOrNull(value: unknown): number | null {
   return value ? new Date(value as string).getTime() : null;
 }
 
+/** Run reads embed the run's derived stats (0017) as `strategy_run_stats`. */
+const RUN_SELECT = "*, strategy_run_stats(*)";
+
+/** Flat card fields plus the full stats, from an embedded strategy_run_stats row. */
+function runStatsFields(embedded: unknown): Pick<StrategyRun, "totalSignals" | "totalOrders" | "realizedPnl" | "unrealizedPnl" | "stats"> {
+  const row = (Array.isArray(embedded) ? embedded[0] : embedded) as Record<string, unknown> | null | undefined;
+  if (!row) return { totalSignals: 0, totalOrders: 0, realizedPnl: 0, unrealizedPnl: 0 };
+  const stats = mapRunStats(row);
+  return {
+    totalSignals: stats.signals,
+    totalOrders: stats.orders,
+    realizedPnl: stats.realizedPnl,
+    unrealizedPnl: stats.unrealizedPnl,
+    stats,
+  };
+}
+
 // Maps a raw Supabase row (snake_case) to the camelCase StrategyRun type.
 export function mapStrategyRun(row: Record<string, unknown>): StrategyRun {
   return {
@@ -311,9 +329,9 @@ export function mapStrategyRun(row: Record<string, unknown>): StrategyRun {
     startedAt: row.started_at ? new Date(row.started_at as string).getTime() : undefined,
     stoppedAt: row.stopped_at ? new Date(row.stopped_at as string).getTime() : undefined,
     expiresAt: msOrNull(row.expires_at),
-    totalSignals: (row.total_signals as number) ?? 0,
-    totalOrders: (row.total_orders as number) ?? 0,
-    realizedPnl: (row.realized_pnl as number) ?? 0,
+    ...runStatsFields(row.strategy_run_stats),
+    allocatedCapital: row.allocated_capital === null || row.allocated_capital === undefined
+      ? null : Number(row.allocated_capital),
     meta: row.meta as StrategyRun["meta"],
     versionId: (row.version_id as UUID | undefined) ?? undefined,
     proposalId: (row.proposal_id as UUID | undefined) ?? undefined,
@@ -349,9 +367,7 @@ export async function insertStrategyRun(run: StrategyRun): Promise<void> {
     started_at: run.startedAt ? new Date(run.startedAt).toISOString() : null,
     stopped_at: run.stoppedAt ? new Date(run.stoppedAt).toISOString() : null,
     expires_at: run.expiresAt ? new Date(run.expiresAt).toISOString() : null,
-    total_signals: run.totalSignals,
-    total_orders: run.totalOrders,
-    realized_pnl: run.realizedPnl,
+    ...(run.allocatedCapital ? { allocated_capital: run.allocatedCapital } : {}),
     meta: run.meta ?? null,
     // Review-workflow linkage (0007). Null on runs started outside the approval
     // path, e.g. the STARTUP_LEG1/LEG2 bootstrap route.
@@ -395,9 +411,7 @@ export async function updateStrategyRun(runId: UUID, updates: Partial<StrategyRu
   if (updates.status !== undefined)       payload.status         = updates.status;
   if (updates.stoppedAt !== undefined)    payload.stopped_at     = new Date(updates.stoppedAt).toISOString();
   if (updates.expiresAt !== undefined)    payload.expires_at     = updates.expiresAt ? new Date(updates.expiresAt).toISOString() : null;
-  if (updates.totalSignals !== undefined) payload.total_signals  = updates.totalSignals;
-  if (updates.totalOrders !== undefined)  payload.total_orders   = updates.totalOrders;
-  if (updates.realizedPnl !== undefined)  payload.realized_pnl   = updates.realizedPnl;
+  if (updates.allocatedCapital !== undefined) payload.allocated_capital = updates.allocatedCapital;
   if (updates.meta !== undefined)         payload.meta           = updates.meta;
   if (updates.consecutiveErrors !== undefined) payload.consecutive_errors = updates.consecutiveErrors;
   if (updates.disabledReason !== undefined)    payload.disabled_reason    = updates.disabledReason;
@@ -414,7 +428,7 @@ export async function updateStrategyRun(runId: UUID, updates: Partial<StrategyRu
 export async function getAllStrategyRuns(): Promise<StrategyRun[]> {
   const supabase = getSupabaseClient();
   const [runsResult, strategiesResult] = await Promise.all([
-    supabase.from("strategy_runs").select("*").order("started_at", { ascending: false }),
+    supabase.from("strategy_runs").select(RUN_SELECT).order("started_at", { ascending: false }),
     supabase.from("strategies").select("id, name"),
   ]);
   if (runsResult.error) {
@@ -495,7 +509,7 @@ export async function getStrategyRunById(id: UUID): Promise<StrategyRun | null> 
   const supabase = getSupabaseClient();
   const { data, error } = await supabase
     .from("strategy_runs")
-    .select("*")
+    .select(RUN_SELECT)
     .eq("id", id)
     .single();
   if (error) {
@@ -922,4 +936,19 @@ export async function getBacktestResultById(id: UUID): Promise<BacktestResult | 
     return null;
   }
   return data as BacktestResult;
+}
+
+/** Every run of one saved strategy, oldest first, with derived stats. */
+export async function getRunsForStrategy(strategyId: UUID): Promise<StrategyRun[]> {
+  const supabase = getSupabaseClient();
+  const [runsResult, strategyResult] = await Promise.all([
+    supabase.from("strategy_runs").select(RUN_SELECT).eq("strategy_id", strategyId).order("started_at", { ascending: true }),
+    supabase.from("strategies").select("name").eq("id", strategyId).maybeSingle(),
+  ]);
+  if (runsResult.error) throw new Error(`getRunsForStrategy failed: ${runsResult.error.message}`);
+  const fallback = (strategyResult.data?.name as string | undefined) ?? "";
+  return (runsResult.data ?? []).map((row) => {
+    const r = row as Record<string, unknown>;
+    return mapStrategyRun({ ...r, name: fallback || ((r.config as Record<string, unknown>).name as string) });
+  });
 }

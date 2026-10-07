@@ -101,6 +101,8 @@ export interface SyncResult {
   fees: number;
   /** Orders the broker has that no run sent. */
   unattributedOrders: number;
+  /** Ledger ids of every order this pass wrote, for refreshing their runs' stats. */
+  touchedOrderIds: string[];
 }
 
 /** Broker order status → ledger status. */
@@ -175,6 +177,7 @@ export class BrokerSyncService {
         fills: fills.length,
         fees: fees.length,
         unattributedOrders: [...byBrokerId.values()].filter((o) => o.run_id === null).length,
+        touchedOrderIds: [...new Set([...byBrokerId.values()].map((o) => o.id))],
       };
     } catch (err) {
       await this.store.recordSyncError(account, err instanceof Error ? err.message : String(err)).catch(() => {});
@@ -235,6 +238,7 @@ export class BrokerSyncService {
   }
 
   private async _syncFills(account: string, fills: BrokerFill[], known: Map<string, LedgerOrderRow>): Promise<void> {
+    // Orders reached only through their fills are added to `known`, and so to the touched set.
     if (fills.length === 0) return;
     // A fill can belong to an order submitted before this pass's order window.
     const missing = [...new Set(fills.map((f) => f.brokerOrderId).filter((id) => !known.has(id)))];

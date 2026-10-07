@@ -407,7 +407,6 @@ describe('getAllStrategyRuns', () => {
       id: 'run-1', strategy_id: 'strat-1', strategy_type: 'pairs_trading',
       config: { name: 'Config Name' }, status: 'running', execution_mode: 'paper',
       started_at: new Date(1_000_000).toISOString(),
-      total_signals: 0, total_orders: 0, realized_pnl: 0,
     };
     const runsChain = buildChain({
       order: jest.fn().mockResolvedValue({ data: [dbRow], error: null }),
@@ -433,7 +432,7 @@ describe('getAllStrategyRuns', () => {
     const dbRow = {
       id: 'run-2', strategy_id: 'unknown-id', strategy_type: 'pairs_trading',
       config: { name: 'Config Name' }, status: 'stopped', execution_mode: 'paper',
-      started_at: null, total_signals: 0, total_orders: 0, realized_pnl: 0,
+      started_at: null,
     };
     const runsChain = buildChain({
       order: jest.fn().mockResolvedValue({ data: [dbRow], error: null }),
@@ -479,7 +478,12 @@ describe('getStrategyRunById', () => {
       id: 'run-1', strategy_id: 'strat-1', strategy_type: 'pairs_trading',
       config: { name: 'Config Name' }, status: 'running', execution_mode: 'paper',
       started_at: '1970-01-01T00:16:40.000Z',
-      total_signals: 5, total_orders: 2, realized_pnl: 100,
+      // Derived stats arrive embedded (0017), not as columns on the run.
+      strategy_run_stats: {
+        run_id: 'run-1', signals: 5, orders: 2, filled_orders: 2, fills: 2, rejections: 0, closed_trades: 1,
+        realized_pnl: 100, unrealized_pnl: 0, fees: 0, open_positions: [], last_fill_at: null,
+        updated_at: '1970-01-01T00:16:40.000Z',
+      },
     };
     mockRunsAndStrategies({ data: dbRow, error: null }, 'My Strategy');
     const result = await getStrategyRunById('run-1');
@@ -488,6 +492,8 @@ describe('getStrategyRunById', () => {
       strategyId: 'strat-1',
       startedAt: 1_000_000,
       totalSignals: 5,
+      totalOrders: 2,
+      realizedPnl: 100,
       name: 'My Strategy',
     });
   });
@@ -497,7 +503,6 @@ describe('getStrategyRunById', () => {
       id: 'run-1', strategy_id: 'unknown', strategy_type: 'pairs_trading',
       config: { name: 'Config Name' }, status: 'running', execution_mode: 'paper',
       started_at: '1970-01-01T00:16:40.000Z',
-      total_signals: 0, total_orders: 0, realized_pnl: 0,
     };
     mockRunsAndStrategies({ data: dbRow, error: null });
     const result = await getStrategyRunById('run-1');
@@ -508,7 +513,7 @@ describe('getStrategyRunById', () => {
     const dbRow = {
       id: 'run-2', strategy_id: 'strat-1', strategy_type: 'pairs_trading',
       config: { name: 'test' }, status: 'running', execution_mode: 'paper',
-      started_at: null, total_signals: 0, total_orders: 0, realized_pnl: 0,
+      started_at: null,
     };
     mockRunsAndStrategies({ data: dbRow, error: null }, 'test');
     const result = await getStrategyRunById('run-2');

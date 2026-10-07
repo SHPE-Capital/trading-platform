@@ -33,6 +33,7 @@ import { SimulatedExecutionSink } from "../execution/simulatedExecution";
 import { DEFAULT_FILL_MODEL, type FillModelConfig } from "../execution/fillModel";
 import { validateBars, type ValidationIssue } from "./dataValidation";
 import { computeAnalytics } from "./performanceAnalytics";
+import { buildTradeLedger, tradeStats } from "../analytics/tradeLedger";
 import { BacktestLoader } from "./backtestLoader";
 import { BACKTEST_RISK_CONFIG } from "../../config/defaults";
 import { logger } from "../../utils/logger";
@@ -438,72 +439,9 @@ export class BacktestEngine {
     fills: Fill[],
     initialCapital: number,
   ) {
-    // Trade-level FIFO lot accounting — unchanged from the prior revision.
-    interface Lot { price: number; qty: number; commissionPerShare: number; }
-    const longLots = new Map<string, Lot[]>();
-    const shortLots = new Map<string, Lot[]>();
-    const pnlPerTrade: number[] = [];
-
-    const consume = (
-      lots: Lot[],
-      closerQty: number,
-      closerPrice: number,
-      closerCommissionPerShare: number,
-      direction: "long" | "short",
-    ): number => {
-      let remaining = closerQty;
-      while (remaining > 0 && lots.length > 0) {
-        const lot = lots[0];
-        const slice = Math.min(lot.qty, remaining);
-        const grossPnl =
-          direction === "long"
-            ? (closerPrice - lot.price) * slice
-            : (lot.price - closerPrice) * slice;
-        const allocatedCommission =
-          slice * lot.commissionPerShare + slice * closerCommissionPerShare;
-        pnlPerTrade.push(grossPnl - allocatedCommission);
-        lot.qty -= slice;
-        remaining -= slice;
-        if (lot.qty === 0) lots.shift();
-      }
-      return closerQty - remaining;
-    };
-
-    for (const fill of fills) {
-      const commissionPerShare = fill.qty > 0 ? fill.commission / fill.qty : 0;
-      if (fill.side === "buy") {
-        const shorts = shortLots.get(fill.symbol) ?? [];
-        const closedQty = shorts.length > 0
-          ? consume(shorts, fill.qty, fill.price, commissionPerShare, "short")
-          : 0;
-        if (shorts.length > 0 || closedQty > 0) shortLots.set(fill.symbol, shorts);
-        const residual = fill.qty - closedQty;
-        if (residual > 0) {
-          const lots = longLots.get(fill.symbol) ?? [];
-          lots.push({ price: fill.price, qty: residual, commissionPerShare });
-          longLots.set(fill.symbol, lots);
-        }
-      } else {
-        const longs = longLots.get(fill.symbol) ?? [];
-        const closedQty = longs.length > 0
-          ? consume(longs, fill.qty, fill.price, commissionPerShare, "long")
-          : 0;
-        if (longs.length > 0 || closedQty > 0) longLots.set(fill.symbol, longs);
-        const residual = fill.qty - closedQty;
-        if (residual > 0) {
-          const lots = shortLots.get(fill.symbol) ?? [];
-          lots.push({ price: fill.price, qty: residual, commissionPerShare });
-          shortLots.set(fill.symbol, lots);
-        }
-      }
-    }
-
-    const totalTrades = pnlPerTrade.length;
-    const wins = pnlPerTrade.filter((p) => p > 0);
-    const losses = pnlPerTrade.filter((p) => p <= 0);
-    const winRate = totalTrades > 0 ? wins.length / totalTrades : 0;
-    const avgWin = wins.length > 0 ? wins.reduce((a, b) => a + b, 0) / wins.length : 0;
-    const avgLoss = losses.length > 0 ? losses.reduce((a, b) => a + b, 0) / losses.length : 0;
+    // Trade-level FIFO lot accounting, shared with the live run reports.
+    const pnlPerTrade = buildTradeLedger(fills).trades.map((t) => t.pnl);
+    const { totalTrades, winRate, avgWin, avgLoss } = tradeStats(pnlPerTrade);
 
     if (equityCurve.length === 0) {
       return {

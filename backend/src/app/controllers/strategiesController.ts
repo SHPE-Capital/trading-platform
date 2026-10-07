@@ -14,6 +14,8 @@ import {
 } from "../../adapters/supabase/repositories";
 import { getStrategyVersionById, insertStrategyVersion, saveStrategyVersion } from "../../adapters/supabase/reviewRepositories";
 import { STRATEGY_DEFINITIONS, STRATEGY_FACTORY } from "../../config/strategyDefaults";
+import { insertRunEvent } from "../../adapters/supabase/analyticsRepository";
+import { allocatedCapital } from "../../core/analytics/runPerformance";
 import { env } from "../../config/env";
 import { newId } from "../../utils/ids";
 import { nowMs } from "../../utils/time";
@@ -83,7 +85,7 @@ export async function startStrategyRun(req: Request, res: Response): Promise<voi
   }
   const configId = strategyId;
 
-  const { orchestrator, liveRuns, executionMode } = req.app.locals.ctx as AppContext;
+  const { orchestrator, liveRuns, executionMode, portfolioState } = req.app.locals.ctx as AppContext;
   if (!orchestrator || !liveRuns) {
     res.status(503).json({ error: "Orchestrator not available in this runtime mode" });
     return;
@@ -165,12 +167,10 @@ export async function startStrategyRun(req: Request, res: Response): Promise<voi
     buildDirty: env.buildDirty,
     startedAt: nowMs(),
     expiresAt,
-    totalSignals: 0,
-    totalOrders: 0,
-    realizedPnl: 0,
     versionId: version.id,
     ownerId: req.user!.id,
     meta: { sandbox: true },
+    allocatedCapital: allocatedCapital(effectiveConfig, portfolioState?.getSnapshot().equity),
     ...liveRuns.leaseFields(),
   };
 
@@ -190,6 +190,8 @@ export async function startStrategyRun(req: Request, res: Response): Promise<voi
   }
 
   liveRuns.activate(runId, strategy, expiresAt);
+  insertRunEvent(runId, "STARTED", `sandbox started by ${req.user!.email ?? req.user!.id}`)
+    .catch((err) => logger.warn("startStrategyRun: run event not recorded", { runId, err: String(err) }));
   logger.info("startStrategyRun: strategy started", { runId, strategyId: strategy.id, strategyType });
   res.status(201).json(run);
 }
@@ -229,6 +231,8 @@ export async function stopStrategyRun(req: Request, res: Response): Promise<void
   // runner adopt it straight back.
   try {
     await updateStrategyRun(id, { status: "stopped", stoppedAt: nowMs() });
+    insertRunEvent(id, "STOPPED", `stopped by ${req.user!.email ?? req.user!.id}`)
+      .catch((err) => logger.warn("stopStrategyRun: run event not recorded", { id, err: String(err) }));
     await liveRuns.deactivate(id);
   } catch (err) {
     logger.error("stopStrategyRun: status write failed — retaining lease", { id, err });

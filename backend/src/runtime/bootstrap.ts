@@ -63,6 +63,19 @@ import {
   markOrderSubmitted,
 } from "../adapters/supabase/ledgerRepository";
 import type { IBroker } from "../core/broker/IBroker";
+import { RunBooks } from "../core/ledger/runBooks";
+import { SignalRecorder } from "../core/live/signalRecorder";
+import { RunStatsService } from "../core/analytics/runStatsService";
+import { allocatedCapital } from "../core/analytics/runPerformance";
+import {
+  insertRunEvent,
+  insertRunSnapshots,
+  insertSignals,
+  loadRunLedger,
+  runIdsForOrders,
+  setSignalOutcome,
+  upsertRunStats,
+} from "../adapters/supabase/analyticsRepository";
 import { SupabaseBarCache } from "../adapters/supabase/barCacheRepository";
 import { PairsStrategy } from "../strategies/pairs/pairsStrategy";
 import { createPairsConfig } from "../strategies/pairs/pairsConfig";
@@ -77,6 +90,7 @@ import {
   updateStrategyRun,
   findRunningStartupRun,
   getFillsForRun,
+  getStrategyRunById,
 } from "../adapters/supabase/repositories";
 import {
   claimOrphanedRuns,
@@ -99,6 +113,10 @@ import type {
   StrategyAutoDisabledEvent,
   RiskRejectedEvent,
   CapitalUnavailableEvent,
+  StrategySignalCreatedEvent,
+  QuoteReceivedEvent,
+  TradeReceivedEvent,
+  BarReceivedEvent,
 } from "../types/events";
 import type { StrategyRun } from "../types/strategy";
 import type { Symbol } from "../types/common";
@@ -229,6 +247,15 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
       return s?.latestMid ?? s?.latestBar?.close ?? null;
     });
   const ledgerStore = new SupabaseLedgerStore();
+  // Each run's own book (the shared one nets every strategy per symbol), and
+  // its stats derived from the ledger.
+  const runBooks = new RunBooks();
+  const runStats = new RunStatsService({ getRun: getStrategyRunById, loadLedger: loadRunLedger, upsert: upsertRunStats });
+  const runEvent = (runId: string, type: string, detail: string | null = null): void => {
+    insertRunEvent(runId, type, detail).catch((err) => logger.warn("persistence: run event not recorded", { runId, type, err: String(err) }));
+  };
+  // Runs held at the last pass, so a run that just stopped gets one final refresh.
+  let lastHeld: string[] = [];
   const ledger = new LedgerMaintainer({
     broker,
     // A sim book writes its own fills; only a real broker needs copying from.
@@ -237,6 +264,19 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
     eventBus,
     mode,
     intervalMs: env.brokerSyncIntervalMs,
+    afterPass: async (positions, touchedOrderIds) => {
+      const marks = new Map<string, number>();
+      for (const p of positions) marks.set(p.symbol, p.currentPrice);
+      for (const symbol of symbolState.getSymbols()) {
+        const s = symbolState.get(symbol);
+        const price = s?.latestMid ?? s?.latestBar?.close;
+        if (price) marks.set(symbol, price);
+      }
+      const held = liveRuns.heldRuns();
+      const touchedRuns = touchedOrderIds.length > 0 ? await runIdsForOrders(touchedOrderIds) : [];
+      await runStats.refresh([...held, ...lastHeld, ...touchedRuns], marks);
+      lastHeld = held;
+    },
   });
 
   // Orders are only sent during the regular session. Alpaca's clock knows
@@ -296,7 +336,11 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
     // run as if flat while the broker still holds its positions.
     restorePositions: async (run) => {
       const fills = await getFillsForRun(run, isPaper);
-      for (const fill of fills) portfolioState.applyFill(fill);
+      for (const fill of fills) {
+        portfolioState.applyFill(fill);
+        runBooks.applyFill(run.id, fill);
+      }
+      runEvent(run.id, "ADOPTED", `by ${owner}; ${fills.length} fills restored`);
       return fills.length;
     },
     brokerAccount,
@@ -344,16 +388,15 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
         buildSha: env.buildSha,
         buildDirty: env.buildDirty,
         startedAt: nowMs(),
-        totalSignals: 0,
-        totalOrders: 0,
-        realizedPnl: 0,
         meta: { startupKey },
+        allocatedCapital: allocatedCapital(pairsConfig as { riskBudget?: { maxCapitalPct?: number } }, portfolioState.getSnapshot().equity),
         ...liveRuns.leaseFields(),
       };
       try {
         await insertStrategyRun(run);
         await liveRuns.prepare(strategy);
         liveRuns.activate(startupRunId, strategy);
+        runEvent(startupRunId, "STARTED", `startup strategy on ${owner}`);
         logger.info(`bootstrap: startup strategy active [${startupLeg1}/${startupLeg2}]`, { runId: startupRunId });
       } catch (err) {
         // Without a persisted, leased row this runner has no claim to trade it.
@@ -408,6 +451,8 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
         if (lost.length > 0 || newlyAdopted.length > 0 || expired.length > 0) {
           logger.info("bootstrap: lease maintenance", { lost, adopted: newlyAdopted, expired });
         }
+        for (const id of lost) runEvent(id, "LEASE_LOST", `${owner} lost the lease; another runner holds it`);
+        for (const id of expired) runEvent(id, "EXPIRED", "sandbox lifetime reached");
       },
       (err) => logger.error("bootstrap: lease maintenance failed", { err: String(err) }),
     );
@@ -428,6 +473,7 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
   const onFill = (event: OrderFilledEvent | OrderPartialFillEvent, terminal: boolean): void => {
     // The orchestrator applied the fill first, so the order holds the cumulative quantity.
     const order = orderState.getOrder(event.orderId);
+    if (order?.runId) runBooks.applyFill(order.runId, event.fill);
     updateOrder(event.orderId, {
       status: terminal ? "filled" : "partial_fill",
       filledQty: order?.filledQty ?? event.fill.qty,
@@ -459,12 +505,14 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
   // the runner disables it.
   eventBus.on<StrategyErrorEvent>("STRATEGY_ERROR", (event) => {
     if (!event.runKey || event.consecutiveErrors === undefined) return;
+    if (event.consecutiveErrors === 1) runEvent(event.runKey, "ERROR", `${event.phase}: ${event.error}`);
     updateStrategyRun(event.runKey, { consecutiveErrors: event.consecutiveErrors }).catch((err) =>
       logger.error("persistence: consecutive_errors update failed", { err }),
     );
   });
 
   eventBus.on<StrategyRecoveredEvent>("STRATEGY_RECOVERED", (event) => {
+    runEvent(event.runKey, "RECOVERED");
     updateStrategyRun(event.runKey, { consecutiveErrors: 0 }).catch((err) =>
       logger.error("persistence: consecutive_errors reset failed", { err }),
     );
@@ -472,6 +520,7 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
 
   eventBus.on<StrategyAutoDisabledEvent>("STRATEGY_AUTO_DISABLED", (event) => {
     const reason = `Auto-disabled after ${event.consecutiveErrors} consecutive errors. Last: ${event.lastError}`;
+    runEvent(event.runKey, "AUTO_DISABLED", reason);
     updateStrategyRun(event.runKey, {
       status: "error",
       stoppedAt: nowMs(),
@@ -493,6 +542,23 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
     resolveOwner: resolveStrategyOwner,
   });
   rejections.start();
+
+  // Every signal and what became of it (sent / blocked / refused / no order).
+  const signals = new SignalRecorder({ insert: insertSignals, setOutcome: setSignalOutcome, brokerAccount });
+  signals.start();
+  eventBus.on<StrategySignalCreatedEvent>("STRATEGY_SIGNAL_CREATED", (event) => {
+    if (event.signalId) signals.record(event.signalId, event.runKey ?? null, event.ts, event.payload);
+  });
+  eventBus.on<OrderSubmittedEvent>("ORDER_SUBMITTED", (event) => signals.outcome(event.payload.signalId, "submitted"));
+  eventBus.on<RiskRejectedEvent>("RISK_REJECTED", (event) =>
+    signals.outcome(event.rejectedIntent?.signalId, "risk_rejected", `${event.failedCheck ?? "UNKNOWN"}: ${event.reason}`));
+  eventBus.on<CapitalUnavailableEvent>("CAPITAL_UNAVAILABLE", (event) =>
+    signals.outcome(event.signalId, "capital_unavailable", `Needed $${event.required.toFixed(2)}`));
+
+  // Prices mark the run books.
+  eventBus.on<QuoteReceivedEvent>("QUOTE_RECEIVED", (e) => runBooks.updatePrice(e.payload.symbol, e.payload.midPrice));
+  eventBus.on<TradeReceivedEvent>("TRADE_RECEIVED", (e) => runBooks.updatePrice(e.payload.symbol, e.payload.price));
+  eventBus.on<BarReceivedEvent>("BAR_RECEIVED", (e) => runBooks.updatePrice(e.payload.symbol, e.payload.close));
 
   eventBus.on<RiskRejectedEvent>("RISK_REJECTED", (event) => {
     rejections.record({
@@ -523,6 +589,9 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
   const snapshotTimer = setInterval(() => {
     insertPortfolioSnapshot(portfolioState.getSnapshot(), brokerAccount).catch((err) =>
       logger.error("persistence: insertPortfolioSnapshot failed", { err }),
+    );
+    insertRunSnapshots(runBooks.snapshot(liveRuns.heldRuns(), nowMs())).catch((err) =>
+      logger.error("persistence: insertRunSnapshots failed", { err: String(err) }),
     );
   }, DEFAULT_SNAPSHOT_INTERVAL_MS);
 
@@ -569,6 +638,7 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
     clockHours?.stop();
     ledger.stop();
     await rejections.stop();
+    await signals.stop();
     // Hand leases back so a successor adopts these runs now instead of after
     // they lapse. The rows stay "running" — they are paused, not stopped.
     await liveRuns.releaseAll();
