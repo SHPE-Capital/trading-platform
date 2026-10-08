@@ -3,6 +3,9 @@
 # ~/app/ on the server by the workflow. Run with:
 #   docker compose --env-file .deploy.env -f docker-compose.prod.yml <cmd>
 #
+# TODO(security): rollout currently arrives over SSH; see the OIDC + SSM note in
+# .github/workflows/deploy.yml and docs/guides/deployment.md.
+#
 # real-trading is intentionally absent. Adding it is its own decision.
 # Backend ports bind to localhost only; Caddy is the sole public entry.
 

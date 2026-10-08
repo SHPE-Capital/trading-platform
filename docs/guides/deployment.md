@@ -68,6 +68,23 @@ $dc up -d            # re-apply after editing .env
 - Trades and events: Supabase tables `orders`, `fills`, `signals`, `risk_rejections`,
   `run_events`, `event_logs`, `portfolio_snapshots`.
 
+## Hardening
+
+TODO: switch the deploy from SSH to GitHub OIDC + AWS SSM Run Command. The current
+pipeline needs port 22 open to `0.0.0.0/0` (GitHub-hosted runners have no fixed IPs)
+and keeps a long-lived private key in the `EC2_SSH_KEY` secret. Do this before real
+money or the club's Alpaca account is involved:
+
+1. Create an IAM OIDC identity provider for `token.actions.githubusercontent.com`.
+2. Create a role trusted only by this repo's `main` branch, allowed `ssm:SendCommand`
+   on the instance.
+3. Attach an instance profile with `AmazonSSMManagedInstanceCore`.
+4. In `deploy.yml`, assume the role with `aws-actions/configure-aws-credentials` and
+   replace the scp/ssh steps with SSM commands; deliver `deploy/` files via S3 or the image.
+5. Close port 22 (use SSM Session Manager for shell access) and delete `EC2_HOST` and
+   `EC2_SSH_KEY`.
+6. Until then, keep password login off and consider `fail2ban`.
+
 ## Troubleshooting
 - scp/ssh step fails: malformed `EC2_SSH_KEY` or public key not in `authorized_keys`.
 - No certificate: ports 80/443 closed or DNS wrong; check `$dc logs caddy`.

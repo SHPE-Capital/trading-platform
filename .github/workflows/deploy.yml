@@ -1,3 +1,16 @@
+# TODO(security): replace SSH with GitHub OIDC + AWS SSM Run Command before real
+# money or the club's Alpaca account is involved. Today the scp/ssh steps below
+# need port 22 open to 0.0.0.0/0 (GitHub runner IPs are not fixed) and a
+# long-lived private key in the EC2_SSH_KEY secret. Target state:
+#   - IAM OIDC identity provider for GitHub + a role assumable only by this
+#     repo's main branch (aws-actions/configure-aws-credentials), allowed
+#     ssm:SendCommand on this instance
+#   - instance profile with AmazonSSMManagedInstanceCore (SSM agent is preinstalled)
+#   - ship docker-compose.prod.yml / Caddyfile via S3 or the image, run the
+#     rollout script via SSM instead of scp/ssh, then close port 22 and drop
+#     the EC2_HOST and EC2_SSH_KEY secrets
+# See docs/guides/deployment.md ("Hardening").
+
 name: Deploy
 
 # Runs only after CI has passed on main (or manually). Builds the backend image,
