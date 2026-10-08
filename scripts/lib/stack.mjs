@@ -33,6 +33,62 @@ export const PROJECT_ID = /^project_id\s*=\s*"([^"]+)"/m.exec(
 export const DB_CONTAINER = `supabase_db_${PROJECT_ID}`;
 export const DB_VOLUME = `supabase_db_${PROJECT_ID}`;
 
+/**
+ * Market-data credentials for the local containers. Shell variables win; otherwise
+ * backend/.env is read. Only DATA credentials are forwarded (falling back to the
+ * API key pair purely for read-only market data), never EXECUTION_TARGET or the
+ * trading keys, so a local runner cannot start trading the club's account by
+ * accident. Returns { env, source } where source is "shell" | "backend/.env" | null.
+ */
+export function loadDataCredentials() {
+  const file = {};
+  try {
+    for (const line of readFileSync(path.join(ROOT, "backend", ".env"), "utf8").split(/\r?\n/)) {
+      const m = /^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/.exec(line);
+      if (m && !line.trim().startsWith("#")) file[m[1]] = m[2].replace(/^['"]|['"]$/g, "");
+    }
+  } catch {
+    // no backend/.env: fine
+  }
+  const pick = (name) => process.env[name] || file[name] || "";
+  const key = pick("ALPACA_DATA_KEY") || pick("ALPACA_API_KEY");
+  const secret = pick("ALPACA_DATA_SECRET") || pick("ALPACA_API_SECRET");
+  const streamOptIn = pick("LOCAL_STREAM_DATA") === "1";
+  if (!key || !secret) return { key: "", secret: "", source: null, streamOptIn };
+  const fromShell = Boolean(process.env.ALPACA_DATA_KEY || process.env.ALPACA_API_KEY);
+  return { key, secret, source: fromShell ? "shell" : "backend/.env", streamOptIn };
+}
+
+/** Account numbers only one deployment may use, read from the backend's own list. */
+function protectedAccounts() {
+  try {
+    const src = readFileSync(path.join(ROOT, "backend", "src", "config", "protectedAccounts.ts"), "utf8");
+    return [...src.matchAll(/accountNumber:\s*"([^"]+)"/g)].map((m) => m[1]);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Asks Alpaca which account a key pair belongs to, so the club's shared keys are
+ * never forwarded into a laptop's containers. { account: null } means it could
+ * not be determined (offline, key rejected).
+ */
+export async function identifyAlpacaAccount(key, secret) {
+  const headers = { "APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": secret };
+  for (const base of ["https://paper-api.alpaca.markets", "https://api.alpaca.markets"]) {
+    try {
+      const response = await fetch(`${base}/v2/account`, { headers, signal: AbortSignal.timeout(6000) });
+      if (!response.ok) continue;
+      const account = (await response.json()).account_number ?? null;
+      return { account, isClub: account !== null && protectedAccounts().includes(account) };
+    } catch {
+      // try the next endpoint
+    }
+  }
+  return { account: null, isClub: false };
+}
+
 export const LOCAL_LEAD = { email: "lead@local.test", password: "local-development-only" };
 
 // ---------------------------------------------------------------------------

@@ -15,7 +15,9 @@ import {
   dockerBin,
   dockerVersion,
   exec,
+  identifyAlpacaAccount,
   latestBackup,
+  loadDataCredentials,
   loadState,
   nodeStatus,
   pickBase,
@@ -79,6 +81,18 @@ report(
   existsSync(path.join(ROOT, "backend", ".env")) ? "" : "only needed outside Docker (e.g. `npm run data:pull`)",
   "run `npm run setup` (copies backend/.env.example)",
 );
+
+const creds = loadDataCredentials();
+if (!creds.source) {
+  report("warn", "Alpaca market-data keys", "none: backtests use the local bar cache only", "add your OWN free Alpaca keys as ALPACA_DATA_KEY/ALPACA_DATA_SECRET in backend/.env, or run `npm run data:pull`");
+} else {
+  const who = await identifyAlpacaAccount(creds.key, creds.secret);
+  if (who.isClub) {
+    report("warn", "Alpaca market-data keys", `${creds.source} holds the CLUB account's keys (${who.account}); dev:stack withholds them`, "put your own free Alpaca keys in ALPACA_DATA_KEY/ALPACA_DATA_SECRET (these take priority), or run `npm run data:pull`");
+  } else {
+    report("pass", "Alpaca market-data keys", `from ${creds.source}${who.account ? `, account ${who.account}` : " (could not verify the account)"}`);
+  }
+}
 
 const docker = dockerVersion();
 report(docker ? "pass" : "fail", "Docker engine", docker ? `v${docker}` : "not reachable", "start Docker Desktop and wait for \"Engine running\", then check `docker info`");

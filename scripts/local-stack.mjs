@@ -10,7 +10,9 @@ import {
   dockerBin,
   exec,
   fatal,
+  identifyAlpacaAccount,
   latestBackup,
+  loadDataCredentials,
   loadState,
   pickBase,
   portsFor,
@@ -206,7 +208,29 @@ saveState({ base, remapped, apiPort: ports.api, counts: finalCounts });
 // 5. App containers
 // ---------------------------------------------------------------------------
 
+// Market data: a member's OWN Alpaca keys (never the club's) feed backtests over REST.
+// Without keys, backtests use the local bar cache (seed it with `npm run data:pull`).
+// The live stream (one connection per Alpaca account) is opt-in via LOCAL_STREAM_DATA=1.
+const data = loadDataCredentials();
+const dataEnv = {};
+let dataNote = "no Alpaca keys: backtests use the local bar cache (seed it with `npm run data:pull`)";
+if (data.source) {
+  const who = await identifyAlpacaAccount(data.key, data.secret);
+  if (who.isClub) {
+    dataNote = `WITHHELD - the keys from ${data.source} belong to the club account (${who.account}). Use your own free Alpaca keys, or \`npm run data:pull\``;
+  } else {
+    dataEnv.LOCAL_DATA_KEY = data.key;
+    dataEnv.LOCAL_DATA_SECRET = data.secret;
+    if (data.streamOptIn) {
+      dataEnv.LOCAL_STREAM_DATA_KEY = data.key;
+      dataEnv.LOCAL_STREAM_DATA_SECRET = data.secret;
+    }
+    const account = who.account ? `account ${who.account}` : "account not verified";
+    dataNote = `your Alpaca keys from ${data.source} (${account}) for backtests; live stream ${data.streamOptIn ? "ON" : "off (set LOCAL_STREAM_DATA=1 to enable)"}`;
+  }
+}
 const composeEnv = {
+  ...dataEnv,
   LOCAL_SUPABASE_API_PORT: String(new URL(apiUrl).port || ports.api),
   LOCAL_SUPABASE_ANON_KEY: anonKey,
   LOCAL_SUPABASE_SERVICE_ROLE_KEY: serviceKey,
@@ -220,6 +244,7 @@ Local account: lead@local.test / local-development-only
 App: http://localhost:3000   Supabase API: ${apiUrl}
 Supabase Studio: http://127.0.0.1:${ports.studio}   Mailpit: http://127.0.0.1:${ports.mailpit}
 Health check any time with: npm run doctor
+Market data: ${dataNote}
 `);
 
 const compose = spawnSync(dockerBin, ["compose", "-f", COMPOSE_FILE, "up", "--build", ...composeArgs], {

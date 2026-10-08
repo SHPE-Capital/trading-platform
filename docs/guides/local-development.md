@@ -41,8 +41,20 @@ recorded in your local Supabase, which acts as the sim broker's ledger.
 | You have | Set in your shell before `npm run dev:stack` | What happens |
 |---|---|---|
 | Nothing | — | Sim book, replaying cached bars. Seed them with `npm run data:pull` (below). |
-| Free Alpaca account (data only) | `ALPACA_DATA_KEY`, `ALPACA_DATA_SECRET` | Sim book on live IEX bars. |
+| Free Alpaca account (data only) | your **own** `ALPACA_DATA_KEY`, `ALPACA_DATA_SECRET` in your shell **or** `backend/.env` | Backtests fetch bars with your key. Add `LOCAL_STREAM_DATA=1` to also run the live IEX stream in the paper runner. |
 | Your own Alpaca paper account | `EXECUTION_TARGET=alpaca-paper`, `ALPACA_API_KEY`, `ALPACA_API_SECRET` | Orders go to **your** paper account and sync into your local Supabase. |
+
+**Market data uses your own Alpaca keys, never the club's.** `dev:stack` reads
+`ALPACA_DATA_KEY`/`ALPACA_DATA_SECRET` (falling back to `ALPACA_API_KEY`/`ALPACA_API_SECRET`)
+from your shell or `backend/.env`, asks Alpaca which account they belong to, and
+**withholds them if they are the club's** (`protectedAccounts.ts`). They go to the API
+and backtest worker for REST bar downloads. The paper runner only gets them with
+`LOCAL_STREAM_DATA=1`, because Alpaca allows one live stream per account (a second
+connection fails with `406 connection limit exceeded`). `EXECUTION_TARGET` and trading
+keys are never forwarded from the file; shell variables take precedence.
+
+No keys of your own? Backtests and the paper runner use the local bar cache. Fill it
+with `npm run data:pull`; a backtest over a range that is not cached will fail with 401.
 
 The club account is listed in `backend/src/config/protectedAccounts.ts`; a
 runner that resolves to it from any origin other than `aws-prod` exits at boot
