@@ -1,0 +1,68 @@
+# Production stack on EC2. Images are built and pushed to GHCR by
+# .github/workflows/deploy.yml; this file only pulls them. Copied to
+# ~/app/ on the server by the workflow. Run with:
+#   docker compose --env-file .deploy.env -f docker-compose.prod.yml <cmd>
+#
+# real-trading is intentionally absent. Adding it is its own decision.
+# Backend ports bind to localhost only; Caddy is the sole public entry.
+
+x-backend: &backend
+  image: ${IMAGE}:${IMAGE_TAG}
+  env_file: ./.env
+  restart: unless-stopped
+  stop_grace_period: 60s
+  logging:
+    driver: json-file
+    options:
+      max-size: "20m"
+      max-file: "5"
+
+services:
+  api:
+    <<: *backend
+    command: ["node", "dist/index.js"]
+    environment:
+      PORT: "8082"
+      APP_BUILD_SHA: ${IMAGE_TAG}
+      APP_BUILD_DIRTY: "false"
+    ports:
+      - "127.0.0.1:8082:8082"
+
+  paper-trading:
+    <<: *backend
+    command: ["node", "dist/runtime/paper-trading.js"]
+    environment:
+      PORT: "8080"
+      APP_BUILD_SHA: ${IMAGE_TAG}
+      APP_BUILD_DIRTY: "false"
+    ports:
+      - "127.0.0.1:8080:8080"
+
+  backtest-worker:
+    <<: *backend
+    command: ["node", "dist/runtime/backtestWorker.js"]
+    environment:
+      APP_BUILD_SHA: ${IMAGE_TAG}
+      APP_BUILD_DIRTY: "false"
+    cpus: 1.0
+    healthcheck:
+      disable: true
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    env_file: ./.env
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+      - paper-trading
+
+volumes:
+  caddy_data:
+  caddy_config:
