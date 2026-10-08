@@ -8,12 +8,15 @@
  * Outputs: Rendered table with symbol, side, qty, price, status, and timestamp.
  */
 
+import Link from "next/link";
 import type { Order } from "../../types/portfolio";
 import { formatCurrency } from "../../utils/formatting";
 import { formatTimestamp } from "../../utils/dates";
 
 interface Props {
   orders: Order[];
+  /** Adds a column linking each order to the run that sent it. */
+  showRun?: boolean;
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -26,7 +29,7 @@ const STATUS_COLORS: Record<string, string> = {
   expired:      "text-zinc-400",
 };
 
-export default function OrdersTable({ orders }: Props) {
+export default function OrdersTable({ orders, showRun = false }: Props) {
   if (orders.length === 0) {
     return (
       <div className="rounded-lg border border-zinc-200 bg-white p-6 text-center text-sm text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900">
@@ -48,6 +51,7 @@ export default function OrdersTable({ orders }: Props) {
             <Th>Type</Th>
             <Th>Status</Th>
             <Th>Submitted</Th>
+            {showRun && <Th>Run</Th>}
           </tr>
         </thead>
         <tbody>
@@ -70,6 +74,13 @@ export default function OrdersTable({ orders }: Props) {
                 {order.status.replace("_", " ")}
               </td>
               <td className="px-4 py-3 text-xs text-zinc-400">{formatTimestamp(order.submittedAt)}</td>
+              {showRun && (
+                <td className="px-4 py-3 text-xs">
+                  {order.runId
+                    ? <Link href={`/runs/${order.runId}`} className="font-mono text-zinc-600 hover:underline dark:text-zinc-300">{order.runId.slice(0, 8)}</Link>
+                    : <span className="text-amber-600">no run</span>}
+                </td>
+              )}
             </tr>
           ))}
         </tbody>

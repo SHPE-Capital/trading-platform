@@ -44,7 +44,7 @@ export interface RiskConfig {
   maxNotionalExposureUsd: number;
   /**
    * Cooldown period in milliseconds after any order is placed.
-   * Prevents immediate re-entry on the same strategy.
+   * Prevents immediate re-entry by the same strategy on the same symbol.
    */
   orderCooldownMs: number;
   /**

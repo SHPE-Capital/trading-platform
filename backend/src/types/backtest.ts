@@ -51,6 +51,17 @@ export interface BacktestConfig {
   strategyId?: UUID;
   /** Algorithm version of the saved strategy at run time */
   strategyVersion?: number;
+  /**
+   * The strategy_versions row (config edit, not algorithm version) this run is
+   * testing — set when the user picked a saved strategy whose config history
+   * exists (0006). Written to backtest_results.strategy_version_id, which is
+   * what a proposal's "backtests for this version" lookup keys on.
+   */
+  strategyVersionId?: UUID;
+  /** Build that actually executed the simulation (stamped by the worker). */
+  runtimeOrigin?: string;
+  buildSha?: string;
+  buildDirty?: boolean;
   /** Optional description */
   description?: string;
   /**
@@ -83,6 +94,11 @@ export interface BacktestConfig {
   riskConfig?: Partial<RiskConfig>;
   /** Optional extra config */
   meta?: Metadata;
+  /**
+   * Set when this backtest replays a live run's exact window and config
+   * ("Compare with backtest"), so the run page can find and overlay it.
+   */
+  sourceRunId?: UUID;
 }
 
 // ------------------------------------------------------------------
@@ -106,6 +122,19 @@ export interface BacktestResult {
   completed_at?: EpochMs;
   /** Error message if status is "failed" */
   error_message?: string;
+  /**
+   * app_users.id of whoever explicitly saved this result. Undefined for a
+   * result still living only in server memory (not yet saved, or from a
+   * process where the save endpoint was never called).
+   */
+  owner_id?: UUID;
+  /** When this result was explicitly saved (wall-clock Unix ms) — distinct from completed_at. */
+  saved_at?: EpochMs;
+  /**
+   * For a run not yet saved: when its staged output is dropped and it can no
+   * longer be saved (wall-clock Unix ms). Serve-time annotation, not a column.
+   */
+  result_expires_at?: EpochMs;
   /** Final portfolio state at end of backtest */
   final_portfolio: PortfolioSnapshot;
   /** Computed performance metrics */

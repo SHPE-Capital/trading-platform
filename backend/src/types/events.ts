@@ -9,13 +9,12 @@
  * Outputs: Typed event objects published to the EventBus.
  */
 
-import type { EpochMs, Symbol, UUID, OrderSide, OrderStatus, ExecutionMode } from "./common";
+import type { EpochMs, UUID, ExecutionMode } from "./common";
 import type { Quote, Trade, Bar } from "./market";
 import type { OrderIntent, Order, Fill } from "./orders";
 import type { PortfolioSnapshot } from "./portfolio";
 import type { StrategySignal } from "./strategy";
 import type { ReplayStatus, ReplaySpeed } from "./replay";
-import type { PortfolioRiskViolation } from "./risk";
 
 // ------------------------------------------------------------------
 // Event Type Enum
@@ -43,6 +42,8 @@ export type EventType =
   | "STRATEGY_STARTED"
   | "STRATEGY_STOPPED"
   | "STRATEGY_ERROR"
+  | "STRATEGY_RECOVERED"
+  | "STRATEGY_AUTO_DISABLED"
   // Risk events
   | "RISK_REJECTED"
   // OMS events
@@ -58,7 +59,9 @@ export type EventType =
   // Replay events
   | "REPLAY_TICK"
   // Post-fill portfolio risk
-  | "PORTFOLIO_RISK_VIOLATION";
+  | "PORTFOLIO_RISK_VIOLATION"
+  // Ledger
+  | "BROKER_DRIFT";
 
 // ------------------------------------------------------------------
 // Base Event
@@ -166,6 +169,10 @@ export interface StrategySignalCreatedEvent extends BaseEvent {
   type: "STRATEGY_SIGNAL_CREATED";
   strategyId: string;
   payload: StrategySignal;
+  /** Registry key of the emitting strategy — its strategy_runs.id when run-managed. */
+  runKey?: string;
+  /** Identifies this signal across its intents, rejections and orders. */
+  signalId?: UUID;
 }
 
 export interface StrategyStartedEvent extends BaseEvent {
@@ -189,6 +196,29 @@ export interface StrategyErrorEvent extends BaseEvent {
   error: string;
   /** Which lifecycle phase the error occurred in */
   phase: "evaluate" | "start" | "stop";
+  /** Orchestrator registry key — the strategy_runs.id for API- and runner-managed runs */
+  runKey?: string;
+  /** Evaluate errors in a row for this run, including this one */
+  consecutiveErrors?: number;
+}
+
+/** A strategy evaluated cleanly after one or more consecutive errors. */
+export interface StrategyRecoveredEvent extends BaseEvent {
+  type: "STRATEGY_RECOVERED";
+  strategyId: string;
+  runKey: string;
+}
+
+/**
+ * A strategy hit the consecutive-error limit and was deregistered, so one bad
+ * push degrades that strategy rather than the shared runner (Part 05).
+ */
+export interface StrategyAutoDisabledEvent extends BaseEvent {
+  type: "STRATEGY_AUTO_DISABLED";
+  strategyId: string;
+  runKey: string;
+  consecutiveErrors: number;
+  lastError: string;
 }
 
 // ------------------------------------------------------------------
@@ -200,6 +230,8 @@ export interface RiskRejectedEvent extends BaseEvent {
   strategyId: string;
   orderId?: UUID;
   reason: string;
+  /** Which named check fired: STRATEGY_BUDGET, CASH_RESERVE, ORDER_COOLDOWN, ... */
+  failedCheck?: string;
   /** The intent that was rejected */
   rejectedIntent: OrderIntent;
 }
@@ -234,6 +266,10 @@ export interface CapitalUnavailableEvent extends BaseEvent {
   intentId: UUID;
   /** Strategy that submitted the intent */
   strategyId: string;
+  /** Signal the intent came from. */
+  signalId?: UUID;
+  /** Run that emitted the signal. */
+  runId?: UUID;
   /** USD amount required */
   required: number;
   /** USD amount available after existing reservations */
@@ -346,6 +382,8 @@ export type TradingEvent =
   | StrategyStartedEvent
   | StrategyStoppedEvent
   | StrategyErrorEvent
+  | StrategyRecoveredEvent
+  | StrategyAutoDisabledEvent
   | RiskRejectedEvent
   | CapitalReservedEvent
   | CapitalReleasedEvent
@@ -356,7 +394,24 @@ export type TradingEvent =
   | EngineStoppedEvent
   | HeartbeatEvent
   | ReplayTickEvent
-  | PortfolioRiskViolationEvent;
+  | PortfolioRiskViolationEvent
+  | BrokerDriftEvent;
+
+/**
+ * The broker holds positions the ledger cannot attribute to a running run —
+ * unattributed shares, or shares left behind by a stopped run.
+ */
+export interface BrokerDriftEvent extends BaseEvent {
+  type: "BROKER_DRIFT";
+  brokerAccount: string;
+  rows: Array<{
+    symbol: string;
+    brokerQty: number;
+    runningQty: number;
+    stoppedQty: number;
+    unattributedQty: number;
+  }>;
+}
 
 /** Typed event handler callback */
 export type EventHandler<E extends TradingEvent = TradingEvent> = (event: E) => void | Promise<void>;

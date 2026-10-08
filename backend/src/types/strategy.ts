@@ -8,7 +8,8 @@
  * Outputs: StrategySignal or OrderIntent emitted to the execution pipeline.
  */
 
-import type { UUID, EpochMs, Symbol, OrderSide, Metadata, ExecutionAlgoType, SizerType } from "./common";
+import type { StrategyRunStats } from "./analytics";
+import type { UUID, EpochMs, Symbol, Metadata, ExecutionAlgoType, SizerType } from "./common";
 import type { StrategyRiskBudget } from "./risk";
 
 // ------------------------------------------------------------------
@@ -24,7 +25,8 @@ export type StrategyType =
   | "momentum"
   | "arbitrage"
   | "market_making"
-  | "neural_network";
+  | "neural_network"
+  | "minute_reversal";
 
 /** Strategy lifecycle status */
 export type StrategyRunStatus = "idle" | "running" | "paused" | "stopped" | "error";
@@ -118,38 +120,6 @@ export interface StrategySignal {
 }
 
 // ------------------------------------------------------------------
-// Strategy Runtime State
-// ------------------------------------------------------------------
-
-/** Snapshot of a strategy's current runtime state */
-export interface StrategyRuntimeState {
-  /** Strategy instance ID */
-  id: UUID;
-  /** Strategy type */
-  type: StrategyType;
-  /** Human-readable name */
-  name: string;
-  /** Lifecycle status */
-  status: StrategyRunStatus;
-  /** When this strategy run started */
-  startedAt?: EpochMs;
-  /** When this strategy run stopped */
-  stoppedAt?: EpochMs;
-  /** Number of signals generated this run */
-  signalCount: number;
-  /** Number of orders placed this run */
-  orderCount: number;
-  /** Realized PnL this run */
-  realizedPnl: number;
-  /** Last signal generated */
-  lastSignal?: StrategySignal;
-  /** Last error if status is "error" */
-  lastError?: string;
-  /** Strategy-specific state snapshot (serializable) */
-  internalState?: Record<string, unknown>;
-}
-
-// ------------------------------------------------------------------
 // Strategy Run Record (persisted)
 // ------------------------------------------------------------------
 
@@ -165,12 +135,48 @@ export interface StrategyRun {
   config: BaseStrategyConfig;
   status: StrategyRunStatus;
   executionMode: string;
+  /** Deployment boundary; runners adopt only rows from their own origin. */
+  runtimeOrigin?: string;
+  /** Broker account the run trades (0015); absent on runs from before broker accounts. */
+  brokerAccount?: string | null;
+  buildSha?: string;
+  buildDirty?: boolean;
   startedAt?: EpochMs;
   stoppedAt?: EpochMs;
-  totalSignals: number;
-  totalOrders: number;
-  realizedPnl: number;
+  /** Automatic stop time for self-service paper sandbox runs. */
+  expiresAt?: EpochMs | null;
+  /**
+   * Derived from the ledger (strategy_run_stats), never stored on the run.
+   * Kept as flat fields for the run cards; `stats` has the full breakdown.
+   */
+  totalSignals?: number;
+  totalOrders?: number;
+  realizedPnl?: number;
+  unrealizedPnl?: number;
+  stats?: StrategyRunStats;
+  /** Capital set aside when the run started; the denominator of its returns. */
+  allocatedCapital?: number | null;
   meta?: Metadata;
+
+  /**
+   * The exact strategy_versions row this run executed. Set by the approval path;
+   * absent on runs started before the review workflow existed.
+   */
+  versionId?: UUID;
+  /** The proposal that authorised this run going live. */
+  proposalId?: UUID;
+  /** The member accountable for this run — the proposal's author. */
+  ownerId?: UUID;
+
+  /** Runner currently trading this run (0004). Only the lease holder may trade it. */
+  leaseOwner?: string | null;
+  /** When the lease lapses unless heartbeated; a lapsed lease is adopted by another runner. */
+  leaseExpiresAt?: EpochMs | null;
+  lastHeartbeatAt?: EpochMs | null;
+  /** evaluate() errors in a row; the runner auto-disables the run at its limit. */
+  consecutiveErrors?: number;
+  /** Why the runner stopped this run on its own (e.g. repeated errors). */
+  disabledReason?: string | null;
 }
 
 // ------------------------------------------------------------------
@@ -190,4 +196,6 @@ export interface Strategy {
   config: Record<string, unknown>;
   created_at: string;
   updated_at: string;
+  /** Author who owns this saved strategy (0003_identity). */
+  owner_id?: UUID | null;
 }

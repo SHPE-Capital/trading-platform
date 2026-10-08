@@ -9,7 +9,9 @@ import { Router } from "express";
 import {
   getTrackedSymbols,
   getSymbolSnapshot,
+  getCachedBars,
 } from "../controllers/marketDataController";
+import { requireAuth } from "../middleware/requireAuth";
 
 const router = Router();
 
@@ -18,5 +20,8 @@ router.get("/symbols", getTrackedSymbols);
 
 /** GET /api/market-data/snapshot/:symbol — latest quote for a symbol */
 router.get("/snapshot/:symbol", getSymbolSnapshot);
+
+/** GET /api/market-data/bars — cached bars for seeding a local sim replay */
+router.get("/bars", requireAuth, getCachedBars);
 
 export default router;

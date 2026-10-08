@@ -129,6 +129,22 @@ describe('getSystemStatus: overall health aggregation', () => {
   });
 });
 
+describe('getSystemStatus: sim book', () => {
+  it('does not call Alpaca for a sim runtime and reports where orders go', async () => {
+    mockSupabaseOk();
+    const fetchSpy = jest.spyOn(global, 'fetch');
+    const res = mockRes();
+    const req = { app: { locals: { ctx: { executionTarget: 'sim', brokerAccount: 'sim:laptop' } } } } as unknown as Request;
+    await getSystemStatus(req, res);
+    const body = (res.json as jest.Mock).mock.calls[0][0];
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(body.services.alpaca).toEqual({ health: true, accountStatus: 'NOT_USED' });
+    expect(body.execution).toEqual({ target: 'sim', brokerAccount: 'sim:laptop' });
+    expect(body.status).toBe('healthy');
+    fetchSpy.mockRestore();
+  });
+});
+
 describe('getSystemStatus: Alpaca error codes', () => {
   it('maps 401 to an invalid-credentials message', async () => {
     mockSupabaseOk();

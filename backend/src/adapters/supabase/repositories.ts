@@ -14,6 +14,7 @@ import type { PortfolioSnapshot } from "../../types/portfolio";
 import type { StrategyRun, Strategy } from "../../types/strategy";
 import type { BacktestConfig, BacktestResult } from "../../types/backtest";
 import type { UUID } from "../../types/common";
+import { mapRunStats } from "./analyticsRepository";
 
 // ------------------------------------------------------------------
 // Orders
@@ -61,13 +62,13 @@ export async function updateOrder(orderId: UUID, updates: Partial<Order>): Promi
   if (error) logger.error("updateOrder failed", { error: error.message, orderId });
 }
 
-/** Fetches all orders for a given strategy run. */
+/** Fetches all orders a strategy run sent, oldest first. */
 export async function getOrdersByStrategyRun(strategyRunId: UUID): Promise<Order[]> {
   const supabase = getSupabaseClient();
   const { data, error } = await supabase
     .from("orders")
     .select("*")
-    .eq("strategy_id", strategyRunId)
+    .eq("run_id", strategyRunId)
     .order("submitted_at", { ascending: true });
   if (error) {
     logger.error("getOrdersByStrategyRun failed", { error: error.message });
@@ -115,12 +116,77 @@ export async function insertFill(fill: Fill, isPaper = true): Promise<void> {
   if (error) logger.error("insertFill failed", { error: error.message });
 }
 
+/** Page size for reads that must see every row (PostgREST caps responses at max_rows). */
+const READ_PAGE_SIZE = 1000;
+
+/**
+ * Every fill of the orders a run placed, oldest first. Fills carry their run
+ * (0016); fills from before that are matched the old way — orders carry the
+ * strategy's config id, and the run's start time separates it from earlier
+ * runs of the same strategy. Throws on a read error: a caller rebuilding
+ * positions must not mistake a failed read for "flat".
+ */
+export async function getFillsForRun(
+  run: Pick<StrategyRun, "id" | "strategyId" | "startedAt" | "config">,
+  isPaper: boolean,
+): Promise<Fill[]> {
+  const supabase = getSupabaseClient();
+  const byRun = await readFillPages((from, to) => supabase
+    .from("fills")
+    .select("*")
+    .eq("run_id", run.id)
+    .eq("is_paper", isPaper)
+    .order("ts", { ascending: true })
+    .order("id", { ascending: true })
+    .range(from, to));
+  if (byRun.length > 0) return byRun;
+
+  const strategyKey = (run.config as { id?: string } | undefined)?.id ?? run.strategyId;
+  const since = new Date(run.startedAt ?? 0).toISOString();
+  return readFillPages((from, to) => supabase
+    .from("fills")
+    .select("*, orders!inner(strategy_id, submitted_at)")
+    .eq("orders.strategy_id", strategyKey)
+    .gte("orders.submitted_at", since)
+    .eq("is_paper", isPaper)
+    .order("ts", { ascending: true })
+    .order("id", { ascending: true })
+    .range(from, to));
+}
+
+async function readFillPages(
+  page: (from: number, to: number) => PromiseLike<{ data: unknown[] | null; error: { message: string } | null }>,
+): Promise<Fill[]> {
+  const fills: Fill[] = [];
+  for (let from = 0; ; from += READ_PAGE_SIZE) {
+    const { data, error } = await page(from, from + READ_PAGE_SIZE - 1);
+    if (error) throw new Error(`getFillsForRun failed: ${error.message}`);
+    const rows = (data ?? []) as Record<string, unknown>[];
+    for (const row of rows) {
+      fills.push({
+        id:         row.id as string,
+        orderId:    row.order_id as string,
+        symbol:     row.symbol as string,
+        side:       row.side as Fill["side"],
+        qty:        Number(row.qty),
+        price:      Number(row.price),
+        notional:   Number(row.notional),
+        commission: Number(row.commission ?? 0),
+        ts:         new Date(row.ts as string).getTime(),
+        isoTs:      row.ts as string,
+        exchange:   (row.exchange as string | null) ?? undefined,
+      });
+    }
+    if (rows.length < READ_PAGE_SIZE) return fills;
+  }
+}
+
 // ------------------------------------------------------------------
 // Portfolio Snapshots
 // ------------------------------------------------------------------
 
 /** Persists a portfolio snapshot to the database. */
-export async function insertPortfolioSnapshot(snapshot: PortfolioSnapshot): Promise<void> {
+export async function insertPortfolioSnapshot(snapshot: PortfolioSnapshot, brokerAccount?: string): Promise<void> {
   const supabase = getSupabaseClient();
   const { error } = await supabase.from("portfolio_snapshots").insert({
     id:                   snapshot.id,
@@ -135,6 +201,7 @@ export async function insertPortfolioSnapshot(snapshot: PortfolioSnapshot): Prom
     return_pct:           snapshot.returnPct,
     positions:            snapshot.positions,
     position_count:       snapshot.positionCount,
+    ...(brokerAccount ? { broker_account: brokerAccount } : {}),
     // snapshot.isoTs and snapshot.strategyBreakdowns are not DB columns
     // strategy_run_id is not populated here (no run context at snapshot time)
   });
@@ -150,9 +217,9 @@ function mapOrder(row: Record<string, unknown>): Order {
     strategyId:    row.strategy_id as string,
     symbol:        row.symbol as string,
     side:          row.side as Order["side"],
-    qty:           row.qty as number,
-    filledQty:     (row.filled_qty as number) ?? 0,
-    avgFillPrice:  row.avg_fill_price as number | undefined,
+    qty:           Number(row.qty),
+    filledQty:     Number(row.filled_qty ?? 0),
+    avgFillPrice:  row.avg_fill_price === null || row.avg_fill_price === undefined ? undefined : Number(row.avg_fill_price),
     orderType:     row.order_type as Order["orderType"],
     limitPrice:    row.limit_price as number | undefined,
     stopPrice:     row.stop_price as number | undefined,
@@ -163,7 +230,35 @@ function mapOrder(row: Record<string, unknown>): Order {
     closedAt:      row.closed_at ? new Date(row.closed_at as string).getTime() : undefined,
     fills:         [],
     meta:          row.meta as Order["meta"],
+    runId:         (row.run_id as string | null) ?? undefined,
+    signalId:      (row.signal_id as string | null) ?? undefined,
+    clientOrderId: (row.client_order_id as string | null) ?? undefined,
+    decisionPrice: row.decision_price === null || row.decision_price === undefined ? undefined : Number(row.decision_price),
   };
+}
+
+/** The most recent fills across every run, newest first, with the run that made each. */
+export async function getRecentFills(limit = 500): Promise<(Fill & { runId?: string })[]> {
+  const { data, error } = await getSupabaseClient()
+    .from("fills").select("*").order("ts", { ascending: false }).limit(limit);
+  if (error) {
+    logger.error("getRecentFills failed", { error: error.message });
+    return [];
+  }
+  return (data ?? []).map((row) => ({
+    id:         row.id as string,
+    orderId:    row.order_id as string,
+    symbol:     row.symbol as string,
+    side:       row.side as Fill["side"],
+    qty:        Number(row.qty),
+    price:      Number(row.price),
+    notional:   Number(row.notional),
+    commission: Number(row.commission ?? 0),
+    ts:         new Date(row.ts as string).getTime(),
+    isoTs:      row.ts as string,
+    exchange:   (row.exchange as string | null) ?? undefined,
+    runId:      (row.run_id as string | null) ?? undefined,
+  }));
 }
 
 // Maps a raw Supabase portfolio_snapshots row (snake_case, ts as ISO string)
@@ -223,8 +318,29 @@ export async function getPortfolioEquityCurve(limit = 500): Promise<PortfolioSna
 // Strategy Runs
 // ------------------------------------------------------------------
 
+function msOrNull(value: unknown): number | null {
+  return value ? new Date(value as string).getTime() : null;
+}
+
+/** Run reads embed the run's derived stats (0017) as `strategy_run_stats`. */
+const RUN_SELECT = "*, strategy_run_stats(*)";
+
+/** Flat card fields plus the full stats, from an embedded strategy_run_stats row. */
+function runStatsFields(embedded: unknown): Pick<StrategyRun, "totalSignals" | "totalOrders" | "realizedPnl" | "unrealizedPnl" | "stats"> {
+  const row = (Array.isArray(embedded) ? embedded[0] : embedded) as Record<string, unknown> | null | undefined;
+  if (!row) return { totalSignals: 0, totalOrders: 0, realizedPnl: 0, unrealizedPnl: 0 };
+  const stats = mapRunStats(row);
+  return {
+    totalSignals: stats.signals,
+    totalOrders: stats.orders,
+    realizedPnl: stats.realizedPnl,
+    unrealizedPnl: stats.unrealizedPnl,
+    stats,
+  };
+}
+
 // Maps a raw Supabase row (snake_case) to the camelCase StrategyRun type.
-function mapStrategyRun(row: Record<string, unknown>): StrategyRun {
+export function mapStrategyRun(row: Record<string, unknown>): StrategyRun {
   return {
     id: row.id as UUID,
     strategyId: row.strategy_id as UUID,
@@ -234,12 +350,25 @@ function mapStrategyRun(row: Record<string, unknown>): StrategyRun {
     config: row.config as StrategyRun["config"],
     status: row.status as StrategyRun["status"],
     executionMode: row.execution_mode as string,
+    runtimeOrigin: (row.runtime_origin as string | undefined) ?? "legacy",
+    brokerAccount: (row.broker_account as string | null | undefined) ?? null,
+    buildSha: (row.build_sha as string | undefined) ?? "unknown",
+    buildDirty: (row.build_dirty as boolean | undefined) ?? false,
     startedAt: row.started_at ? new Date(row.started_at as string).getTime() : undefined,
     stoppedAt: row.stopped_at ? new Date(row.stopped_at as string).getTime() : undefined,
-    totalSignals: (row.total_signals as number) ?? 0,
-    totalOrders: (row.total_orders as number) ?? 0,
-    realizedPnl: (row.realized_pnl as number) ?? 0,
+    expiresAt: msOrNull(row.expires_at),
+    ...runStatsFields(row.strategy_run_stats),
+    allocatedCapital: row.allocated_capital === null || row.allocated_capital === undefined
+      ? null : Number(row.allocated_capital),
     meta: row.meta as StrategyRun["meta"],
+    versionId: (row.version_id as UUID | undefined) ?? undefined,
+    proposalId: (row.proposal_id as UUID | undefined) ?? undefined,
+    ownerId: (row.owner_id as UUID | undefined) ?? undefined,
+    leaseOwner: (row.lease_owner as string | null | undefined) ?? null,
+    leaseExpiresAt: msOrNull(row.lease_expires_at),
+    lastHeartbeatAt: msOrNull(row.last_heartbeat_at),
+    consecutiveErrors: (row.consecutive_errors as number | undefined) ?? 0,
+    disabledReason: (row.disabled_reason as string | null | undefined) ?? null,
   };
 }
 
@@ -257,17 +386,46 @@ export async function insertStrategyRun(run: StrategyRun): Promise<void> {
     config: run.config,
     status: run.status,
     execution_mode: run.executionMode,
+    runtime_origin: run.runtimeOrigin ?? "legacy",
+    // Only sent when known, so processes that never trade keep working against
+    // a database that predates 0015.
+    ...(run.brokerAccount ? { broker_account: run.brokerAccount } : {}),
+    build_sha: run.buildSha ?? "unknown",
+    build_dirty: run.buildDirty ?? false,
     started_at: run.startedAt ? new Date(run.startedAt).toISOString() : null,
     stopped_at: run.stoppedAt ? new Date(run.stoppedAt).toISOString() : null,
-    total_signals: run.totalSignals,
-    total_orders: run.totalOrders,
-    realized_pnl: run.realizedPnl,
+    expires_at: run.expiresAt ? new Date(run.expiresAt).toISOString() : null,
+    ...(run.allocatedCapital ? { allocated_capital: run.allocatedCapital } : {}),
     meta: run.meta ?? null,
+    // Review-workflow linkage (0007). Null on runs started outside the approval
+    // path, e.g. the STARTUP_LEG1/LEG2 bootstrap route.
+    version_id: run.versionId ?? null,
+    proposal_id: run.proposalId ?? null,
+    owner_id: run.ownerId ?? null,
+    // A runner inserting its own run writes the lease in the same statement, so
+    // no other runner can adopt the row in the gap before a separate acquire.
+    ...(run.leaseOwner
+      ? {
+          lease_owner: run.leaseOwner,
+          lease_expires_at: run.leaseExpiresAt ? new Date(run.leaseExpiresAt).toISOString() : null,
+          last_heartbeat_at: new Date().toISOString(),
+        }
+      : {}),
   };
   const { error } = await supabase.from("strategy_runs").insert(payload);
   if (error) {
     logger.error("insertStrategyRun failed", { error: error.message });
+    // 23505 on strategy_runs_single_live (0004): this strategy already has a live run.
+    if (error.code === "23505") throw new StrategyAlreadyLiveError(run.strategyId);
     throw new Error(`insertStrategyRun failed: ${error.message}`);
+  }
+}
+
+/** Raised when inserting a second running run for a strategy that already has one. */
+export class StrategyAlreadyLiveError extends Error {
+  constructor(readonly strategyId: string) {
+    super(`Strategy ${strategyId} already has a running run — stop it before starting another`);
+    this.name = "StrategyAlreadyLiveError";
   }
 }
 
@@ -280,12 +438,16 @@ export async function updateStrategyRun(runId: UUID, updates: Partial<StrategyRu
   const payload: Record<string, unknown> = {};
   if (updates.status !== undefined)       payload.status         = updates.status;
   if (updates.stoppedAt !== undefined)    payload.stopped_at     = new Date(updates.stoppedAt).toISOString();
-  if (updates.totalSignals !== undefined) payload.total_signals  = updates.totalSignals;
-  if (updates.totalOrders !== undefined)  payload.total_orders   = updates.totalOrders;
-  if (updates.realizedPnl !== undefined)  payload.realized_pnl   = updates.realizedPnl;
+  if (updates.expiresAt !== undefined)    payload.expires_at     = updates.expiresAt ? new Date(updates.expiresAt).toISOString() : null;
+  if (updates.allocatedCapital !== undefined) payload.allocated_capital = updates.allocatedCapital;
   if (updates.meta !== undefined)         payload.meta           = updates.meta;
+  if (updates.consecutiveErrors !== undefined) payload.consecutive_errors = updates.consecutiveErrors;
+  if (updates.disabledReason !== undefined)    payload.disabled_reason    = updates.disabledReason;
   const { error } = await supabase.from("strategy_runs").update(payload).eq("id", runId);
-  if (error) logger.error("updateStrategyRun failed", { error: error.message });
+  if (error) {
+    logger.error("updateStrategyRun failed", { error: error.message });
+    throw new Error(`updateStrategyRun failed: ${error.message}`);
+  }
 }
 
 /**
@@ -294,7 +456,7 @@ export async function updateStrategyRun(runId: UUID, updates: Partial<StrategyRu
 export async function getAllStrategyRuns(): Promise<StrategyRun[]> {
   const supabase = getSupabaseClient();
   const [runsResult, strategiesResult] = await Promise.all([
-    supabase.from("strategy_runs").select("*").order("started_at", { ascending: false }),
+    supabase.from("strategy_runs").select(RUN_SELECT).order("started_at", { ascending: false }),
     supabase.from("strategies").select("id, name"),
   ]);
   if (runsResult.error) {
@@ -314,6 +476,46 @@ export async function getAllStrategyRuns(): Promise<StrategyRun[]> {
   });
 }
 
+
+/** Every run currently marked running in one execution mode (paper or live book). */
+export async function getRunningRuns(executionMode: string): Promise<StrategyRun[]> {
+  const supabase = getSupabaseClient();
+  const [runsResult, strategiesResult] = await Promise.all([
+    supabase
+      .from("strategy_runs")
+      .select("*")
+      .eq("status", "running")
+      .eq("execution_mode", executionMode)
+      .order("started_at", { ascending: true }),
+    supabase.from("strategies").select("id, name"),
+  ]);
+  if (runsResult.error) throw new Error(`getRunningRuns failed: ${runsResult.error.message}`);
+  const nameById = new Map<string, string>(
+    (strategiesResult.data ?? []).map((s) => [s.id as string, s.name as string]),
+  );
+  return (runsResult.data ?? []).map((row) => {
+    const r = row as Record<string, unknown>;
+    const name = nameById.get(r.strategy_id as string) ?? (r.config as Record<string, unknown>).name as string;
+    return mapStrategyRun({ ...r, name });
+  });
+}
+
+/** Counts active runs charged to one member inside one deployment boundary. */
+export async function countRunningRunsForOwner(
+  ownerId: UUID,
+  executionMode: string,
+  runtimeOrigin: string,
+): Promise<number> {
+  const { count, error } = await getSupabaseClient()
+    .from("strategy_runs")
+    .select("id", { count: "exact", head: true })
+    .eq("owner_id", ownerId)
+    .eq("execution_mode", executionMode)
+    .eq("runtime_origin", runtimeOrigin)
+    .eq("status", "running");
+  if (error) throw new Error(`countRunningRunsForOwner failed: ${error.message}`);
+  return count ?? 0;
+}
 
 /** Resolves the display name for a strategy run row.
  *  Prefers the live strategy config name; falls back to config.name in the JSONB. */
@@ -335,7 +537,7 @@ export async function getStrategyRunById(id: UUID): Promise<StrategyRun | null> 
   const supabase = getSupabaseClient();
   const { data, error } = await supabase
     .from("strategy_runs")
-    .select("*")
+    .select(RUN_SELECT)
     .eq("id", id)
     .single();
   if (error) {
@@ -401,6 +603,7 @@ export async function insertStrategy(input: {
   strategy_type: string;
   name: string;
   config: Record<string, unknown>;
+  owner_id: UUID;
 }): Promise<Strategy> {
   const supabase = getSupabaseClient();
   const { data, error } = await supabase
@@ -426,7 +629,29 @@ export async function updateStrategy(
 export async function deleteStrategy(id: UUID): Promise<void> {
   const supabase = getSupabaseClient();
   const { error } = await supabase.from("strategies").delete().eq("id", id);
-  if (error) logger.error("deleteStrategy failed", { error: error.message, id });
+  if (error) {
+    // Throw rather than log: a swallowed failure made the API report
+    // "Strategy deleted" while the row (and its history) remained.
+    logger.error("deleteStrategy failed", { error: error.message, id });
+    throw new Error(`deleteStrategy failed: ${error.message}`);
+  }
+}
+
+/**
+ * Counts the audit history attached to a saved strategy: every run (any
+ * status, any mode) and every proposal. A strategy with history cannot be
+ * deleted — strategy_runs.version_id references its versions, and deleting
+ * would erase the record of what traded and how it was reviewed.
+ */
+export async function getStrategyHistoryCounts(id: UUID): Promise<{ runs: number; proposals: number }> {
+  const supabase = getSupabaseClient();
+  const [runs, proposals] = await Promise.all([
+    supabase.from("strategy_runs").select("id", { count: "exact", head: true }).eq("strategy_id", id),
+    supabase.from("strategy_proposals").select("id", { count: "exact", head: true }).eq("strategy_id", id),
+  ]);
+  if (runs.error) throw new Error(`getStrategyHistoryCounts (runs) failed: ${runs.error.message}`);
+  if (proposals.error) throw new Error(`getStrategyHistoryCounts (proposals) failed: ${proposals.error.message}`);
+  return { runs: runs.count ?? 0, proposals: proposals.count ?? 0 };
 }
 
 // ------------------------------------------------------------------
@@ -536,8 +761,19 @@ export function downsampleEquityCurve<T>(curve: T[], targetPoints = 5000): T[] {
   return downsampled;
 }
 
-/** Persists a full backtest result summary to the backtest_results table. */
-export async function insertBacktestResult(result: BacktestResult): Promise<void> {
+/**
+ * Persists a full backtest result summary to the backtest_results table.
+ *
+ * Called ONLY from the explicit save path (POST /api/backtests/:id/save) —
+ * a completed run otherwise lives in server memory only, so this insert is
+ * what makes it durable. savedBy becomes the row's owner_id: under this
+ * table's semantics, mere existence of the row means someone chose to keep
+ * it, so owner_id unambiguously means "who saved it," not "who ran it."
+ *
+ * @param result - The completed BacktestResult to persist
+ * @param savedBy - app_users.id of the member saving this result
+ */
+export async function insertBacktestResult(result: BacktestResult, savedBy: UUID): Promise<void> {
   const supabase = getSupabaseClient();
 
   let downsampledEquity = result.equity_curve ?? [];
@@ -562,6 +798,7 @@ export async function insertBacktestResult(result: BacktestResult): Promise<void
   delete payload.orders;
   delete payload.fills;
   delete payload.reused_from_id;   // serve-time annotation, not a persisted fact
+  delete payload.result_expires_at; // staging-window annotation (backtest_jobs), not a column here
   delete payload.data_validation;  // derivable by re-running validateBars(); not a run result
   delete payload.fill_model;       // derivable from config + DEFAULT_FILL_MODEL merge
   delete payload.assumptions;      // derivable from metrics + config fields
@@ -569,6 +806,17 @@ export async function insertBacktestResult(result: BacktestResult): Promise<void
   // Persist the FK link to the strategy definition row if the config referenced one
   payload.strategy_id = result.config ? (result.config as { strategyId?: string }).strategyId ?? null : null;
   payload.strategy_version = result.config ? (result.config as { strategyVersion?: number }).strategyVersion ?? null : null;
+  // The exact config edit (0006) this run tested — distinct from strategy_version
+  // above, which is the algorithm's code version. This is what a proposal's
+  // "backtests for this version" lookup keys on.
+  payload.strategy_version_id =
+    result.config ? (result.config as { strategyVersionId?: string }).strategyVersionId ?? null : null;
+  payload.runtime_origin = result.config?.runtimeOrigin ?? "unknown";
+  payload.build_sha = result.config?.buildSha ?? "unknown";
+  payload.build_dirty = result.config?.buildDirty ?? false;
+
+  payload.owner_id = savedBy;
+  payload.saved_at = new Date().toISOString();
 
   const MAX_RETRIES = 3;
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
@@ -691,6 +939,17 @@ export async function getAllBacktestResults(): Promise<BacktestResult[]> {
   return (data ?? []) as unknown as BacktestResult[];
 }
 
+/** True when a saved backtest_results row exists — an id-only read, no equity curve. */
+export async function backtestResultExists(id: UUID): Promise<boolean> {
+  const { data, error } = await getSupabaseClient()
+    .from("backtest_results")
+    .select("id")
+    .eq("id", id)
+    .maybeSingle();
+  if (error) throw new Error(`backtestResultExists failed: ${error.message}`);
+  return data !== null;
+}
+
 /** Retrieves a single backtest result by ID, including the full equity curve. */
 export async function getBacktestResultById(id: UUID): Promise<BacktestResult | null> {
   const supabase = getSupabaseClient();
@@ -705,4 +964,19 @@ export async function getBacktestResultById(id: UUID): Promise<BacktestResult | 
     return null;
   }
   return data as BacktestResult;
+}
+
+/** Every run of one saved strategy, oldest first, with derived stats. */
+export async function getRunsForStrategy(strategyId: UUID): Promise<StrategyRun[]> {
+  const supabase = getSupabaseClient();
+  const [runsResult, strategyResult] = await Promise.all([
+    supabase.from("strategy_runs").select(RUN_SELECT).eq("strategy_id", strategyId).order("started_at", { ascending: true }),
+    supabase.from("strategies").select("name").eq("id", strategyId).maybeSingle(),
+  ]);
+  if (runsResult.error) throw new Error(`getRunsForStrategy failed: ${runsResult.error.message}`);
+  const fallback = (strategyResult.data?.name as string | undefined) ?? "";
+  return (runsResult.data ?? []).map((row) => {
+    const r = row as Record<string, unknown>;
+    return mapStrategyRun({ ...r, name: fallback || ((r.config as Record<string, unknown>).name as string) });
+  });
 }

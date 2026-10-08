@@ -33,10 +33,11 @@ import { SimulatedExecutionSink } from "../execution/simulatedExecution";
 import { DEFAULT_FILL_MODEL, type FillModelConfig } from "../execution/fillModel";
 import { validateBars, type ValidationIssue } from "./dataValidation";
 import { computeAnalytics } from "./performanceAnalytics";
+import { buildTradeLedger, tradeStats } from "../analytics/tradeLedger";
 import { BacktestLoader } from "./backtestLoader";
 import { BACKTEST_RISK_CONFIG } from "../../config/defaults";
 import { logger } from "../../utils/logger";
-import { nowMs, setClockOverride } from "../../utils/time";
+import { nowMs, setClockOverride, isClockLockedForLive } from "../../utils/time";
 import { newId } from "../../utils/ids";
 import type { BacktestConfig, BacktestResult } from "../../types/backtest";
 import type { PortfolioSnapshot } from "../../types/portfolio";
@@ -46,8 +47,21 @@ import type { Fill } from "../../types/orders";
 import type { Bar } from "../../types/market";
 import type { BacktestProgressPoint } from "./backtestStreamManager";
 
+/**
+ * How long the simulation loop may run before yielding to the event loop.
+ * In a worker process, timers (lease heartbeat, progress writes) only fire
+ * between yields; a window of 10k bars processed without one could outlast
+ * the job lease and get the run reclaimed by another worker mid-flight.
+ */
+const YIELD_EVERY_MS = 200;
+
+export interface BacktestRunOptions {
+  /** Aborting stops the run at the next yield point with an AbortError. */
+  signal?: AbortSignal;
+}
+
 export class BacktestEngine {
-  private readonly loader = new BacktestLoader();
+  constructor(private readonly loader: BacktestLoader = new BacktestLoader()) {}
 
   /**
    * Runs a full backtest with the given config and strategy factory.
@@ -61,7 +75,22 @@ export class BacktestEngine {
       eventBus: EventBus;
     }) => IStrategy[],
     onProgress?: (point: BacktestProgressPoint) => void,
+    options: BacktestRunOptions = {},
   ): Promise<BacktestResult> {
+    const { signal } = options;
+    signal?.throwIfAborted();
+    // A backtest installs a simulated clock and runs a long CPU-bound loop.
+    // Doing either inside a trading process corrupts live timestamps and
+    // starves the event loop that owns the broker WebSocket. Refuse early,
+    // before any state is built or any market data is fetched.
+    if (isClockLockedForLive()) {
+      throw new Error(
+        "BacktestEngine cannot run in a live or paper trading process. " +
+          "Run backtests in the API-only process (npm run dev:api, port 8082) " +
+          "or via npm run dev:backtest.",
+      );
+    }
+
     const startedAt = nowMs();
     logger.info("BacktestEngine: starting", { id: config.id, name: config.name });
 
@@ -101,10 +130,18 @@ export class BacktestEngine {
 
     // Register strategies and any per-strategy capital budgets
     const strategies = strategyFactory({ symbolState, portfolioState, orderState, eventBus });
-    // Derive strategyVersion from the first strategy that declares one, so the DB
-    // column is populated even when the caller doesn't set it explicitly in config.
-    const effectiveStrategyVersion =
-      config.strategyVersion ?? strategies.find((s) => s.version != null)?.version;
+    // Record the algorithm version of the code that actually runs here. The API
+    // that queued the job stamps config.strategyVersion from its own build; during
+    // a deploy a worker on a different build may claim it, and labelling the
+    // result with the API's version would attribute it to code that never ran.
+    const builtVersion = strategies.find((s) => s.version != null)?.version;
+    if (config.strategyVersion != null && builtVersion != null && config.strategyVersion !== builtVersion) {
+      throw new Error(
+        `Backtest was queued for algorithm v${config.strategyVersion}, but this worker runs ` +
+        `v${builtVersion}. Re-run it once the deploy has finished.`,
+      );
+    }
+    const effectiveStrategyVersion = builtVersion ?? config.strategyVersion;
     for (const strategy of strategies) {
       const budget = (strategy.config as BaseStrategyConfig).riskBudget;
       if (budget) riskEngine.registerStrategyBudget({ ...budget, strategyId: strategy.id });
@@ -146,6 +183,7 @@ export class BacktestEngine {
 
     let processedBars = 0;
     let batchIndex = 0;
+    let lastYieldAt = performance.now();
 
     try {
       for await (const window of this.loader.streamBars(
@@ -154,6 +192,7 @@ export class BacktestEngine {
         config.endDate,
         "1Min",
       )) {
+        signal?.throwIfAborted();
         // Validate this window. Cross-window ordering issues can't occur:
         // streamBars' safe-horizon guarantee means no batch ever spans windows.
         const v = validateBars(window, config.strategyConfig.symbols, "raw");
@@ -258,6 +297,12 @@ export class BacktestEngine {
           }
           processedBars += batch.length;
           batchIndex++;
+
+          if (performance.now() - lastYieldAt >= YIELD_EVERY_MS) {
+            await new Promise<void>((resolve) => setImmediate(resolve));
+            lastYieldAt = performance.now();
+            signal?.throwIfAborted();
+          }
         }
       }
     } finally {
@@ -394,72 +439,9 @@ export class BacktestEngine {
     fills: Fill[],
     initialCapital: number,
   ) {
-    // Trade-level FIFO lot accounting — unchanged from the prior revision.
-    interface Lot { price: number; qty: number; commissionPerShare: number; }
-    const longLots = new Map<string, Lot[]>();
-    const shortLots = new Map<string, Lot[]>();
-    const pnlPerTrade: number[] = [];
-
-    const consume = (
-      lots: Lot[],
-      closerQty: number,
-      closerPrice: number,
-      closerCommissionPerShare: number,
-      direction: "long" | "short",
-    ): number => {
-      let remaining = closerQty;
-      while (remaining > 0 && lots.length > 0) {
-        const lot = lots[0];
-        const slice = Math.min(lot.qty, remaining);
-        const grossPnl =
-          direction === "long"
-            ? (closerPrice - lot.price) * slice
-            : (lot.price - closerPrice) * slice;
-        const allocatedCommission =
-          slice * lot.commissionPerShare + slice * closerCommissionPerShare;
-        pnlPerTrade.push(grossPnl - allocatedCommission);
-        lot.qty -= slice;
-        remaining -= slice;
-        if (lot.qty === 0) lots.shift();
-      }
-      return closerQty - remaining;
-    };
-
-    for (const fill of fills) {
-      const commissionPerShare = fill.qty > 0 ? fill.commission / fill.qty : 0;
-      if (fill.side === "buy") {
-        const shorts = shortLots.get(fill.symbol) ?? [];
-        const closedQty = shorts.length > 0
-          ? consume(shorts, fill.qty, fill.price, commissionPerShare, "short")
-          : 0;
-        if (shorts.length > 0 || closedQty > 0) shortLots.set(fill.symbol, shorts);
-        const residual = fill.qty - closedQty;
-        if (residual > 0) {
-          const lots = longLots.get(fill.symbol) ?? [];
-          lots.push({ price: fill.price, qty: residual, commissionPerShare });
-          longLots.set(fill.symbol, lots);
-        }
-      } else {
-        const longs = longLots.get(fill.symbol) ?? [];
-        const closedQty = longs.length > 0
-          ? consume(longs, fill.qty, fill.price, commissionPerShare, "long")
-          : 0;
-        if (longs.length > 0 || closedQty > 0) longLots.set(fill.symbol, longs);
-        const residual = fill.qty - closedQty;
-        if (residual > 0) {
-          const lots = shortLots.get(fill.symbol) ?? [];
-          lots.push({ price: fill.price, qty: residual, commissionPerShare });
-          shortLots.set(fill.symbol, lots);
-        }
-      }
-    }
-
-    const totalTrades = pnlPerTrade.length;
-    const wins = pnlPerTrade.filter((p) => p > 0);
-    const losses = pnlPerTrade.filter((p) => p <= 0);
-    const winRate = totalTrades > 0 ? wins.length / totalTrades : 0;
-    const avgWin = wins.length > 0 ? wins.reduce((a, b) => a + b, 0) / wins.length : 0;
-    const avgLoss = losses.length > 0 ? losses.reduce((a, b) => a + b, 0) / losses.length : 0;
+    // Trade-level FIFO lot accounting, shared with the live run reports.
+    const pnlPerTrade = buildTradeLedger(fills).trades.map((t) => t.pnl);
+    const { totalTrades, winRate, avgWin, avgLoss } = tradeStats(pnlPerTrade);
 
     if (equityCurve.length === 0) {
       return {

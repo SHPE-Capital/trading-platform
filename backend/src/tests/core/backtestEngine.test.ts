@@ -33,9 +33,12 @@ jest.mock('../../core/backtest/backtestLoader', () => ({
 
 import { BacktestLoader } from '../../core/backtest/backtestLoader';
 import { BacktestEngine } from '../../core/backtest/backtestEngine';
+import { lockClockForLive, unlockClockForLive } from '../../utils/time';
 import type { BacktestConfig } from '../../types/backtest';
 import type { PortfolioSnapshot } from '../../types/portfolio';
 import type { Fill } from '../../types/orders';
+import { PairsStrategy } from '../../strategies/pairs/pairsStrategy';
+import { createPairsConfig } from '../../strategies/pairs/pairsConfig';
 
 const MockLoader = BacktestLoader as jest.MockedClass<typeof BacktestLoader>;
 
@@ -123,6 +126,34 @@ beforeEach(() => {
   MockLoader.mockImplementation(() => ({ streamBars: jest.fn().mockImplementation(async function*() { yield []; }) } as unknown as BacktestLoader));
 });
 
+describe('run(): refuses to execute in a trading process', () => {
+  afterEach(() => {
+    unlockClockForLive();
+  });
+
+  it('throws before loading any bars when the live clock lock is held', async () => {
+    lockClockForLive('paper');
+    const engine = makeEngineWithBars([makeBar('SPY', 1_000)]);
+
+    await expect(engine.run(makeConfig(), () => [])).rejects.toThrow(
+      /cannot run in a live or paper trading process/,
+    );
+
+    // The guard is the first statement in run(), so no market data is fetched.
+    expect(MockLoader.mock.results[0].value.streamBars).not.toHaveBeenCalled();
+  });
+
+  it('runs normally once the lock is released', async () => {
+    lockClockForLive('paper');
+    unlockClockForLive();
+
+    const engine = makeEngineWithBars([]);
+    const result = await engine.run(makeConfig(), () => []);
+
+    expect(result.status).toBe('completed');
+  });
+});
+
 describe('run(): result structure', () => {
   it('returns status=completed with only the final MTM snapshot when there are no bars', async () => {
     const engine = makeEngineWithBars([]);
@@ -192,8 +223,32 @@ describe('run(): result structure', () => {
   });
 });
 
+describe('run(): algorithm version provenance', () => {
+  const pairs = () => [new PairsStrategy(createPairsConfig('SPY', 'QQQ'))];
+
+  it('records the version of the strategy code that actually ran', async () => {
+    const engine = makeEngineWithBars([]);
+    const result = await engine.run(makeConfig(), pairs);
+    expect(result.config.strategyVersion).toBe(PairsStrategy.VERSION);
+  });
+
+  it('fails instead of mislabelling when the queued version differs from the built code', async () => {
+    // A job queued by an API on the previous build, claimed by a worker on the new one.
+    const engine = makeEngineWithBars([]);
+    await expect(
+      engine.run(makeConfig({ strategyVersion: PairsStrategy.VERSION - 1 }), pairs),
+    ).rejects.toThrow(/queued for algorithm v\d+, but this worker runs v\d+/);
+  });
+
+  it('accepts a queued version that matches the built code', async () => {
+    const engine = makeEngineWithBars([]);
+    const result = await engine.run(makeConfig({ strategyVersion: PairsStrategy.VERSION }), pairs);
+    expect(result.status).toBe('completed');
+  });
+});
+
 describe('_computeMetrics', () => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   let computeMetrics: (curve: PortfolioSnapshot[], fills: Fill[], initial: number) => any;
 
   beforeEach(() => {
@@ -298,7 +353,6 @@ import type { StrategySignal } from '../../types/strategy';
  * be expired by the backtest engine's terminal drain.
  */
 function makeLastBarSignalStrategy(symbol: string, lastBarTs: number): IStrategy {
-  let evalCount = 0;
   return {
     id: 'last-bar-strat' as UUID,
     type: 'pairs_trading',
@@ -312,10 +366,9 @@ function makeLastBarSignalStrategy(symbol: string, lastBarTs: number): IStrategy
       cooldownMs: 0,
       enabled: true,
     },
-    start: () => { evalCount = 0; },
+    start: () => {},
     stop: () => {},
     evaluate: (ctx): StrategySignal | null => {
-      evalCount++;
       const bar = ctx.symbolState.get(symbol)?.latestBar;
       if (!bar || bar.ts !== lastBarTs) return null;
       return {

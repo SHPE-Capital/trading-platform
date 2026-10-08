@@ -44,6 +44,34 @@ export function computeZScore(values: number[]): ZScoreResult | null {
 }
 
 /**
+ * Computes a z-score from pre-computed distribution statistics.
+ *
+ * Companion to computeZScore for callers that already maintain a running mean
+ * and standard deviation — RollingNumericWindow keeps both incrementally, so
+ * rescanning the window just to score one value would be wasted work.
+ *
+ * A zero standard deviation means every observation is identical, so the value
+ * sits exactly at the mean by definition and scores 0 rather than dividing by zero.
+ *
+ * @param value - The observation to score
+ * @param mean - Mean of the distribution
+ * @param std - Sample standard deviation of the distribution
+ * @returns ZScoreResult carrying the score and the inputs used
+ */
+export function computeZScoreFromStats(
+  value: number,
+  mean: number,
+  std: number,
+): ZScoreResult {
+  return {
+    zScore: std === 0 ? 0 : (value - mean) / std,
+    mean,
+    std,
+    value,
+  };
+}
+
+/**
  * Computes the arithmetic mean of an array of numbers.
  * @param values - Input array
  * @returns Mean value

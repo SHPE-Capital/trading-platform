@@ -9,7 +9,7 @@
  */
 
 import { apiGet } from "./api";
-import type { PortfolioSnapshot, Order } from "../types/portfolio";
+import type { PortfolioSnapshot, Order, Fill } from "../types/portfolio";
 
 /**
  * Fetches the current portfolio snapshot from the backend.
@@ -32,6 +32,11 @@ export async function fetchEquityCurve(limit = 500): Promise<PortfolioSnapshot[]
  * Fetches order history. Pass a strategyRunId to filter by run,
  * or omit it to fetch all orders (newest first, up to 500).
  */
+/** The most recent fills across every run, newest first. */
+export async function fetchRecentFills(): Promise<Fill[]> {
+  return apiGet<Fill[]>("/portfolio/fills");
+}
+
 export async function fetchOrders(strategyRunId?: string): Promise<Order[]> {
   const qs = strategyRunId ? `?strategyRunId=${strategyRunId}` : "";
   return apiGet<Order[]>(`/portfolio/orders${qs}`);

@@ -10,7 +10,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { fetchBacktests, fetchBacktest, runBacktest } from "../services/backtestService";
+import { fetchBacktests, fetchBacktest, runBacktest, saveBacktest } from "../services/backtestService";
 import { config as appConfig } from "../config";
 import type { BacktestConfig, BacktestResult } from "../types/api";
 
@@ -20,16 +20,30 @@ interface BacktestProgress {
   pct: number;
 }
 
+/**
+ * Where a submitted run is in the worker queue. "queued" for long usually means
+ * no worker process is running (npm run dev:worker).
+ */
+export type QueueStatus = "queued" | "running";
+
 interface UseBacktestResult {
   results: BacktestResult[];
   selectedResult: BacktestResult | null;
   previousResult: BacktestResult | null;
   isLoading: boolean;
   isRunning: boolean;
+  isSaving: boolean;
   progress: BacktestProgress | null;
+  queueStatus: QueueStatus | null;
+  /** When the current run was queued (ms) — lets the page flag a stuck queue. */
+  queuedAt: number | null;
+  /** The last run reused an identical earlier result instead of simulating. */
+  reused: boolean;
   error: string | null;
+  saveError: string | null;
   run: (config: Omit<BacktestConfig, "id">) => Promise<string>;
   rerun: (config: Omit<BacktestConfig, "id">) => Promise<string>;
+  save: (id: string) => Promise<void>;
   loadResult: (id: string, prefetched?: BacktestResult) => Promise<void>;
   refetch: () => void;
 }
@@ -44,8 +58,13 @@ export function useBacktest(): UseBacktestResult {
   const [previousResult, setPreviousResult] = useState<BacktestResult | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRunning, setIsRunning] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [progress, setProgress] = useState<BacktestProgress | null>(null);
+  const [queueStatus, setQueueStatus] = useState<QueueStatus | null>(null);
+  const [queuedAt, setQueuedAt] = useState<number | null>(null);
+  const [reused, setReused] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const esRef = useRef<EventSource | null>(null);
 
   const fetchData = useCallback(async () => {
@@ -68,19 +87,51 @@ export function useBacktest(): UseBacktestResult {
   const run = useCallback(async (config: Omit<BacktestConfig, "id">, force = false): Promise<string> => {
     setIsRunning(true);
     setProgress(null);
+    setQueueStatus(null);
+    setQueuedAt(null);
+    setReused(false);
     setError(null);
+    const finish = () => {
+      setIsRunning(false);
+      setProgress(null);
+      setQueueStatus(null);
+      setQueuedAt(null);
+    };
     try {
-      const { backtestId } = await runBacktest(config, force);
-      await fetchData();
+      const queued = await runBacktest(config, force);
+      const { backtestId } = queued;
 
-      // Open SSE stream for real-time progress.
-      // appConfig.apiBaseUrl (e.g. http://localhost:8080/api) + path = full endpoint URL.
-      // isRunning stays true here — the SSE handlers below own the transition to false.
-      const es = new EventSource(`${appConfig.apiBaseUrl}/backtests/${backtestId}/stream`);
+      // An identical run already finished — nothing to wait for.
+      if (queued.status === "succeeded") {
+        try {
+          setSelectedResult(await fetchBacktest(backtestId));
+          setReused(!!queued.reused);
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Failed to load result");
+        } finally {
+          finish();
+        }
+        return backtestId;
+      }
+
+      setQueueStatus(queued.status === "running" ? "running" : "queued");
+      setQueuedAt(Date.now());
+
+      // The run happens in a worker process; any API process relays its
+      // progress from the job row. isRunning stays true until the stream ends.
+      const es = new EventSource(`${appConfig.backtestApiBaseUrl}/backtests/${backtestId}/stream`);
       esRef.current = es;
+
+      es.addEventListener("status", (e: MessageEvent) => {
+        try {
+          const { status } = JSON.parse(e.data as string) as { status: string };
+          if (status === "queued" || status === "running") setQueueStatus(status);
+        } catch {}
+      });
 
       es.addEventListener("progress", (e: MessageEvent) => {
         const { barIndex, totalBars } = JSON.parse(e.data as string) as { barIndex: number; totalBars: number };
+        setQueueStatus("running");
         // Cap at 99 — the bar reaches 100% only when the complete event fires.
         setProgress({ barIndex, totalBars, pct: Math.min(99, Math.round((barIndex / totalBars) * 100)) });
       });
@@ -88,9 +139,6 @@ export function useBacktest(): UseBacktestResult {
       es.addEventListener("complete", (e: MessageEvent) => {
         es.close();
         esRef.current = null;
-        // For deduplicated runs the server sends { backtestId: <canonical DB id> }
-        // which differs from the ephemeral config.id we started with. Using the
-        // canonical id guarantees the fetch hits the DB even after the cache expires.
         let resultId = backtestId;
         try {
           const data = JSON.parse(e.data as string) as { backtestId?: string };
@@ -99,42 +147,75 @@ export function useBacktest(): UseBacktestResult {
         fetchBacktest(resultId)
           .then((result) => { setSelectedResult(result); return fetchData(); })
           .catch((err) => { setError(err instanceof Error ? err.message : "Failed to load result"); })
-          .finally(() => { setIsRunning(false); setProgress(null); });
+          .finally(finish);
       });
 
       es.addEventListener("error", (e: Event) => {
+        // A named `error` event carries the job's failure. A bare connection
+        // error while the job is live is the browser auto-reconnecting — let it.
+        if (!(e instanceof MessageEvent) || !e.data) {
+          if (es.readyState === EventSource.CLOSED) {
+            esRef.current = null;
+            setError("Lost the connection to the backtest stream");
+            finish();
+          }
+          return;
+        }
         es.close();
         esRef.current = null;
         let msg = "Backtest failed";
-        if (e instanceof MessageEvent && e.data) {
-          try { msg = (JSON.parse(e.data as string) as { message: string }).message; } catch {}
-        }
+        try { msg = (JSON.parse(e.data as string) as { message: string }).message; } catch {}
         setError(msg);
-        setIsRunning(false);
-        setProgress(null);
+        finish();
       });
 
       return backtestId;
     } catch (err) {
-      setIsRunning(false);
-      setProgress(null);
+      finish();
       throw err;
     }
   }, [fetchData]);
 
   const loadResult = useCallback(async (id: string, prefetched?: BacktestResult) => {
-    const result = prefetched ?? await fetchBacktest(id);
-    setSelectedResult(result);
+    try {
+      setError(null);
+      const result = prefetched ?? await fetchBacktest(id);
+      setSelectedResult(result);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load result");
+    }
   }, []);
+
+  const save = useCallback(async (id: string): Promise<void> => {
+    setIsSaving(true);
+    setSaveError(null);
+    try {
+      await saveBacktest(id);
+      // Optimistic: mark the currently-displayed result saved without a round trip.
+      // The real saved_at will show up next time this result is loaded from the list
+      // (fetchData below refreshes it, since a saved result now appears there).
+      setSelectedResult((prev) => (prev?.id === id ? { ...prev, saved_at: Date.now() } : prev));
+      await fetchData();
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Failed to save backtest");
+      throw err;
+    } finally {
+      setIsSaving(false);
+    }
+  }, [fetchData]);
 
   // Stores the current result as "previous" then forces a fresh run (bypasses dedup).
   const selectedResultRef = useRef<BacktestResult | null>(null);
-  selectedResultRef.current = selectedResult;
+  useEffect(() => { selectedResultRef.current = selectedResult; }, [selectedResult]);
   const rerun = useCallback(async (config: Omit<BacktestConfig, "id">): Promise<string> => {
     setPreviousResult(selectedResultRef.current);
     setSelectedResult(null);
     return run(config, true);
   }, [run]);
 
-  return { results, selectedResult, previousResult, isLoading, isRunning, progress, error, run, rerun, loadResult, refetch: fetchData };
+  return {
+    results, selectedResult, previousResult, isLoading, isRunning, isSaving, progress,
+    queueStatus, queuedAt, reused, error, saveError,
+    run, rerun, save, loadResult, refetch: fetchData,
+  };
 }

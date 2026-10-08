@@ -159,6 +159,17 @@ describe('AlpacaMarketDataAdapter: subscribe/unsubscribe', () => {
     expect(mockWs.send).not.toHaveBeenCalled();
   });
 
+  it('replays a subscription queued before authentication', () => {
+    const { adapter } = makeAdapter();
+    const mockWs = { send: jest.fn() };
+    (adapter as unknown as { ws: unknown }).ws = mockWs;
+    adapter.subscribe(['SPY']);
+    handleMessage(adapter, [{ T: 'success', msg: 'authenticated' }]);
+    expect(mockWs.send).toHaveBeenCalledWith(
+      JSON.stringify({ action: 'subscribe', quotes: ['SPY'], trades: ['SPY'], bars: ['SPY'] }),
+    );
+  });
+
   it('sends subscription message when connected', () => {
     const { adapter } = makeAdapter();
     const mockWs = { send: jest.fn() };

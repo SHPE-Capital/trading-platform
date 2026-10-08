@@ -9,6 +9,7 @@ import {
   deleteStrategyConfig,
 } from "../services/strategiesService";
 import type { StoredStrategy, StrategyDefinition, StrategyType } from "../types/strategy";
+import type { StrategyVersion } from "../types/review";
 
 interface UseStrategyConfigsResult {
   strategies: StoredStrategy[];
@@ -16,7 +17,7 @@ interface UseStrategyConfigsResult {
   isLoading: boolean;
   error: string | null;
   save: (name: string, config: Record<string, unknown>) => Promise<StoredStrategy>;
-  update: (id: string, name: string, config: Record<string, unknown>) => Promise<void>;
+  update: (id: string, name: string, config: Record<string, unknown>, changeSummary?: string) => Promise<StrategyVersion>;
   remove: (id: string) => Promise<void>;
   refetch: () => void;
 }
@@ -86,10 +87,16 @@ export function useStrategyConfigs(type: StrategyType): UseStrategyConfigsResult
     return created;
   }, [type, fetchData]);
 
-  const update = useCallback(async (id: string, name: string, config: Record<string, unknown>): Promise<void> => {
-    await updateStrategyConfig(id, name, config);
+  const update = useCallback(async (
+    id: string,
+    name: string,
+    config: Record<string, unknown>,
+    changeSummary?: string,
+  ): Promise<StrategyVersion> => {
+    const result = await updateStrategyConfig(id, name, config, changeSummary);
     _cache.delete(type);
     await fetchData();
+    return result.version;
   }, [type, fetchData]);
 
   const remove = useCallback(async (id: string): Promise<void> => {

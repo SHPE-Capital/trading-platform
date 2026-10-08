@@ -34,6 +34,7 @@ export interface SystemStatus {
     alpaca: ServiceHealth;
   };
   mode: ExecutionMode;
+  build?: { origin: string; sha: string; dirty: boolean };
   ts: string;
 }
 
@@ -48,9 +49,17 @@ export interface BacktestConfig {
   commissionPerShare: number;
   /** Set when the user picked a saved strategy; written to backtest_results.strategy_id */
   strategyId?: string;
+  /**
+   * The strategy_versions row this run is testing — set alongside strategyId
+   * when that strategy has version history. Lets a proposal find this backtest
+   * via "backtests for this exact version" once it's saved.
+   */
+  strategyVersionId?: string;
   description?: string;
   /** Annualized risk-free rate for Sharpe/Sortino (default 0) */
   riskFreeRateAnnual?: number;
+  /** Set on a backtest that replays a live run's window ("Compare with backtest"). */
+  sourceRunId?: string;
   /** Optional benchmark equity/return series — must be chronologically ordered */
   benchmarkCurve?: { ts: number; value: number }[];
   /** Fill model override; merged with server defaults when supplied */
@@ -80,6 +89,15 @@ export interface BacktestResult {
   event_count?: number;
   /** Set when this result was served from a previous identical run. */
   reused_from_id?: string;
+  /**
+   * Present only once someone has explicitly saved this result — a fresh run
+   * lives only in server memory until POST /backtests/:id/save. Absence means
+   * "not saved yet," not "unknown."
+   */
+  owner_id?: string;
+  saved_at?: number;
+  /** For a run not yet saved: when it stops being saveable (Unix ms). */
+  result_expires_at?: number;
 }
 
 export type ReplaySpeed = 0.25 | 0.5 | 1 | 2 | 5 | 10 | "step";

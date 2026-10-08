@@ -1,9 +1,14 @@
 /**
  * runtime/paper-trading.ts
  *
- * Paper trading entry point. Uses Alpaca paper endpoints and the
- * PaperExecutionSink (simulated fills). Boots with an empty strategy
- * registry — strategies are started via the frontend or REST API.
+ * Paper trading entry point. Boots with an empty strategy registry —
+ * strategies are started via the frontend or REST API.
+ *
+ * EXECUTION_TARGET picks where orders go:
+ *   sim           (default) fills locally against market data; no broker keys
+ *   alpaca-paper  sends orders to the Alpaca paper account behind
+ *                 ALPACA_API_KEY — refused at boot if that account belongs to
+ *                 another deployment (see config/protectedAccounts.ts)
  *
  * Configurable env vars (optional, with defaults):
  *   INITIAL_CAPITAL=100000   Starting portfolio equity
@@ -24,9 +29,14 @@ import { env } from "../config/env";
 import { logger } from "../utils/logger";
 
 async function main(): Promise<void> {
-  logger.info("runtime/paper-trading: starting paper trading mode");
+  if (env.executionTarget === "alpaca-live") {
+    logger.error("runtime/paper-trading: EXECUTION_TARGET=alpaca-live belongs to the real-trading runtime. Exiting.");
+    process.exit(1);
+  }
+  logger.info(`runtime/paper-trading: starting paper trading mode [${env.executionTarget}]`);
   await bootstrapRuntime({
     mode: "paper",
+    target: env.executionTarget,
     sinkFactory: (adapter) => new PaperExecutionSink(adapter),
     initialCapital: env.initialCapital,
     startupLeg1: env.startupLeg1 || undefined,

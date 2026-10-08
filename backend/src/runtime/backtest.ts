@@ -12,6 +12,8 @@
  */
 
 import { BacktestEngine } from "../core/backtest/backtestEngine";
+import { BacktestLoader } from "../core/backtest/backtestLoader";
+import { SupabaseBarCache } from "../adapters/supabase/barCacheRepository";
 import { PairsStrategy } from "../strategies/pairs/pairsStrategy";
 import { createPairsConfig } from "../strategies/pairs/pairsConfig";
 import { insertBacktestResult, insertBacktestOrders, insertBacktestFills } from "../adapters/supabase/repositories";
@@ -38,7 +40,7 @@ async function main(): Promise<void> {
     description: "Initial SPY/QQQ pairs backtest",
   };
 
-  const engine = new BacktestEngine();
+  const engine = new BacktestEngine(new BacktestLoader({ cache: new SupabaseBarCache() }));
   const strategy = new PairsStrategy(pairsConfig);
   const result = await engine.run(config, () => [strategy]);
 
@@ -54,7 +56,19 @@ async function main(): Promise<void> {
     events: result.event_count,
   });
 
-  await insertBacktestResult(result);
+  // insertBacktestResult now requires the saving member's app_users.id (owner_id
+  // has an FK to app_users) — there's no HTTP request/JWT here to derive one from,
+  // so this CLI entry point takes it from an env var. Running this script at all is
+  // already an explicit, deliberate action, unlike the app's UI flow it mirrors.
+  const cliOwnerId = process.env.BACKTEST_CLI_OWNER_ID;
+  if (!cliOwnerId) {
+    throw new Error(
+      "BACKTEST_CLI_OWNER_ID is required — set it to your app_users.id so this " +
+        "result's owner_id FK resolves. Find your id via GET /api/auth/me.",
+    );
+  }
+
+  await insertBacktestResult(result, cliOwnerId);
   logger.info("runtime/backtest: summary persisted", { id: result.id, event_count: result.event_count });
 
   await insertBacktestOrders(result.id, result.orders ?? []);

@@ -14,6 +14,16 @@ import type { PairsStrategyConfig } from "./pairsTypes";
 import type { Symbol, ExecutionAlgoType } from "../../types/common";
 
 /**
+ * Default deadband applied either side of the Engle-Granger critical value.
+ *
+ * Sized from observed XOM/CVX behaviour: with a long OLS window the test
+ * statistic stabilises and then jitters by a few thousandths per recalculation.
+ * 0.15 is wide enough to absorb that noise while still reacting to a genuine
+ * regime change, which moves tau by several tenths.
+ */
+export const DEFAULT_COINT_HYSTERESIS = 0.15;
+
+/**
  * Default pairs strategy configuration values.
  * These represent conservative initial settings suitable for paper trading.
  */
@@ -43,6 +53,7 @@ export const DEFAULT_PAIRS_CONFIG: Omit<
   olsWindowMs: 14_400_000,     // 4-hour OLS window (2× the spread window)
   olsRecalcIntervalBars: 5,    // Recompute hedge ratio every 5 bars
   cointSignificanceLevel: 0.05, // Block entry when EG test p > 5%
+  cointHysteresis: DEFAULT_COINT_HYSTERESIS, // Deadband so the gate cannot flap
 
   executionAlgo: "market" as ExecutionAlgoType,
   // TODO: Change executionAlgo to "twap" or "vwap" for large-notional trades to reduce

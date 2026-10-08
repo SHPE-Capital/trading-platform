@@ -1,0 +1,74 @@
+# Local dev/test parity with the eventual EC2 deployment — same image, same
+# process separation as production. Production adds a reverse-proxy/TLS
+# layer (Caddy) and reads secrets from SSM Parameter Store instead of
+# backend/.env; that's a docker-compose.prod.yml addition for the CI/CD step,
+# not needed to exercise the app locally.
+#
+# Backtests only ever execute in backtest-worker containers (Part 02): the API
+# processes just enqueue and relay progress. Keep the worker a separate
+# container from anything that trades — the engine installs a process-global
+# simulated clock while it runs, and a trading process refuses it outright
+# (utils/time.ts clock lock). Scale workers with --scale backtest-worker=N.
+
+services:
+  backtest-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: ["node", "dist/runtime/backtestWorker.js"]
+    env_file: ./backend/.env
+    restart: unless-stopped
+    cpus: 1.0
+    stop_grace_period: 60s
+    healthcheck:
+      disable: true
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: ["node", "dist/index.js"]
+    env_file: ./backend/.env
+    environment:
+      PORT: "8082"
+    ports:
+      - "8082:8082"
+    restart: unless-stopped
+    stop_grace_period: 60s
+
+  paper-trading:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: ["node", "dist/runtime/paper-trading.js"]
+    env_file: ./backend/.env
+    environment:
+      PORT: "8080"
+      # Production trades the club account (APP_RUNTIME_ORIGIN=aws-prod and
+      # EXPECTED_BROKER_ACCOUNT come from SSM). Anywhere else the boot check
+      # refuses the club account, so run this with your own paper keys or
+      # EXECUTION_TARGET=sim.
+      EXECUTION_TARGET: ${EXECUTION_TARGET:-alpaca-paper}
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+    stop_grace_period: 60s
+
+  # Deliberately not started by default (see AWS deployment plan: real-money
+  # trading ships as its own explicit decision, not a side effect of
+  # containerizing the app). Start it only with:
+  #   docker compose --profile real-trading up real-trading
+  real-trading:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: ["node", "dist/runtime/real-trading.js"]
+    env_file: ./backend/.env
+    environment:
+      PORT: "8081"
+      EXECUTION_TARGET: alpaca-live
+    ports:
+      - "8081:8081"
+    profiles: ["real-trading"]
+    restart: unless-stopped
+    stop_grace_period: 60s

@@ -20,6 +20,9 @@ import {
   updateStrategyConfig,
   deleteStrategyConfig,
 } from "../controllers/strategiesController";
+import { listVersions, createVersion } from "../controllers/proposalsController";
+import { requireAuth } from "../middleware/requireAuth";
+import { getStrategyPerformance } from "../controllers/performanceController";
 
 const router = Router();
 
@@ -28,34 +31,47 @@ const router = Router();
 // ------------------------------------------------------------------
 
 /** GET /api/strategies/configs — list all saved strategy configs */
-router.get("/configs", listStrategies);
+router.get("/configs", requireAuth, listStrategies);
 
 /** GET /api/strategies/configs/defaults/:type — hardcoded type defaults */
-router.get("/configs/defaults/:type", getStrategyDefaults);
+router.get("/configs/defaults/:type", requireAuth, getStrategyDefaults);
 
-/** POST /api/strategies/configs — create a new saved config */
-router.post("/configs", createStrategy);
+/** POST /api/strategies/configs — create a new saved config (also its v1 version, so requires an author) */
+router.post("/configs", requireAuth, createStrategy);
 
-/** PUT /api/strategies/configs/:configId — update name/config (version unchanged) */
-router.put("/configs/:configId", updateStrategyConfig);
+/** PUT /api/strategies/configs/:configId — update name/config (version unchanged); any signed-in member may edit */
+router.put("/configs/:configId", requireAuth, updateStrategyConfig);
 
 /** DELETE /api/strategies/configs/:configId — remove a saved config */
-router.delete("/configs/:configId", deleteStrategyConfig);
+router.delete("/configs/:configId", requireAuth, deleteStrategyConfig);
 
 // ------------------------------------------------------------------
 // Run management
 // ------------------------------------------------------------------
 
 /** GET /api/strategies — list all strategy runs */
-router.get("/", listStrategyRuns);
+router.get("/", requireAuth, listStrategyRuns);
 
 /** GET /api/strategies/:id — get a specific strategy run */
-router.get("/:id", getStrategyRun);
+router.get("/:id", requireAuth, getStrategyRun);
 
 /** POST /api/strategies/start — create and start a new strategy run */
-router.post("/start", startStrategyRun);
+router.post("/start", requireAuth, startStrategyRun);
 
 /** POST /api/strategies/:id/stop — stop a running strategy */
-router.post("/:id/stop", stopStrategyRun);
+router.post("/:id/stop", requireAuth, stopStrategyRun);
+
+// ------------------------------------------------------------------
+// Config version history
+// ------------------------------------------------------------------
+
+/** GET /api/strategies/:strategyId/versions — full config history */
+router.get("/:strategyId/versions", requireAuth, listVersions);
+
+/** GET /api/strategies/:strategyId/performance — lifetime performance across every run of a saved strategy */
+router.get("/:strategyId/performance", requireAuth, getStrategyPerformance);
+
+/** POST /api/strategies/:strategyId/versions — append an immutable edit */
+router.post("/:strategyId/versions", requireAuth, createVersion);
 
 export default router;

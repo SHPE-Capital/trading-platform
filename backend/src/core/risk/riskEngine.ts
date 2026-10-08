@@ -30,15 +30,25 @@ import { DEFAULT_RISK_CONFIG } from "../../config/defaults";
 import type { RiskConfig, RiskCheckResult, StrategyRiskBudget, PortfolioRiskViolation } from "../../types/risk";
 import type { OrderIntent } from "../../types/orders";
 import type { PortfolioSnapshot } from "../../types/portfolio";
+import type { MarketHours } from "../market/marketHours";
 
 export class RiskEngine {
   private config: RiskConfig;
-  /** Per-strategy last order timestamp (for cooldown enforcement) */
+  /**
+   * Last order timestamp per strategy and symbol (for cooldown enforcement).
+   * Keyed by symbol too: a strategy-wide key rejected a pair's second leg and
+   * all but one symbol of a multi-symbol strategy whose bars arrive together.
+   */
   private lastOrderTs: Map<string, number> = new Map();
   /** Equity at the start of the current session (set on first check) */
   private sessionStartEquity: number | null = null;
   /** Per-strategy capital budgets registered at engine startup */
   private readonly _strategyBudgets = new Map<string, StrategyRiskBudget>();
+  /**
+   * Live runtimes set this so orders are not sent while the market is closed.
+   * Unset (backtests, replay analysis), the check is skipped.
+   */
+  private marketHours: MarketHours | null = null;
 
   /**
    * Creates the risk engine with optional custom config.
@@ -75,7 +85,7 @@ export class RiskEngine {
     if (failure) return { passed: false, intent, ...failure, ts };
 
     // All checks passed — record timestamp for cooldown tracking
-    this.lastOrderTs.set(intent.strategyId, ts);
+    this.lastOrderTs.set(this._cooldownKey(intent), ts);
     return { passed: true, intent, ts };
   }
 
@@ -161,6 +171,11 @@ export class RiskEngine {
   //   Blocks a quote bundle when |quote_mid - fairMid| / fairMid > maxDeviationBps.
   //   Also rejects crossed quotes (bid ≥ ask) which indicate a stale fair-value
   //   estimate or a bug in the spread engine.
+
+  /** Enables the MARKET_CLOSED check against the given market calendar. */
+  setMarketHours(hours: MarketHours | null): void {
+    this.marketHours = hours;
+  }
 
   /**
    * Activates or deactivates the global kill switch.
@@ -348,6 +363,7 @@ export class RiskEngine {
   ): { failedCheck: string; reason: string } | null {
     const checks = [
       () => this._checkKillSwitch(intent),
+      () => this._checkMarketOpen(ts),
       () => this._checkStaleQuote(referenceTs),
       () => this._checkCooldown(intent, ts),
       () => this._checkMaxPositionSize(intent, portfolio, referencePrice),
@@ -367,6 +383,11 @@ export class RiskEngine {
   // ------------------------------------------------------------------
   // Private checks — return { failedCheck, reason } on failure, null on pass
   // ------------------------------------------------------------------
+
+  private _checkMarketOpen(ts: number): { failedCheck: string; reason: string } | null {
+    if (!this.marketHours || this.marketHours.isOpen(ts)) return null;
+    return { failedCheck: "MARKET_CLOSED", reason: "The market is closed; orders are only sent during the regular session" };
+  }
 
   private _applyFillBuffer(side: "buy" | "sell", rawPrice: number): number {
     const bps = (this.config.gapBufferBps + this.config.spreadBufferBps) / 10_000;
@@ -409,16 +430,20 @@ export class RiskEngine {
     intent: OrderIntent,
     ts: number,
   ): { failedCheck: string; reason: string } | null {
-    const last = this.lastOrderTs.get(intent.strategyId);
+    const last = this.lastOrderTs.get(this._cooldownKey(intent));
     if (last === undefined) return null;
     const elapsed = ts - last;
     if (elapsed < this.config.orderCooldownMs) {
       return {
         failedCheck: "ORDER_COOLDOWN",
-        reason: `Order cooldown active — ${this.config.orderCooldownMs - elapsed}ms remaining for strategy ${intent.strategyId}`,
+        reason: `Order cooldown active — ${this.config.orderCooldownMs - elapsed}ms remaining for strategy ${intent.strategyId} on ${intent.symbol}`,
       };
     }
     return null;
+  }
+
+  private _cooldownKey(intent: OrderIntent): string {
+    return `${intent.strategyId}\u0000${intent.symbol}`;
   }
 
   private _checkMaxPositionSize(

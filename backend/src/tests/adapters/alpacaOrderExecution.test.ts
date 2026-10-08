@@ -88,6 +88,8 @@ describe('AlpacaOrderExecutionAdapter: submitOrder', () => {
     expect(order.brokerOrderId).toBe('alpaca-order-id-1');
     expect(order.symbol).toBe('SPY');
     expect(order.qty).toBe(10);
+    const request = (global.fetch as jest.Mock).mock.calls[0][1] as { body: string };
+    expect(JSON.parse(request.body)).toMatchObject({ client_order_id: intent.id });
   });
 
   it('publishes ORDER_SUBMITTED event on success', async () => {

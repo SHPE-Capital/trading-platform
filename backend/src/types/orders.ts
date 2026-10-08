@@ -58,6 +58,12 @@ export interface OrderIntent {
   executionAlgo?: ExecutionAlgoType;
   /** Algo-specific parameters (e.g. TwapParams | VwapParams serialized as plain object) */
   executionAlgoParams?: Record<string, unknown>;
+  /** strategy_runs.id of the run that emitted the signal. Absent for backtests. */
+  runId?: UUID;
+  /** The signal this intent was built from. */
+  signalId?: UUID;
+  /** Mid (or last bar close) when the order was decided — the slippage baseline. */
+  decisionPrice?: number;
 }
 
 // ------------------------------------------------------------------
@@ -107,6 +113,14 @@ export interface Order {
   fills: Fill[];
   /** Optional metadata */
   meta?: Metadata;
+  /** Run that sent the order (copied from the intent). */
+  runId?: UUID;
+  /** Signal the order came from. */
+  signalId?: UUID;
+  /** Id the broker knows the order by (`<runId>:<intentId>`). */
+  clientOrderId?: string;
+  /** Price when the order was decided. */
+  decisionPrice?: number;
 }
 
 // ------------------------------------------------------------------

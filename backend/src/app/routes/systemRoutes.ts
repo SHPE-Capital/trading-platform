@@ -7,6 +7,7 @@
 
 import { Router } from "express";
 import { healthCheck, getSystemStatus, setKillSwitch } from "../controllers/systemController";
+import { requireAuth, requireRole } from "../middleware/requireAuth";
 
 const router = Router();
 
@@ -17,6 +18,6 @@ router.get("/health", healthCheck);
 router.get("/status", getSystemStatus);
 
 /** POST /api/system/kill-switch — halt or resume all new orders */
-router.post("/kill-switch", setKillSwitch);
+router.post("/kill-switch", requireAuth, requireRole("lead"), setKillSwitch);
 
 export default router;

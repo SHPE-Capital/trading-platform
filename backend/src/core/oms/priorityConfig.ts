@@ -12,7 +12,6 @@
  * Outputs: Numeric priority value for the OrderIntentQueue.
  */
 
-import type { StrategyType } from "../../types/strategy";
 
 // ------------------------------------------------------------------
 // Base priority by strategy type

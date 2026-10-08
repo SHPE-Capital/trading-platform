@@ -1,0 +1,12 @@
+{
+  "name": "shpe-capital-trading-platform",
+  "private": true,
+  "scripts": {
+    "dev:stack": "node scripts/local-stack.mjs up",
+    "dev:down": "node scripts/local-stack.mjs down",
+    "dev:reset": "node scripts/local-stack.mjs reset"
+  },
+  "devDependencies": {
+    "supabase": "2.119.0"
+  }
+}

@@ -42,12 +42,25 @@ import type {
   OrderIntentCreatedEvent,
 } from "../../types/events";
 
+export interface OrchestratorOptions {
+  /**
+   * Deregister a strategy after this many evaluate() errors in a row, so one
+   * member's bad push degrades their strategy instead of the shared runner.
+   * Unset = never (backtests keep their prior behavior).
+   */
+  maxConsecutiveErrors?: number;
+}
+
 export class Orchestrator {
   private strategies: Map<string, IStrategy> = new Map();
   private running = false;
   private readonly capitalReservation = new CapitalReservationManager();
   /** intentId → reservationId, for releasing on any terminal order event */
   private readonly _reservationByIntent = new Map<UUID, UUID>();
+  /** Registry keys that are strategy_runs ids (registered with an explicit runId). */
+  private readonly _runKeys = new Set<string>();
+  /** registry key → evaluate() errors in a row */
+  private readonly _consecutiveErrors = new Map<string, number>();
 
   constructor(
     public readonly eventBus: EventBus,
@@ -57,6 +70,7 @@ export class Orchestrator {
     public readonly riskEngine: RiskEngine,
     public readonly executionEngine: ExecutionEngine,
     private readonly mode: ExecutionMode,
+    private readonly options: OrchestratorOptions = {},
   ) {}
 
   /**
@@ -71,6 +85,7 @@ export class Orchestrator {
   registerStrategy(strategy: IStrategy, runId?: string): void {
     const key = runId ?? strategy.id;
     this.strategies.set(key, strategy);
+    if (runId) this._runKeys.add(runId);
 
     const cfg = strategy.config as BaseStrategyConfig;
     if (cfg.riskBudget) {
@@ -110,6 +125,8 @@ export class Orchestrator {
     if (!strategy) return false;
     strategy.stop();
     this.strategies.delete(strategyId);
+    this._runKeys.delete(strategyId);
+    this._consecutiveErrors.delete(strategyId);
     this.eventBus.publish({
       id: newId(), type: "STRATEGY_STOPPED", ts: nowMs(), mode: this.mode,
       strategyId: strategy.id,
@@ -277,37 +294,70 @@ export class Orchestrator {
 
   private _evaluateStrategies(symbol: string): void {
     if (this.riskEngine.getConfig().killSwitchActive) return;
-    const sorted = [...this.strategies.values()]
-      .sort((a, b) => getStrategyPriority(b.type) - getStrategyPriority(a.type));
-    for (const strategy of sorted) {
+    const sorted = [...this.strategies.entries()]
+      .sort(([, a], [, b]) => getStrategyPriority(b.type) - getStrategyPriority(a.type));
+    for (const [key, strategy] of sorted) {
       if (!strategy.config.symbols.includes(symbol)) continue;
+      // An earlier strategy's handler in this same pass may have deregistered it.
+      if (!this.strategies.has(key)) continue;
+      let signal: ReturnType<IStrategy["evaluate"]>;
       try {
-        const signal = strategy.evaluate({
+        signal = strategy.evaluate({
           symbolState: this.symbolState,
           portfolioState: this.portfolioState,
           orderState: this.orderState,
           symbol,
         });
-        if (signal) {
-          this.eventBus.publish({
-            id: newId(),
-            type: "STRATEGY_SIGNAL_CREATED",
-            ts: nowMs(),
-            mode: this.mode,
-            strategyId: strategy.id,
-            payload: signal,
-          });
-        }
       } catch (err) {
-        const error = String(err);
-        logger.error("Orchestrator: strategy.evaluate threw", { strategyId: strategy.id, error });
+        this._onEvaluateError(key, strategy, String(err));
+        continue;
+      }
+      this._onEvaluateSuccess(key, strategy);
+      if (signal) {
         this.eventBus.publish({
-          id: newId(), type: "STRATEGY_ERROR", ts: nowMs(), mode: this.mode,
-          strategyId: strategy.id, strategyName: strategy.config.name,
-          error, phase: "evaluate",
+          id: newId(),
+          type: "STRATEGY_SIGNAL_CREATED",
+          ts: nowMs(),
+          mode: this.mode,
+          strategyId: strategy.id,
+          payload: signal,
+          runKey: key,
+          signalId: newId(),
         });
       }
     }
+  }
+
+  private _onEvaluateError(key: string, strategy: IStrategy, error: string): void {
+    const count = (this._consecutiveErrors.get(key) ?? 0) + 1;
+    this._consecutiveErrors.set(key, count);
+    logger.error("Orchestrator: strategy.evaluate threw", { strategyId: strategy.id, key, error, consecutive: count });
+    this.eventBus.publish({
+      id: newId(), type: "STRATEGY_ERROR", ts: nowMs(), mode: this.mode,
+      strategyId: strategy.id, strategyName: strategy.config.name,
+      error, phase: "evaluate", runKey: key, consecutiveErrors: count,
+    });
+
+    const limit = this.options.maxConsecutiveErrors;
+    if (limit !== undefined && count >= limit) {
+      logger.error("Orchestrator: auto-disabling strategy after consecutive errors", {
+        strategyId: strategy.id, key, consecutiveErrors: count,
+      });
+      this.deregisterStrategy(key);
+      this.eventBus.publish({
+        id: newId(), type: "STRATEGY_AUTO_DISABLED", ts: nowMs(), mode: this.mode,
+        strategyId: strategy.id, runKey: key, consecutiveErrors: count, lastError: error,
+      });
+    }
+  }
+
+  private _onEvaluateSuccess(key: string, strategy: IStrategy): void {
+    if (!this._consecutiveErrors.has(key)) return;
+    this._consecutiveErrors.delete(key);
+    this.eventBus.publish({
+      id: newId(), type: "STRATEGY_RECOVERED", ts: nowMs(), mode: this.mode,
+      strategyId: strategy.id, runKey: key,
+    });
   }
 
   /**
@@ -320,13 +370,19 @@ export class Orchestrator {
   private _onStrategySignal(event: any): void {
     const signal = event.payload;
     if (!signal) return;
+    // Every intent built from this signal carries the run that emitted it and
+    // the signal's id, so orders, rejections and fills trace back to both.
+    const origin = {
+      ...(event.runKey && this._runKeys.has(event.runKey) ? { runId: event.runKey as UUID } : {}),
+      ...(event.signalId ? { signalId: event.signalId as UUID } : {}),
+    };
 
     if (signal.meta?.kind === "maker_quotes") {
-      this._onMakerQuoteSignal(signal, event.mode);
+      this._onMakerQuoteSignal(signal, event.mode, origin);
       return;
     }
 
-    const legs = this._buildSignalLegs(signal);
+    const legs = this._buildSignalLegs(signal).map((leg) => ({ ...leg, ...origin }));
     if (legs.length === 0) return;
 
     // Pre-flight: for multi-leg signals, verify the combined worst-case cost fits available
@@ -343,6 +399,7 @@ export class Orchestrator {
           id: newId(), type: "RISK_REJECTED", ts: nowMs(), mode: event.mode,
           strategyId: signal.strategyId,
           reason: `Multi-leg pre-flight failed on ${riskFailure.symbol} [${riskFailure.failedCheck}]: ${riskFailure.reason}`,
+          failedCheck: riskFailure.failedCheck,
           rejectedIntent: riskFailure.intent,
         });
         return;
@@ -362,7 +419,7 @@ export class Orchestrator {
       if (allBuyPricesKnown && combined > this.capitalReservation.getAvailableCash(portfolio.cash)) {
         this.eventBus.publish({
           id: newId(), type: "CAPITAL_UNAVAILABLE", ts: nowMs(), mode: event.mode,
-          intentId: legs[0].id, strategyId: signal.strategyId,
+          intentId: legs[0].id, strategyId: signal.strategyId, ...origin,
           required: combined,
           available: this.capitalReservation.getAvailableCash(portfolio.cash),
         });
@@ -464,7 +521,7 @@ export class Orchestrator {
    *
    * No-op when makerQuotes is empty (e.g. kill-switch state).
    */
-  private _onMakerQuoteSignal(signal: any, mode: ExecutionMode): void {
+  private _onMakerQuoteSignal(signal: any, mode: ExecutionMode, origin: { runId?: UUID; signalId?: UUID } = {}): void {
     const meta = signal.meta as {
       kind: "maker_quotes";
       makerQuotes?: Array<{ side: "buy" | "sell"; price: number; qty: number }>;
@@ -487,6 +544,7 @@ export class Orchestrator {
         timeInForce: tif,
         reason: signal.triggerLabel,
         ts: nowMs(),
+        ...origin,
       };
       this.eventBus.publish({
         id: newId(),
@@ -505,9 +563,12 @@ export class Orchestrator {
    * → capital reservation → execution submission.
    */
   private _onOrderIntent(event: OrderIntentCreatedEvent): void {
-    const intent = event.payload;
-    const symState = this.symbolState.get(intent.symbol);
+    const symState = this.symbolState.get(event.payload.symbol);
     const mid = symState?.latestMid ?? symState?.latestBar?.close ?? null;
+    // The price the strategy acted on: the baseline that fills are measured against.
+    const intent = mid !== null && event.payload.decisionPrice === undefined
+      ? { ...event.payload, decisionPrice: mid }
+      : event.payload;
     const portfolio = this.portfolioState.getSnapshot();
 
     // Stage 1: signal-time risk checks (kill switch, cooldown, position/cash/concentration)
@@ -518,6 +579,7 @@ export class Orchestrator {
         id: newId(), type: "RISK_REJECTED", ts: nowMs(), mode: this.mode,
         strategyId: event.strategyId,
         reason: riskResult.reason ?? "Risk check failed",
+        failedCheck: riskResult.failedCheck ?? "UNKNOWN",
         rejectedIntent: intent,
       });
       return;
@@ -530,6 +592,7 @@ export class Orchestrator {
         id: newId(), type: "RISK_REJECTED", ts: nowMs(), mode: this.mode,
         strategyId: event.strategyId,
         reason: "No reference price available for worst-case estimate",
+        failedCheck: "NO_REFERENCE_PRICE",
         rejectedIntent: intent,
       });
       return;
@@ -545,6 +608,7 @@ export class Orchestrator {
         id: newId(), type: "RISK_REJECTED", ts: nowMs(), mode: this.mode,
         strategyId: event.strategyId,
         reason: budgetFail.reason,
+        failedCheck: budgetFail.failedCheck,
         rejectedIntent: intent,
       });
       return;
@@ -557,6 +621,8 @@ export class Orchestrator {
         id: newId(), type: "CAPITAL_UNAVAILABLE", ts: nowMs(), mode: this.mode,
         intentId: intent.id,
         strategyId: intent.strategyId,
+        signalId: intent.signalId,
+        runId: intent.runId,
         required: worstCaseNotional,
         available: this.capitalReservation.getAvailableCash(portfolio.cash),
       });

@@ -11,20 +11,55 @@
 "use client";
 
 import PnLChart from "../../components/charts/PnLChart";
+import PerformancePanel from "../performance/PerformancePanel";
 import type { BacktestResult } from "../../types/api";
-import { formatPercent, formatCurrency } from "../../utils/formatting";
 import { formatDuration, formatTimestamp } from "../../utils/dates";
 
 interface Props {
   result: BacktestResult;
   onRerun?: () => void;
+  onSave?: (id: string) => void;
+  isSaving?: boolean;
   showChart?: boolean;
 }
 
-export default function BacktestResults({ result, onRerun, showChart = true }: Props) {
+/** The Save affordance: a button when unsaved, a static badge once saved. */
+function SaveControl({ id, isSaved, isSaving, onSave }: {
+  id: string;
+  isSaved: boolean;
+  isSaving: boolean;
+  onSave: (id: string) => void;
+}) {
+  if (isSaved) {
+    return (
+      <span
+        title="Saved — this result and its full trade log are kept in the database"
+        className="flex items-center gap-1 rounded-md border border-transparent px-2.5 py-0.5 text-xs font-medium text-green-700 dark:text-green-400"
+      >
+        ✓ Saved
+      </span>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => onSave(id)}
+      disabled={isSaving}
+      title="Nothing is kept in the database until you save — unsaved runs are only held in memory for a limited time"
+      className="rounded-md border border-zinc-300 px-2.5 py-0.5 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-600 dark:text-zinc-400 dark:hover:bg-zinc-800"
+    >
+      {isSaving ? "Saving…" : "Save"}
+    </button>
+  );
+}
+
+export default function BacktestResults({ result, onRerun, onSave, isSaving = false, showChart = true }: Props) {
   const metrics = result.metrics;
   const equityCurve = result.equity_curve ?? [];
   const isReused = !!result.reused_from_id;
+  // A reused result came FROM the DB (dedup only ever matches previously-saved
+  // rows), so it's already durable — no point offering to save it again.
+  const isSaved = isReused || result.saved_at != null;
   const duration =
     result.completed_at && result.started_at
       ? result.completed_at - result.started_at
@@ -35,6 +70,10 @@ export default function BacktestResults({ result, onRerun, showChart = true }: P
     : result.completed_at
       ? `Completed ${formatTimestamp(result.completed_at)}${duration ? ` · Ran in ${formatDuration(duration)}` : ""}`
       : null;
+  // Unsaved runs are staged server-side for a limited window, then dropped.
+  const unsavedUntil = !isSaved && result.result_expires_at
+    ? new Date(result.result_expires_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+    : null;
 
   return (
     <div className="flex flex-col gap-6">
@@ -43,6 +82,11 @@ export default function BacktestResults({ result, onRerun, showChart = true }: P
           <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">{result.config.name}</h3>
           {runMeta && (
             <p className="mt-0.5 text-xs text-zinc-400 dark:text-zinc-500">{runMeta}</p>
+          )}
+          {unsavedUntil && (
+            <p className="mt-0.5 text-xs text-amber-600 dark:text-amber-400">
+              Not saved — kept until {unsavedUntil}, then discarded
+            </p>
           )}
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -63,30 +107,17 @@ export default function BacktestResults({ result, onRerun, showChart = true }: P
               Re-run
             </button>
           )}
+          {onSave && result.status === "completed" && (
+            <SaveControl id={result.id} isSaved={isSaved} isSaving={isSaving} onSave={onSave} />
+          )}
         </div>
       </div>
 
-      {metrics && (
-        <dl className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-          {([
-            { label: "Total Return",  value: formatPercent(metrics.totalReturnPct) },
-            { label: "Max Drawdown",  value: formatPercent(-metrics.maxDrawdown) },
-            { label: "Win Rate",      value: formatPercent(metrics.winRate) },
-            { label: "Total Trades",  value: String(metrics.totalTrades) },
-            { label: "Sharpe Ratio",  value: metrics.sharpeRatio != null ? metrics.sharpeRatio.toFixed(2) : "—" },
-            { label: "Sortino Ratio", value: metrics.sortinoRatio != null ? metrics.sortinoRatio.toFixed(2) : "—" },
-            { label: "Avg Win",       value: formatCurrency(metrics.avgWin) },
-            { label: "Avg Loss",      value: formatCurrency(metrics.avgLoss) },
-          ] as { label: string; value: string }[]).map(({ label, value }) => (
-            <div key={label}>
-              <dt className="text-xs text-zinc-500">{label}</dt>
-              <dd className="mt-1 text-base font-semibold tabular-nums text-zinc-900 dark:text-zinc-50">{value}</dd>
-            </div>
-          ))}
-        </dl>
+      {metrics ? (
+        <PerformancePanel metrics={metrics} curve={equityCurve} showChart={showChart} />
+      ) : (
+        showChart && <PnLChart data={equityCurve} height={280} />
       )}
-
-      {showChart && <PnLChart data={equityCurve} height={280} />}
     </div>
   );
 }

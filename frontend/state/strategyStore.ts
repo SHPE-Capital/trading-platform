@@ -10,7 +10,7 @@
 
 "use client";
 
-import { createContext, useContext, useReducer, type Dispatch } from "react";
+import { createContext, useContext, type Dispatch } from "react";
 import type { StrategyRun } from "../types/strategy";
 
 interface StrategyState {

@@ -49,8 +49,8 @@ export default function SystemHealthCard({ status, isLoading }: Props) {
 
   useEffect(() => {
     if (!lastMessage) return;
-    if (lastMessage.type === "ENGINE_STARTED") setEngineRunning(true);
-    if (lastMessage.type === "ENGINE_STOPPED") setEngineRunning(false);
+    if (lastMessage.type === "ENGINE_STARTED") queueMicrotask(() => setEngineRunning(true));
+    if (lastMessage.type === "ENGINE_STOPPED") queueMicrotask(() => setEngineRunning(false));
   }, [lastMessage]);
 
   if (isLoading || !status) {
@@ -89,6 +89,11 @@ export default function SystemHealthCard({ status, isLoading }: Props) {
         {" · "}
         Last updated: {formatIsoTimestamp(status.ts)}
       </p>
+      {status.build && (
+        <p className="mt-1 font-mono text-[11px] text-zinc-400">
+          Build: {status.build.origin}/{status.build.sha.slice(0, 8)}{status.build.dirty ? "-dirty" : ""}
+        </p>
+      )}
     </div>
   );
 }

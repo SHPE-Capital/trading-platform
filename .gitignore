@@ -9,6 +9,13 @@ node_modules/
 .env
 .env.local
 .env.*.local
+# Catches backups too — a literal ".env"/".env.local" allowlist misses
+# ".env.bak-<timestamp>", ".env.old", ".env~", etc. by filename technicality,
+# which is exactly how one such file previously sat untracked-but-present in
+# this repo despite the rules above. Broader by design; not meant to be tight.
+.env.bak*
+.env*.bak
+*.env.bak
 # Keep .env.example files committed — they document required vars.
 
 # ── Backend build output ──────────────────────────────────────────────────────
@@ -21,6 +28,10 @@ frontend/out/
 frontend/build/
 frontend/*.tsbuildinfo
 frontend/next-env.d.ts
+
+# Supabase CLI machine-local state and generated runtime secrets
+supabase/.branches/
+supabase/.temp/
 
 # ── Test / coverage ───────────────────────────────────────────────────────────
 coverage/

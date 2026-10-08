@@ -8,7 +8,8 @@
  */
 
 import { apiGet, apiPost, apiPut, apiDelete } from "./api";
-import type { StrategyRun, PairsStrategyConfig, StoredStrategy, StrategyDefinition } from "../types/strategy";
+import type { StrategyRun, StoredStrategy, StrategyDefinition } from "../types/strategy";
+import type { StrategyVersion } from "../types/review";
 
 /**
  * Fetches all strategy run records.
@@ -32,10 +33,11 @@ export async function fetchStrategyRun(id: string): Promise<StrategyRun> {
  * @param config - PairsStrategyConfig
  * @returns { message: string, strategyId: string }
  */
-export async function startPairsStrategy(
-  config: Omit<PairsStrategyConfig, "id">,
-): Promise<{ message: string; strategyId: string }> {
-  return apiPost("/strategies/start", { strategyType: "pairs_trading", config });
+export async function startPaperStrategy(
+  strategyId: string,
+  versionId: string,
+): Promise<StrategyRun> {
+  return apiPost("/strategies/start", { strategyId, versionId });
 }
 
 /**
@@ -90,8 +92,9 @@ export async function updateStrategyConfig(
   id: string,
   name: string,
   config: Record<string, unknown>,
-): Promise<void> {
-  return apiPut(`/strategies/configs/${id}`, { name, config });
+  changeSummary?: string,
+): Promise<{ message: string; version: StrategyVersion }> {
+  return apiPut(`/strategies/configs/${id}`, { name, config, changeSummary });
 }
 
 /**

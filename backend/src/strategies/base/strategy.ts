@@ -13,8 +13,8 @@ import type { StrategySignal, BaseStrategyConfig, StrategyType } from "../../typ
 import type { SymbolStateManager } from "../../core/state/symbolState";
 import type { PortfolioStateManager } from "../../core/state/portfolioState";
 import type { OrderStateManager } from "../../core/state/orderState";
-import type { EventBus } from "../../core/engine/eventBus";
 import type { UUID } from "../../types/common";
+import type { Bar } from "../../types/market";
 import { nowMs } from "../../utils/time";
 import { newId } from "../../utils/ids";
 
@@ -75,6 +75,22 @@ export interface IStrategy {
    * @returns StrategySignal if an action should be taken, null otherwise
    */
   evaluate(context: EvaluationContext): StrategySignal | null;
+
+  /**
+   * How much history (ms) primes this strategy's rolling state. Implemented by
+   * strategies whose windows would otherwise take hours or days to refill after
+   * a restart. Omit when no warm-up is needed.
+   */
+  warmUpLookbackMs?(): number;
+
+  /**
+   * Primes rolling state from historical bars (ascending by ts, any of this
+   * strategy's symbols) before live data arrives. Must NOT emit signals or
+   * change position state — it only rebuilds what evaluate() would have
+   * accumulated had the process been running.
+   * @returns observations primed
+   */
+  warmUp?(bars: Bar[]): number;
 }
 
 // ------------------------------------------------------------------

@@ -35,10 +35,11 @@ jest.mock('../../utils/time', () => ({
 // computeEngleGranger is NOT mocked — it is tested directly in indicator tests.
 jest.mock('../../services/indicators/zscore', () => ({
   computeZScore: jest.fn(),
+  computeZScoreFromStats: jest.fn(),
 }));
 
 import { nowMs } from '../../utils/time';
-import { computeZScore } from '../../services/indicators/zscore';
+import { computeZScoreFromStats } from '../../services/indicators/zscore';
 import { computeEngleGranger } from '../../services/indicators/cointegration';
 import { PairsStrategy } from '../../strategies/pairs/pairsStrategy';
 import { createPairsConfig } from '../../strategies/pairs/pairsConfig';
@@ -50,7 +51,7 @@ import type { PairsInternalState } from '../../strategies/pairs/pairsTypes';
 import type { ZScoreResult } from '../../services/indicators/zscore';
 
 const mockNowMs = nowMs as jest.Mock;
-const mockZScore = computeZScore as jest.Mock;
+const mockZScore = computeZScoreFromStats as jest.Mock;
 
 let currentTs = 1_000_000;
 
@@ -286,11 +287,13 @@ describe('cointegration gate (rolling_ols mode)', () => {
 // ---------------------------------------------------------------------------
 describe('unrelated stocks end-to-end (real EG test + real z-score)', () => {
   it('produces 0 entry signals for two independent random-walk price series', () => {
-    // Use real computeZScore for this test (bypass the module-level mock)
-    const realComputeZScore = jest.requireActual<typeof import('../../services/indicators/zscore')>(
-      '../../services/indicators/zscore',
-    ).computeZScore;
-    mockZScore.mockImplementation(realComputeZScore);
+    // Use the real z-score implementation for this test (bypass the module-level mock).
+    // The strategy scores against the spread window's running mean/stddev, so the
+    // stats-based entry point is the one to restore.
+    const realComputeZScoreFromStats = jest.requireActual<
+      typeof import('../../services/indicators/zscore')
+    >('../../services/indicators/zscore').computeZScoreFromStats;
+    mockZScore.mockImplementation(realComputeZScoreFromStats);
 
     const cfg = createPairsConfig('X', 'Y', {
       hedgeRatioMethod: 'rolling_ols',

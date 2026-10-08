@@ -10,7 +10,7 @@
  */
 
 import type { Symbol, EpochMs, ExecutionAlgoType } from "../../types/common";
-import type { RollingTimeWindow } from "../../core/state/rollingWindow";
+import type { RollingTimeWindow, RollingNumericWindow } from "../../core/state/rollingWindow";
 
 // ------------------------------------------------------------------
 // Hedge Ratio Method
@@ -115,6 +115,14 @@ export interface PairsStrategyConfig {
   cointSignificanceLevel?: number;
 
   /**
+   * Deadband applied either side of the Engle-Granger critical value so the
+   * cointegration verdict cannot flip on noise. Entering cointegration requires
+   * tau < critical - hysteresis; leaving requires tau > critical + hysteresis.
+   * Defaults to DEFAULT_COINT_HYSTERESIS. Ignored when hedgeRatioMethod = "fixed".
+   */
+  cointHysteresis?: number;
+
+  /**
    * Minimum number of spread observations required before trading.
    * Ensures the rolling statistics are meaningful.
    */
@@ -146,8 +154,8 @@ export interface PairsInternalState {
   lastZScore: number | null;
   /** Last computed spread value */
   lastSpread: number | null;
-  /** Rolling spread window for statistical calculations */
-  spreadWindow: RollingTimeWindow<number>;
+  /** Rolling spread window for statistical calculations (O(1) mean/stddev) */
+  spreadWindow: RollingNumericWindow;
   /** Current estimated hedge ratio */
   currentHedgeRatio: number;
   /** Last Engle-Granger DF test statistic (null until first OLS recalc) */

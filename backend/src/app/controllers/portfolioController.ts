@@ -12,6 +12,7 @@ import {
   getPortfolioEquityCurve,
   getOrdersByStrategyRun,
   getAllOrders,
+  getRecentFills,
 } from "../../adapters/supabase/repositories";
 import { logger } from "../../utils/logger";
 import type { AppContext } from "../context";
@@ -60,5 +61,15 @@ export async function getOrders(req: Request, res: Response): Promise<void> {
   } catch (err) {
     logger.error("getOrders error", { err });
     res.status(500).json({ error: "Failed to fetch orders" });
+  }
+}
+
+/** GET /api/portfolio/fills — the most recent fills (newest first, up to 500) */
+export async function getFills(_req: Request, res: Response): Promise<void> {
+  try {
+    res.json(await getRecentFills());
+  } catch (err) {
+    logger.error("getFills error", { err });
+    res.status(500).json({ error: "Failed to fetch fills" });
   }
 }

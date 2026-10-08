@@ -33,12 +33,11 @@ export function useWebSocket<T = unknown>(
   enabled = config.enableWebSocket,
 ): UseWebSocketResult<T> {
   const [lastMessage, setLastMessage] = useState<T | null>(null);
-  const [readyState, setReadyState] = useState<ReadyState>("connecting");
+  const [readyState, setReadyState] = useState<ReadyState>(enabled ? "connecting" : "closed");
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
     if (!enabled) {
-      setReadyState("closed");
       return;
     }
 
@@ -68,5 +67,5 @@ export function useWebSocket<T = unknown>(
     }
   }, []);
 
-  return { lastMessage, readyState, send };
+  return { lastMessage, readyState: enabled ? readyState : "closed", send };
 }

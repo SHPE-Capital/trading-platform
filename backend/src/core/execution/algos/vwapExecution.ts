@@ -18,7 +18,6 @@ import type { ExecutionAlgoType, UUID } from "../../../types/common";
 import type { OrderIntent, Order } from "../../../types/orders";
 import type { IExecutionSink } from "../IExecutionSink";
 import type { IExecutionAlgo } from "./IExecutionAlgo";
-import type { VwapParams } from "../../../types/oms";
 
 export class VwapExecutionAlgo implements IExecutionAlgo {
   readonly type: ExecutionAlgoType = "vwap";

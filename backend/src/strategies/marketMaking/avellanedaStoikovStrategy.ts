@@ -62,6 +62,14 @@ import type {
 } from "./avellanedaStoikovTypes";
 
 export class AvellanedaStoikovStrategy extends BaseStrategy {
+  /**
+   * Algorithm version. Bump on any change that alters signals or sizing (CI
+   * enforces this for edits under strategies/marketMaking/). v1 is the current
+   * behaviour, including the known σ-units issue in handoff.md §1.2 — fixing
+   * that is a v2 change.
+   */
+  static readonly VERSION = 1;
+  readonly version = AvellanedaStoikovStrategy.VERSION;
   readonly type: StrategyType = "market_making";
 
   private readonly state: AvellanedaStoikovInternalState;
@@ -183,7 +191,7 @@ export class AvellanedaStoikovStrategy extends BaseStrategy {
 
     // Enforce strict bid < ask after snapping (degenerate when halfSpread
     // is tiny vs tickSize). If they collide, push them one tick apart.
-    let finalBid = bidPrice;
+    const finalBid = bidPrice;
     let finalAsk = askPrice;
     if (finalAsk - finalBid < this.asConfig.tickSize) {
       finalAsk = finalBid + this.asConfig.tickSize;

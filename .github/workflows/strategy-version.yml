@@ -1,0 +1,20 @@
+name: Strategy version
+
+# Separate from CI so adding or removing the override label re-runs only this
+# check. Make "strategy-version" a required status check on main.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+jobs:
+  strategy-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # needs the merge base with the target branch
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Algorithm changes must bump VERSION
+        run: node scripts/check-strategy-versions.mjs --base "origin/${{ github.base_ref }}" --head "${{ github.event.pull_request.head.sha }}"

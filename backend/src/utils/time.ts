@@ -17,21 +17,72 @@ import type { EpochMs, ISOTimestamp } from "../types/common";
 
 /**
  * Module-level clock override. When set, nowMs() and nowIso() return
- * values from this function instead of the wall clock. The ReplayEngine
- * sets this to () => session.simulatedNow before each event emission
- * and clears it (null) when the session stops or completes.
+ * values from this function instead of the wall clock. The BacktestEngine
+ * sets this to () => simulatedNow before each bar batch and clears it
+ * (null) in a finally block when the run completes or throws.
  *
- * Node.js is single-threaded so this is safe for a single replay session.
- * Never set this in live or paper mode.
+ * Node.js is single-threaded so this is safe for a single simulated run
+ * inside a process that is doing nothing else. It is NOT safe in a process
+ * that is also trading: every nowMs() caller in the live path — quote
+ * timestamps, risk cooldowns, rolling-window eviction — would silently read
+ * simulated time. lockClockForLive() below turns that rule into an assertion.
  */
 let _clockOverride: (() => EpochMs) | null = null;
 
 /**
- * Injects a simulated clock for replay/backtest modes.
- * Pass null to restore wall-clock behavior.
+ * Set to the execution mode ("paper" | "real") once a trading runtime has
+ * started in this process. While set, installing a simulated clock throws.
+ */
+let _liveClockLock: string | null = null;
+
+/**
+ * Marks this process as running a live or paper trading engine, after which
+ * any attempt to install a simulated clock throws instead of silently
+ * corrupting live timestamps. Called by bootstrapRuntime once the
+ * orchestrator is started. Idempotent.
+ *
+ * @param mode - Execution mode of the runtime ("paper" | "real")
+ */
+export function lockClockForLive(mode: string): void {
+  _liveClockLock = mode;
+}
+
+/**
+ * Releases the live-clock lock. Exists for test teardown only — production
+ * code never unlocks, because a process that has traded stays a trading
+ * process for its lifetime.
+ */
+export function unlockClockForLive(): void {
+  _liveClockLock = null;
+}
+
+/** True when a live/paper trading runtime has claimed this process's clock. */
+export function isClockLockedForLive(): boolean {
+  return _liveClockLock !== null;
+}
+
+/**
+ * Injects a simulated clock for backtest mode. Pass null to restore
+ * wall-clock behavior.
+ *
+ * Throws when this process is running a live or paper trading engine —
+ * simulated time must never leak into a path that is placing real orders.
+ * Clearing the override (null) is always permitted so that cleanup paths,
+ * including `finally` blocks, can never deadlock.
+ *
  * @param fn - Function returning the current simulated time in Unix ms, or null
+ * @throws Error when installing a clock in a live/paper process
  */
 export function setClockOverride(fn: (() => EpochMs) | null): void {
+  if (fn !== null && _liveClockLock !== null) {
+    throw new Error(
+      `Refusing to install a simulated clock: this process is running a ` +
+        `'${_liveClockLock}' trading engine. Simulated time would corrupt live ` +
+        `quote timestamps, risk cooldowns, and rolling-window eviction. Run ` +
+        `backtests in the API-only process (npm run dev:api) or via ` +
+        `npm run dev:backtest.`,
+    );
+  }
   _clockOverride = fn;
 }
 

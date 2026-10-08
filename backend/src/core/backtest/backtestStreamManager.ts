@@ -1,164 +1,187 @@
 /**
  * core/backtest/backtestStreamManager.ts
  *
- * Bridges the background backtest simulation with SSE clients.
- * One EventEmitter per run is created when the run starts and torn down
- * shortly after it completes or errors. Multiple SSE connections (browser
- * tabs, dev tools) can subscribe to the same run concurrently.
+ * Relays a queued backtest's lifecycle to SSE clients. The run itself happens in
+ * a worker process (Part 02), so this process learns about it the only way any
+ * replica can: by reading the job row, which the worker updates with progress
+ * about once a second. One poll loop per job per process, fanned out to every
+ * browser tab watching it, and stopped when the last one disconnects.
  *
- * Inputs:  progress points emitted by BacktestEngine during simulation.
- * Outputs: SSE events forwarded to connected Express Response streams.
+ * Polling the row instead of LISTEN/NOTIFY keeps the backend on the service-role
+ * REST client alone, and it survives a worker handoff for free: whoever holds
+ * the job next writes to the same row.
+ *
+ * Inputs:  job reads from backtest_jobs; saved-result existence checks.
+ * Outputs: SSE events — status, progress, complete, error.
  */
 
-import { EventEmitter } from "events";
 import type { Response } from "express";
+import { logger } from "../../utils/logger";
+import type { BacktestJob, BacktestJobProgress } from "../../types/backtestJob";
 
-export interface BacktestProgressPoint {
-  /** Simulated bar timestamp (Unix ms) */
-  ts: number;
-  /** Portfolio equity at this point */
-  equity: number;
-  /** Bars processed so far */
-  barIndex: number;
-  /** Total bars in the run */
-  totalBars: number;
+/** Progress point shape the engine emits and the SSE `progress` event carries. */
+export type BacktestProgressPoint = BacktestJobProgress;
+
+export interface StreamSources {
+  getJob(id: string): Promise<BacktestJob | null>;
+  /** True when a saved backtest_results row exists for this id. */
+  savedResultExists(id: string): Promise<boolean>;
 }
 
-class BacktestStreamManager {
-  private channels = new Map<string, EventEmitter>();
+interface Channel {
+  subscribers: Set<Response>;
+  timer: NodeJS.Timeout;
+  lastProgressKey: string | null;
+  lastStatus: string | null;
+  polling: boolean;
+}
 
-  /** Create a channel for a new run. Must be called before setImmediate fires. */
-  register(id: string): void {
-    if (!this.channels.has(id)) {
-      const emitter = new EventEmitter();
-      emitter.setMaxListeners(50); // allow many concurrent SSE subscribers
-      this.channels.set(id, emitter);
-    }
-  }
+const SSE_KEEPALIVE_MS = 25_000;
 
-  /** Returns true if a run channel is currently active. */
-  has(id: string): boolean {
-    return this.channels.has(id);
-  }
+function openStream(res: Response): void {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  // Disable proxy/nginx buffering so events arrive immediately
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders();
+}
 
-  /** Emit a progress point to all subscribed SSE clients. */
-  emit(id: string, point: BacktestProgressPoint): void {
-    this.channels.get(id)?.emit("progress", point);
-  }
+function send(res: Response, event: string, data: unknown): void {
+  if (res.writableEnded) return;
+  res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+}
 
-  /** Signal successful completion. Channel is removed after a grace period. */
-  complete(id: string, data: Record<string, unknown> = {}): void {
-    const emitter = this.channels.get(id);
-    if (!emitter) return;
-    emitter.emit("complete", data);
-    setTimeout(() => this.channels.delete(id), 10_000).unref();
-  }
+export class BacktestStreamManager {
+  private readonly channels = new Map<string, Channel>();
 
-  /**
-   * Relay all events from an existing run's channel to a new channel.
-   * Used when a duplicate in-flight request arrives: the second client gets
-   * the same progress stream and the same final complete/error payload as the
-   * first, without starting a second engine run.
-   *
-   * If the original channel is already gone (run finished before relay was
-   * called), completes the new channel immediately with empty data.
-   */
-  relay(newId: string, existingId: string): void {
-    const existing = this.channels.get(existingId);
-    const newEmitter = this.channels.get(newId);
-    if (!newEmitter) return;
-
-    if (!existing) {
-      // Original run already finished — complete the new channel immediately.
-      this.complete(newId);
-      return;
-    }
-
-    const onProgress = (point: BacktestProgressPoint) => newEmitter.emit("progress", point);
-
-    const cleanup = () => {
-      existing.off("progress", onProgress);
-      existing.off("complete", onComplete);
-      existing.off("run-error", onError);
-    };
-
-    const onComplete = (data: Record<string, unknown>) => {
-      cleanup();
-      newEmitter.emit("complete", data);
-      setTimeout(() => this.channels.delete(newId), 10_000).unref();
-    };
-
-    const onError = (message: string) => {
-      cleanup();
-      newEmitter.emit("run-error", message);
-      setTimeout(() => this.channels.delete(newId), 10_000).unref();
-    };
-
-    existing.on("progress", onProgress);
-    existing.once("complete", onComplete);
-    existing.once("run-error", onError);
-  }
-
-  /** Signal a run failure. Channel is removed after a grace period. */
-  error(id: string, message: string): void {
-    const emitter = this.channels.get(id);
-    if (!emitter) return;
-    emitter.emit("run-error", message);
-    setTimeout(() => this.channels.delete(id), 10_000).unref();
-  }
+  constructor(
+    private readonly sources: StreamSources,
+    private readonly pollMs = 1_000,
+  ) {}
 
   /**
-   * Attach an SSE Response to this run's channel.
-   * Sets headers, begins streaming, and returns a cleanup function to call
-   * when the client disconnects.
-   *
-   * Returns null if no channel exists for the given id.
+   * Attaches an SSE response to a job. Finished jobs and saved results are
+   * answered immediately; live jobs join (or start) the job's poll loop.
+   * @returns a cleanup function for client disconnect, or null for an unknown id
    */
-  subscribe(id: string, res: Response): (() => void) | null {
-    const emitter = this.channels.get(id);
-    if (!emitter) return null;
+  async subscribe(id: string, res: Response): Promise<(() => void) | null> {
+    const job = await this.sources.getJob(id);
 
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("Connection", "keep-alive");
-    // Disable proxy/nginx buffering so events arrive immediately
-    res.setHeader("X-Accel-Buffering", "no");
-    res.flushHeaders();
-
-    const onProgress = (point: BacktestProgressPoint) => {
-      res.write(`event: progress\ndata: ${JSON.stringify(point)}\n\n`);
-    };
-
-    const onComplete = (data: Record<string, unknown>) => {
-      clearInterval(heartbeat);
-      res.write(`event: complete\ndata: ${JSON.stringify(data ?? {})}\n\n`);
+    if (!job) {
+      if (!(await this.sources.savedResultExists(id))) return null;
+      openStream(res);
+      send(res, "complete", { backtestId: id });
       res.end();
-    };
+      return () => {};
+    }
 
-    const onError = (message: string) => {
-      clearInterval(heartbeat);
-      res.write(`event: error\ndata: ${JSON.stringify({ message })}\n\n`);
-      res.end();
-    };
+    openStream(res);
+    if (this.deliverTerminal(job, [res])) return () => {};
 
-    // SSE comment ping every 25s keeps the connection alive through proxies and
-    // load balancers that close idle HTTP connections after 30s.
-    const heartbeat = setInterval(() => {
-      res.write(": heartbeat\n\n");
-    }, 25_000);
-    heartbeat.unref();
+    send(res, "status", { status: job.status });
+    if (job.progress) send(res, "progress", job.progress);
 
-    emitter.on("progress", onProgress);
-    emitter.once("complete", onComplete);
-    emitter.once("run-error", onError);
+    const keepalive = setInterval(() => {
+      if (res.writableEnded) clearInterval(keepalive);
+      else res.write(": heartbeat\n\n");
+    }, SSE_KEEPALIVE_MS);
+    keepalive.unref();
+
+    const channel = this.channels.get(id) ?? this.openChannel(id, job);
+    channel.subscribers.add(res);
 
     return () => {
-      clearInterval(heartbeat);
-      emitter.off("progress", onProgress);
-      emitter.off("complete", onComplete);
-      emitter.off("run-error", onError);
+      clearInterval(keepalive);
+      this.detach(id, res);
     };
   }
-}
 
-export const backtestStreamManager = new BacktestStreamManager();
+  /** Number of jobs currently being polled — for tests and diagnostics. */
+  activeChannels(): number {
+    return this.channels.size;
+  }
+
+  private openChannel(id: string, job: BacktestJob): Channel {
+    const channel: Channel = {
+      subscribers: new Set(),
+      timer: setInterval(() => void this.poll(id), this.pollMs),
+      lastProgressKey: job.progress ? JSON.stringify(job.progress) : null,
+      lastStatus: job.status,
+      polling: false,
+    };
+    channel.timer.unref();
+    this.channels.set(id, channel);
+    return channel;
+  }
+
+  private async poll(id: string): Promise<void> {
+    const channel = this.channels.get(id);
+    if (!channel || channel.polling) return;
+    channel.polling = true;
+    try {
+      const job = await this.sources.getJob(id);
+      const subscribers = [...channel.subscribers];
+      if (!job) {
+        for (const res of subscribers) {
+          send(res, "error", { message: "This backtest job no longer exists" });
+          res.end();
+        }
+        this.close(id);
+        return;
+      }
+      if (this.deliverTerminal(job, subscribers)) {
+        this.close(id);
+        return;
+      }
+      if (job.status !== channel.lastStatus) {
+        channel.lastStatus = job.status;
+        for (const res of subscribers) send(res, "status", { status: job.status });
+      }
+      const key = job.progress ? JSON.stringify(job.progress) : null;
+      if (key && key !== channel.lastProgressKey) {
+        channel.lastProgressKey = key;
+        for (const res of subscribers) send(res, "progress", job.progress);
+      }
+    } catch (err) {
+      // Transient read failure — the next tick retries; clients keep waiting.
+      logger.warn("BacktestStreamManager: job poll failed", { id, err: String(err) });
+    } finally {
+      const still = this.channels.get(id);
+      if (still) still.polling = false;
+    }
+  }
+
+  /** Sends complete/error and ends the responses when the job is finished. */
+  private deliverTerminal(job: BacktestJob, targets: Response[]): boolean {
+    if (job.status === "succeeded") {
+      for (const res of targets) {
+        send(res, "complete", { backtestId: job.id });
+        res.end();
+      }
+      return true;
+    }
+    if (job.status === "failed") {
+      for (const res of targets) {
+        send(res, "error", { message: job.errorMessage ?? "Backtest failed" });
+        res.end();
+      }
+      return true;
+    }
+    return false;
+  }
+
+  private detach(id: string, res: Response): void {
+    const channel = this.channels.get(id);
+    if (!channel) return;
+    channel.subscribers.delete(res);
+    if (channel.subscribers.size === 0) this.close(id);
+  }
+
+  private close(id: string): void {
+    const channel = this.channels.get(id);
+    if (!channel) return;
+    clearInterval(channel.timer);
+    this.channels.delete(id);
+  }
+}
