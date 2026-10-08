@@ -381,7 +381,7 @@ export default function StrategyForm({ onSubmit, isLoading }: Props) {
         <Field label="Max Holding Time (minutes)">
           <input
             type="number"
-            step="60"
+            step="1"
             min="1"
             max={MAX_WINDOW_MINS}
             value={maxHoldingMins}
