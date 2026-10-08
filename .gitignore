@@ -18,6 +18,16 @@ node_modules/
 *.env.bak
 # Keep .env.example files committed — they document required vars.
 
+# ── SSH / TLS private keys ────────────────────────────────────────────────────
+# Deploy keys and AWS key pairs must never be staged, even by `git add -A`.
+deploy_key
+deploy_key.pub
+id_rsa*
+id_ed25519*
+*.pem
+*.key
+*.ppk
+
 # ── Backend build output ──────────────────────────────────────────────────────
 backend/dist/
 backend/*.tsbuildinfo
