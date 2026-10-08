@@ -14,9 +14,13 @@ Compose file into this repository.
 ## First start
 
 ```bash
-npm install
+npm install        # repo root (not backend/ or frontend/)
+npm run setup      # one-time and idempotent: deps, env files, prerequisite check
 npm run dev:stack
 ```
+
+Run all `npm run` commands below from the repo root. Docker Desktop must be
+running first.
 
 The command starts local Supabase, applies every migration, provisions a local
 active lead, and starts the frontend, API, paper runner, and one backtest worker.
@@ -37,8 +41,20 @@ recorded in your local Supabase, which acts as the sim broker's ledger.
 | You have | Set in your shell before `npm run dev:stack` | What happens |
 |---|---|---|
 | Nothing | — | Sim book, replaying cached bars. Seed them with `npm run data:pull` (below). |
-| Free Alpaca account (data only) | `ALPACA_DATA_KEY`, `ALPACA_DATA_SECRET` | Sim book on live IEX bars. |
+| Free Alpaca account (data only) | your **own** `ALPACA_DATA_KEY`, `ALPACA_DATA_SECRET` in your shell **or** `backend/.env` | Backtests fetch bars with your key. Add `LOCAL_STREAM_DATA=1` to also run the live IEX stream in the paper runner. |
 | Your own Alpaca paper account | `EXECUTION_TARGET=alpaca-paper`, `ALPACA_API_KEY`, `ALPACA_API_SECRET` | Orders go to **your** paper account and sync into your local Supabase. |
+
+**Market data uses your own Alpaca keys, never the club's.** `dev:stack` reads
+`ALPACA_DATA_KEY`/`ALPACA_DATA_SECRET` (falling back to `ALPACA_API_KEY`/`ALPACA_API_SECRET`)
+from your shell or `backend/.env`, asks Alpaca which account they belong to, and
+**withholds them if they are the club's** (`protectedAccounts.ts`). They go to the API
+and backtest worker for REST bar downloads. The paper runner only gets them with
+`LOCAL_STREAM_DATA=1`, because Alpaca allows one live stream per account (a second
+connection fails with `406 connection limit exceeded`). `EXECUTION_TARGET` and trading
+keys are never forwarded from the file; shell variables take precedence.
+
+No keys of your own? Backtests and the paper runner use the local bar cache. Fill it
+with `npm run data:pull`; a backtest over a range that is not cached will fail with 401.
 
 The club account is listed in `backend/src/config/protectedAccounts.ts`; a
 runner that resolves to it from any origin other than `aws-prod` exits at boot
@@ -62,6 +78,40 @@ npm run data:pull -- --symbols SPY,QQQ --from 2026-10-01 --to 2026-10-07
 
 Then start the stack with `REPLAY_FROM=2026-10-06 REPLAY_TO=2026-10-07` (and
 optionally `REPLAY_SPEED=10`).
+
+## Ports, data safety, and troubleshooting
+
+`dev:stack` tries Supabase's default ports (54321...) first. If any are
+unavailable (Windows/Hyper-V reserves ranges there, or another project uses
+them) it picks the next free block (44321..., 34321..., 24321...). The repo's
+`supabase/config.toml` is never edited; a remapped copy is generated in the
+gitignored `.local/supabase-workdir/`, and the same ports are passed to the
+app containers.
+
+**Your data does not depend on ports.** The database lives in the Docker volume
+`supabase_db_<project_id>`, so moving ports reuses it. `dev:stack` also:
+
+- never moves a Supabase that is already running (it reuses its ports);
+- applies pending migrations to an existing database;
+- compares row counts with the last run and **refuses to start** if users or
+  strategies went missing, or if the volume vanished (Docker reset or
+  `docker volume prune`), printing the newest safety copy;
+- writes a safety copy of the whole database to `.local/backups/` on every
+  start (newest three kept). Restore one with
+  `docker exec -i supabase_db_<project_id> psql -U postgres -d postgres < <file>`;
+- `npm run dev:stack -- --fresh` accepts an empty database on purpose.
+
+`npm run doctor` is a read-only health report: Node, Docker, ports, volume,
+migrations, data counts, login, and the app containers.
+
+| Symptom | Fix |
+|---|---|
+| `Docker is not running` | Start Docker Desktop, wait for "Engine running", check `docker info` |
+| `Missing script: "dev:stack"` | You are in `backend/` or `frontend/`; run from the repo root |
+| No free port block | See `netsh interface ipv4 show excludedportrange protocol=tcp`; `net stop winnat` then `net start winnat` (admin) |
+| Cannot sign in | `npm run dev:stack` re-creates `lead@local.test`; check `frontend/.env*` does not override the Supabase URL |
+| Backend edits not picked up (Windows) | Bind mounts do not trigger nodemon; `docker restart shpe-trading-dev-<service>-1` |
+| `npm audit` warnings | Dev-tooling only; do not run `npm audit fix --force` |
 
 ## Database boundaries
 

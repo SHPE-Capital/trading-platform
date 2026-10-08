@@ -2,6 +2,8 @@
   "name": "shpe-capital-trading-platform",
   "private": true,
   "scripts": {
+    "setup": "node scripts/setup.mjs",
+    "doctor": "node scripts/doctor.mjs",
     "dev:stack": "node scripts/local-stack.mjs up",
     "dev:down": "node scripts/local-stack.mjs down",
     "dev:reset": "node scripts/local-stack.mjs reset"

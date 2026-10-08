@@ -5,7 +5,7 @@ x-backend-environment: &backend-environment
   APP_RUNTIME_ORIGIN: local-docker
   APP_BUILD_SHA: ${LOCAL_BUILD_SHA:-local}
   APP_BUILD_DIRTY: ${LOCAL_BUILD_DIRTY:-true}
-  SUPABASE_URL: http://host.docker.internal:54321
+  SUPABASE_URL: http://host.docker.internal:${LOCAL_SUPABASE_API_PORT:-54321}
   SUPABASE_ANON_KEY: ${LOCAL_SUPABASE_ANON_KEY}
   SUPABASE_SERVICE_ROLE_KEY: ${LOCAL_SUPABASE_SERVICE_ROLE_KEY}
   DATABASE_URL: ${LOCAL_DATABASE_URL}
@@ -17,8 +17,9 @@ x-backend-environment: &backend-environment
   ALPACA_API_SECRET: ${ALPACA_API_SECRET:-}
   # Market data for sim. Without data keys a sim runner replays cached bars
   # (seed them with `npm run data:pull` in backend/).
-  ALPACA_DATA_KEY: ${ALPACA_DATA_KEY:-}
-  ALPACA_DATA_SECRET: ${ALPACA_DATA_SECRET:-}
+  # Provided by `npm run dev:stack` from the member's OWN keys (REST data only).
+  ALPACA_DATA_KEY: ${LOCAL_DATA_KEY:-}
+  ALPACA_DATA_SECRET: ${LOCAL_DATA_SECRET:-}
   REPLAY_FROM: ${REPLAY_FROM:-}
   REPLAY_TO: ${REPLAY_TO:-}
   REPLAY_SPEED: ${REPLAY_SPEED:-1}
@@ -58,7 +59,7 @@ services:
       NEXT_PUBLIC_ENABLE_WEBSOCKET: "true"
       NEXT_PUBLIC_WS_BASE_URL: ws://localhost:8080
       NEXT_PUBLIC_APP_NAME: SHPE Capital Trading Platform (Local)
-      NEXT_PUBLIC_SUPABASE_URL: http://localhost:54321
+      NEXT_PUBLIC_SUPABASE_URL: http://localhost:${LOCAL_SUPABASE_API_PORT:-54321}
       NEXT_PUBLIC_SUPABASE_ANON_KEY: ${LOCAL_SUPABASE_ANON_KEY}
     ports:
       - "3000:3000"
@@ -79,6 +80,10 @@ services:
     environment:
       <<: *backend-environment
       PORT: "8080"
+      # Alpaca allows ONE live data stream per account, so the paper runner gets data
+      # keys only when opted in (LOCAL_STREAM_DATA=1). Backtests use REST and always do.
+      ALPACA_DATA_KEY: ${LOCAL_STREAM_DATA_KEY:-}
+      ALPACA_DATA_SECRET: ${LOCAL_STREAM_DATA_SECRET:-}
     ports:
       - "8080:8080"
 
