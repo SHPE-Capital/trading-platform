@@ -14,7 +14,7 @@
 "use client";
 
 /* Form fields intentionally snapshot the selected persisted configuration. */
-/* eslint-disable react-hooks/set-state-in-effect */
+ 
 
 import { useState, useEffect, useMemo } from "react";
 import type { BacktestConfig } from "../../types/api";

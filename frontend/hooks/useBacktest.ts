@@ -206,7 +206,7 @@ export function useBacktest(): UseBacktestResult {
 
   // Stores the current result as "previous" then forces a fresh run (bypasses dedup).
   const selectedResultRef = useRef<BacktestResult | null>(null);
-  selectedResultRef.current = selectedResult;
+  useEffect(() => { selectedResultRef.current = selectedResult; }, [selectedResult]);
   const rerun = useCallback(async (config: Omit<BacktestConfig, "id">): Promise<string> => {
     setPreviousResult(selectedResultRef.current);
     setSelectedResult(null);

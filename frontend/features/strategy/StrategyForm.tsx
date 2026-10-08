@@ -13,7 +13,7 @@
 "use client";
 
 /* Form fields intentionally snapshot the selected persisted configuration. */
-/* eslint-disable react-hooks/set-state-in-effect */
+ 
 
 import { useState, useEffect } from "react";
 import type { PairsStrategyConfig, RiskBudget } from "../../types/strategy";
