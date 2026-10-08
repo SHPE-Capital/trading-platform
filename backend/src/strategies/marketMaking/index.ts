@@ -8,7 +8,7 @@
  *   halfSpread       = ½ · ( γ × σ² × (T − t) + (2/γ) × ln(1 + γ/κ) )
  *   bid = reservation − halfSpread,  ask = reservation + halfSpread
  *
- * See ./avellanedaStoikovStrategy.ts and backend/docs/strategies/avellaneda_stoikov.md
+ * See ./avellanedaStoikovStrategy.ts and docs/strategies/avellaneda-stoikov.md
  * for full documentation, parameter reference, and limitations.
  *
  * Inputs:  EvaluationContext with quote/mid state and current inventory.

@@ -3,7 +3,7 @@
 # Multi-stage build producing one small runtime image shared by all three
 # server processes (api / paper-trading / real-trading) — they're the same
 # compiled dist/ output, just started with a different entrypoint and PORT,
-# exactly matching the existing npm start:* scripts. docker-compose.yml
+# exactly matching the existing npm start:* scripts. docker/docker-compose.local.yml
 # selects which one each service runs via `command:`.
 #
 # A `lambda` stage (for the backtest worker, built from this same dist/
@@ -26,7 +26,7 @@ WORKDIR /app
 COPY . .
 RUN npm run build
 
-# Hot-reload target used only by docker-compose.dev.yml. Source is bind-mounted
+# Hot-reload target used only by docker/docker-compose.dev.yml. Source is bind-mounted
 # over /app while node_modules remains in a named volume populated from here.
 FROM deps AS development
 WORKDIR /app
@@ -53,10 +53,10 @@ USER app
 
 # Every server process (api/paper/real) mounts the same Express app and
 # therefore the same /health route (app/index.ts) — see runtime/bootstrap.ts.
-# PORT is set per-service in docker-compose.yml.
+# PORT is set per-service in docker/docker-compose.local.yml.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD node -e "require('http').get('http://localhost:'+(process.env.PORT||8080)+'/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
 
-# Default: API-only mode. docker-compose.yml overrides `command:` for the
+# Default: API-only mode. docker/docker-compose.local.yml overrides `command:` for the
 # paper-trading and real-trading services to run their own dist/ entrypoint.
 CMD ["node", "dist/index.js"]

@@ -620,7 +620,7 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
   // ------------------------------------------------------------------
   // Graceful shutdown
   //
-  // Runs once. Under npm + nodemon (as in docker-compose.dev.yml) one stop
+  // Runs once. Under npm + nodemon (as in docker/docker-compose.dev.yml) one stop
   // delivers the signal twice; a second, concurrent pass found no leases left
   // to release and exited before the first pass's release finished, so the
   // successor had to wait out the lease instead of adopting at once.

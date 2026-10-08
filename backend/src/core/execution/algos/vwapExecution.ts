@@ -10,7 +10,7 @@
  * Outputs: Variable-size child orders submitted in response to volume events.
  *
  * Status: SCAFFOLDED — execute() throws until implementation is complete.
- * See backend/docs/execution-algos-layer.md for the full implementation guide.
+ * See docs/architecture/execution-algos-layer.md for the full implementation guide.
  */
 
 import { logger } from "../../../utils/logger";
@@ -47,7 +47,7 @@ export class VwapExecutionAlgo implements IExecutionAlgo {
       symbol: intent.symbol,
       qty: intent.qty,
     });
-    throw new Error("VwapExecutionAlgo.execute is not yet implemented. See backend/docs/execution-algos-layer.md.");
+    throw new Error("VwapExecutionAlgo.execute is not yet implemented. See docs/architecture/execution-algos-layer.md.");
   }
 
   /**

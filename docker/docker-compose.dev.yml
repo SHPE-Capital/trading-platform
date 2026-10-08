@@ -1,3 +1,5 @@
+name: shpe-trading-dev
+
 x-backend-environment: &backend-environment
   NODE_ENV: development
   APP_RUNTIME_ORIGIN: local-docker
@@ -28,11 +30,11 @@ x-backend-environment: &backend-environment
 
 x-backend-service: &backend-service
   build:
-    context: ./backend
+    context: ../backend
     dockerfile: Dockerfile
     target: development
   volumes:
-    - ./backend:/app
+    - ../backend:/app
     - backend_node_modules:/app/node_modules
   extra_hosts:
     - "host.docker.internal:host-gateway"
@@ -43,11 +45,11 @@ x-backend-service: &backend-service
 services:
   frontend:
     build:
-      context: ./frontend
+      context: ../frontend
       dockerfile: Dockerfile
       target: development
     volumes:
-      - ./frontend:/app
+      - ../frontend:/app
       - frontend_node_modules:/app/node_modules
     environment:
       NEXT_PUBLIC_API_BASE_URL: http://localhost:8080/api

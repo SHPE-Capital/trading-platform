@@ -68,7 +68,7 @@ function gitValue(args, fallback) {
 }
 
 if (action === "down") {
-  spawnSync(docker, ["compose", "-f", "docker-compose.dev.yml", "down"], {
+  spawnSync(docker, ["compose", "-f", "docker/docker-compose.dev.yml", "down"], {
     stdio: "inherit",
     env: {
       ...process.env,
@@ -112,7 +112,7 @@ console.log("App: http://localhost:3000  Supabase Studio: http://localhost:54323
 
 const compose = spawnSync(
   docker,
-  ["compose", "-f", "docker-compose.dev.yml", "up", "--build", ...process.argv.slice(3)],
+  ["compose", "-f", "docker/docker-compose.dev.yml", "up", "--build", ...process.argv.slice(3)],
   { stdio: "inherit", env: { ...process.env, ...composeEnv } },
 );
 process.exit(compose.status ?? 1);

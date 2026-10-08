@@ -12,7 +12,7 @@
  * Outputs: Integer quantity scaled by the targetVol/realizedVol ratio.
  *
  * Status: SCAFFOLDED — computeQty() returns 0 until implementation is complete.
- * See backend/docs/position-sizing-layer.md for the full implementation guide.
+ * See docs/architecture/position-sizing-layer.md for the full implementation guide.
  */
 
 import { logger } from "../../utils/logger";
