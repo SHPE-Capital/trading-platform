@@ -5,7 +5,7 @@ x-backend-environment: &backend-environment
   APP_RUNTIME_ORIGIN: local-docker
   APP_BUILD_SHA: ${LOCAL_BUILD_SHA:-local}
   APP_BUILD_DIRTY: ${LOCAL_BUILD_DIRTY:-true}
-  SUPABASE_URL: http://host.docker.internal:54321
+  SUPABASE_URL: http://host.docker.internal:${LOCAL_SUPABASE_API_PORT:-54321}
   SUPABASE_ANON_KEY: ${LOCAL_SUPABASE_ANON_KEY}
   SUPABASE_SERVICE_ROLE_KEY: ${LOCAL_SUPABASE_SERVICE_ROLE_KEY}
   DATABASE_URL: ${LOCAL_DATABASE_URL}
@@ -58,7 +58,7 @@ services:
       NEXT_PUBLIC_ENABLE_WEBSOCKET: "true"
       NEXT_PUBLIC_WS_BASE_URL: ws://localhost:8080
       NEXT_PUBLIC_APP_NAME: SHPE Capital Trading Platform (Local)
-      NEXT_PUBLIC_SUPABASE_URL: http://localhost:54321
+      NEXT_PUBLIC_SUPABASE_URL: http://localhost:${LOCAL_SUPABASE_API_PORT:-54321}
       NEXT_PUBLIC_SUPABASE_ANON_KEY: ${LOCAL_SUPABASE_ANON_KEY}
     ports:
       - "3000:3000"

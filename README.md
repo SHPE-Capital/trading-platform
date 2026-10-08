@@ -238,8 +238,10 @@ For the lowest-overhead local setup, install Node.js 22+ and Docker Desktop,
 then run:
 
 ```bash
-npm install
-npm run dev:stack
+npm install        # repo root: installs the pinned Supabase CLI
+npm run setup      # one-time: deps, env files, prerequisite check
+npm run dev:stack  # Supabase + frontend, API, paper runner, backtest worker
+npm run doctor     # health report whenever something looks wrong
 ```
 
 This starts a project-local Supabase stack plus the frontend, API, paper runner,
