@@ -30,6 +30,14 @@ Append the deploy public key to `~/.ssh/authorized_keys`.
 - Authentication → URL Configuration: Site URL = the Vercel URL; add
   `https://<app>.vercel.app/**` to redirect URLs.
 
+- Onboarding a lead (they choose their own password; you never see it):
+  1. Authentication → Users → **Invite user**. The invite creates a `pending` profile.
+  2. Promote them: `update app_users set role = 'lead', membership_status = 'active' where email = '…';`
+  3. They open the emailed link, which signs them in and lands on `/set-password`.
+  4. Later resets go through `/forgot-password`, linked from the sign-in page.
+  Invite and recovery links expire quickly; re-invite or use the reset page if one lapses.
+  Enable MFA for leads under Authentication → Multi-Factor if you want a second factor.
+
 ### GitHub
 - Merge into `main` (the workflow only triggers from there).
 - Generate a key: `ssh-keygen -t ed25519 -f deploy_key -N ""`. Public half goes on the server.

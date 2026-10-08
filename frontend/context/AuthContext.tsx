@@ -28,8 +28,13 @@ interface AuthContextValue {
   error: string | null;
   signInWithPassword: (email: string, password: string) => Promise<void>;
   signInWithMagicLink: (email: string) => Promise<void>;
+  /** Emails a reset link that lands on the set-password screen. */
+  sendPasswordReset: (email: string) => Promise<void>;
+  updatePassword: (password: string) => Promise<void>;
   signOut: () => Promise<void>;
 }
+
+const SET_PASSWORD_PATH = "/set-password";
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
@@ -64,7 +69,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    supabase.auth.getSession().then(({ data }) => syncProfile(data.session));
+    // Invite links land on the Supabase Site URL with the session in the URL
+    // hash, and the dashboard's invite form can't choose another landing page.
+    // Read the hash before the client consumes it, then send the invited or
+    // recovering member to the password screen once their session is in place.
+    const arrivedViaPasswordLink =
+      /[#&]type=(invite|recovery)\b/.test(window.location.hash) &&
+      window.location.pathname !== SET_PASSWORD_PATH;
+
+    supabase.auth.getSession().then(({ data }) => {
+      if (arrivedViaPasswordLink && data.session) {
+        window.location.replace(SET_PASSWORD_PATH);
+        return;
+      }
+      return syncProfile(data.session);
+    });
 
     const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
       void syncProfile(session);
@@ -97,6 +116,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (otpError) throw new Error(otpError.message);
   }, []);
 
+  const sendPasswordReset = useCallback(async (email: string) => {
+    const supabase = getSupabase();
+    if (!supabase) throw new Error("Authentication is not configured");
+    const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}${SET_PASSWORD_PATH}`,
+    });
+    if (resetError) throw new Error(resetError.message);
+  }, []);
+
+  /** Sets the password on the current session — the member's own, never an admin's. */
+  const updatePassword = useCallback(async (password: string) => {
+    const supabase = getSupabase();
+    if (!supabase) throw new Error("Authentication is not configured");
+    const { error: updateError } = await supabase.auth.updateUser({ password });
+    if (updateError) throw new Error(updateError.message);
+  }, []);
+
   const signOut = useCallback(async () => {
     const supabase = getSupabase();
     if (supabase) await supabase.auth.signOut();
@@ -112,6 +148,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         error,
         signInWithPassword,
         signInWithMagicLink,
+        sendPasswordReset,
+        updatePassword,
         signOut,
       }}
     >

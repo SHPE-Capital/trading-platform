@@ -11,6 +11,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "../../context/AuthContext";
 
@@ -135,6 +136,15 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon key>`}
               ? "Sign in"
               : "Email me a link"}
         </button>
+
+        {mode === "password" && (
+          <Link
+            href="/forgot-password"
+            className="text-xs text-zinc-500 underline-offset-2 hover:underline dark:text-zinc-400"
+          >
+            Forgot your password?
+          </Link>
+        )}
 
         <button
           type="button"
