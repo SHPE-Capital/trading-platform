@@ -65,7 +65,7 @@ export class AvellanedaStoikovStrategy extends BaseStrategy {
   /**
    * Algorithm version. Bump on any change that alters signals or sizing (CI
    * enforces this for edits under strategies/marketMaking/). v1 is the current
-   * behaviour, including the known σ-units issue in handoff.md §1.2 — fixing
+   * behaviour, including the known σ-units issue in docs/history/handoff.md §1.2 — fixing
    * that is a v2 change.
    */
   static readonly VERSION = 1;

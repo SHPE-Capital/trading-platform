@@ -10,7 +10,7 @@
  * Outputs: Sequence of equal-sized child orders submitted to the sink over time.
  *
  * Status: SCAFFOLDED — execute() throws until implementation is complete.
- * See backend/docs/execution-algos-layer.md for the full implementation guide.
+ * See docs/architecture/execution-algos-layer.md for the full implementation guide.
  */
 
 import { logger } from "../../../utils/logger";
@@ -60,7 +60,7 @@ export class TwapExecutionAlgo implements IExecutionAlgo {
       symbol: intent.symbol,
       qty: intent.qty,
     });
-    throw new Error("TwapExecutionAlgo.execute is not yet implemented. See backend/docs/execution-algos-layer.md.");
+    throw new Error("TwapExecutionAlgo.execute is not yet implemented. See docs/architecture/execution-algos-layer.md.");
   }
 
   /**

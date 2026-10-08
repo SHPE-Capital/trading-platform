@@ -280,4 +280,4 @@ When `BACKTEST_DEBUG=1`, `strategy.printDebugCounters()` prints a signal funnel 
 ## References
 
 - M. Avellaneda & S. Stoikov, *"High-frequency trading in a limit order book"*, Quantitative Finance 8(3), 217–224, 2008.
-- See also `strategies.md` (repo root) for the platform's market-making strategy brief.
+- See also [`overview.md`](./overview.md) for the platform's market-making strategy brief.

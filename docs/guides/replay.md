@@ -11,7 +11,7 @@ Complete the steps below in order.
 ## Part 1 — Prerequisites
 
 Replay shares the same backend environment as backtest. If you have already completed
-Part 1 of `backtest_setup.md` (npm install, `.env` file, Supabase keys), skip to Part 2.
+Part 1 of `backtesting.md` (npm install, `.env` file, Supabase keys), skip to Part 2.
 
 Otherwise complete those steps first — replay requires the same Alpaca and Supabase
 credentials.

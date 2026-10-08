@@ -1,7 +1,9 @@
+name: shpe-trading-local
+
 # Local dev/test parity with the eventual EC2 deployment — same image, same
 # process separation as production. Production adds a reverse-proxy/TLS
 # layer (Caddy) and reads secrets from SSM Parameter Store instead of
-# backend/.env; that's a docker-compose.prod.yml addition for the CI/CD step,
+# backend/.env; that's a docker-compose.prod.yml in deploy/ for the CI/CD step,
 # not needed to exercise the app locally.
 #
 # Backtests only ever execute in backtest-worker containers (Part 02): the API
@@ -13,10 +15,10 @@
 services:
   backtest-worker:
     build:
-      context: ./backend
+      context: ../backend
       dockerfile: Dockerfile
     command: ["node", "dist/runtime/backtestWorker.js"]
-    env_file: ./backend/.env
+    env_file: ../backend/.env
     restart: unless-stopped
     cpus: 1.0
     stop_grace_period: 60s
@@ -25,10 +27,10 @@ services:
 
   api:
     build:
-      context: ./backend
+      context: ../backend
       dockerfile: Dockerfile
     command: ["node", "dist/index.js"]
-    env_file: ./backend/.env
+    env_file: ../backend/.env
     environment:
       PORT: "8082"
     ports:
@@ -38,10 +40,10 @@ services:
 
   paper-trading:
     build:
-      context: ./backend
+      context: ../backend
       dockerfile: Dockerfile
     command: ["node", "dist/runtime/paper-trading.js"]
-    env_file: ./backend/.env
+    env_file: ../backend/.env
     environment:
       PORT: "8080"
       # Production trades the club account (APP_RUNTIME_ORIGIN=aws-prod and
@@ -60,10 +62,10 @@ services:
   #   docker compose --profile real-trading up real-trading
   real-trading:
     build:
-      context: ./backend
+      context: ../backend
       dockerfile: Dockerfile
     command: ["node", "dist/runtime/real-trading.js"]
-    env_file: ./backend/.env
+    env_file: ../backend/.env
     environment:
       PORT: "8081"
       EXECUTION_TARGET: alpaca-live

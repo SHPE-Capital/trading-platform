@@ -1,0 +1,17 @@
+# TLS terminates here. Caddy fetches and renews Let's Encrypt certs on its own.
+# DOMAIN comes from .env on the server (e.g. example.com, or 1-2-3-4.sslip.io
+# when you have no domain yet). Each backend process gets its own subdomain
+# because the frontend addresses them as three independent API bases.
+# Websocket upgrades pass through reverse_proxy untouched.
+
+api.{$DOMAIN} {
+	reverse_proxy api:8082
+}
+
+paper.{$DOMAIN} {
+	reverse_proxy paper-trading:8080
+}
+
+# live.{$DOMAIN} {
+# 	reverse_proxy real-trading:8081
+# }

@@ -9,6 +9,11 @@ node_modules/
 .env
 .env.local
 .env.*.local
+# Any other .env variant (e.g. .env.deployment) stays local; only templates are committed.
+.env.*
+!.env.example
+!**/.env.example
+!**/server.env.example
 # Catches backups too — a literal ".env"/".env.local" allowlist misses
 # ".env.bak-<timestamp>", ".env.old", ".env~", etc. by filename technicality,
 # which is exactly how one such file previously sat untracked-but-present in
@@ -17,6 +22,16 @@ node_modules/
 .env*.bak
 *.env.bak
 # Keep .env.example files committed — they document required vars.
+
+# ── SSH / TLS private keys ────────────────────────────────────────────────────
+# Deploy keys and AWS key pairs must never be staged, even by `git add -A`.
+deploy_key
+deploy_key.pub
+id_rsa*
+id_ed25519*
+*.pem
+*.key
+*.ppk
 
 # ── Backend build output ──────────────────────────────────────────────────────
 backend/dist/

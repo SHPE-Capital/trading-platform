@@ -51,7 +51,16 @@ SymbolState  Orchestrator
 
 ```
 trading-platform/
-├── backend/
+├── backend/                     # Node/TypeScript services (api, paper/real trading, backtest worker)
+├── frontend/                    # Next.js app (deployed on Vercel)
+├── supabase/                    # Local Supabase config, migrations, seed data
+├── docker/                      # Local Docker Compose stacks (dev with hot reload, prod-parity)
+├── deploy/                      # Production: EC2 compose file, Caddy config, server env template
+├── scripts/                     # Repo tooling (local stack launcher, version checks)
+├── docs/                        # All documentation — start at docs/README.md
+├── .github/workflows/           # CI and deploy pipelines
+└── (backend layout below)
+backend/
 │   ├── src/
 │   │   ├── adapters/
 │   │   │   ├── alpaca/          # WebSocket market data, order execution, event normalizer
@@ -234,7 +243,7 @@ npm run dev:stack
 ```
 
 This starts a project-local Supabase stack plus the frontend, API, paper runner,
-and backtest worker. See [LOCAL_DEVELOPMENT.md](./LOCAL_DEVELOPMENT.md) for the
+and backtest worker. See [docs/guides/local-development.md](./docs/guides/local-development.md) for the
 local account, service URLs, database workflow, membership model, and paper/live
 deployment boundary.
 
