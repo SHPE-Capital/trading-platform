@@ -29,6 +29,8 @@ describe("PortfolioStateManager.getRiskView", () => {
       const snap = p.getSnapshot();
       expect(view.equity).toBe(snap.equity);
       expect(view.positions).toEqual(snap.positions);
+      expect(view.cash).toBe(snap.cash);
+      expect(view.initialCapital).toBe(snap.initialCapital);
     }
   });
 

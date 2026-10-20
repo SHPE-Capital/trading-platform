@@ -464,7 +464,7 @@ export class Orchestrator {
     // so nothing else runs between this check and the individual reserve calls inside
     // _onOrderIntent — a passing pre-flight guarantees all legs can reserve.
     if (legs.length > 1) {
-      const portfolio = this.portfolioState.getSnapshot();
+      const portfolio = this.portfolioState.getRiskView();
 
       // Full per-leg risk pre-flight — drop all legs if any would be rejected.
       const riskFailure = this._preflightLegs(legs, portfolio);
@@ -595,7 +595,7 @@ export class Orchestrator {
    */
   private _preflightLegs(
     legs: import("../../types/orders").OrderIntent[],
-    portfolio: import("../../types/portfolio").PortfolioSnapshot,
+    portfolio: import("../../types/portfolio").PortfolioRiskView,
   ): { intent: import("../../types/orders").OrderIntent; failedCheck: string; reason: string; symbol: string } | null {
     for (const leg of legs) {
       const symState = this.symbolState.get(leg.symbol);
@@ -684,7 +684,7 @@ export class Orchestrator {
     const intent = mid !== null && event.payload.decisionPrice === undefined
       ? { ...event.payload, decisionPrice: mid }
       : event.payload;
-    const portfolio = this.portfolioState.getSnapshot();
+    const portfolio = this.portfolioState.getRiskView();
 
     // Stage 1: signal-time risk checks (kill switch, cooldown, position/cash/concentration).
     // Staleness is measured from when the reference price became known — a bar
