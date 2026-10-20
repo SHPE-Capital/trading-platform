@@ -25,7 +25,7 @@ import { BacktestWorker } from "../core/backtest/backtestWorker";
 import { BacktestEngine } from "../core/backtest/backtestEngine";
 import { BacktestLoader } from "../core/backtest/backtestLoader";
 import { buildBacktestStrategies } from "../core/backtest/strategyFactory";
-import { SupabaseBarCache } from "../adapters/supabase/barCacheRepository";
+import { getBarCache } from "../adapters/barCacheFactory";
 import { createTickSource } from "../adapters/alpaca/historicalData";
 import {
   claimBacktestJob,
@@ -55,7 +55,7 @@ const KEEP_FINISHED_HOURS = 72;
 
 async function main(): Promise<void> {
   const workerId = `worker:${os.hostname()}:${process.pid}:${randomBytes(3).toString("hex")}`;
-  const barCache = new SupabaseBarCache();
+  const barCache = getBarCache();
 
   const worker = new BacktestWorker(
     workerId,

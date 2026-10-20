@@ -17,7 +17,7 @@ import {
   updateStrategyRun,
 } from "../../adapters/supabase/repositories";
 import { enqueueBacktestJob } from "../../adapters/supabase/backtestJobRepository";
-import { SupabaseBarCache } from "../../adapters/supabase/barCacheRepository";
+import { getBarCache } from "../../adapters/barCacheFactory";
 import { BacktestLoader } from "../../core/backtest/backtestLoader";
 import { BACKTESTABLE_TYPES } from "../../core/backtest/strategyFactory";
 import { BACKTEST_ENGINE_VERSION } from "../../core/backtest/backtestEngine";
@@ -46,7 +46,7 @@ const REPORT_TTL_MS = 30_000;
 const MARKS_TTL_MS = 15_000;
 const BENCHMARK_TTL_MS = 3_600_000;
 
-const benchmarkLoader = new BacktestLoader({ cache: new SupabaseBarCache() });
+const benchmarkLoader = new BacktestLoader({ cache: getBarCache() });
 
 /** Benchmark closes over a window; empty when no bars are available (e.g. no data keys). */
 async function benchmarkCurve(startMs: number, endMs: number): Promise<{ ts: number; value: number }[]> {

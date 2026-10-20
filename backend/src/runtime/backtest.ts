@@ -13,7 +13,7 @@
 
 import { BacktestEngine } from "../core/backtest/backtestEngine";
 import { BacktestLoader } from "../core/backtest/backtestLoader";
-import { SupabaseBarCache } from "../adapters/supabase/barCacheRepository";
+import { getBarCache } from "../adapters/barCacheFactory";
 import { createTickSource } from "../adapters/alpaca/historicalData";
 import { buildBacktestStrategies } from "../core/backtest/strategyFactory";
 import { STRATEGY_DEFINITIONS } from "../config/strategyDefaults";
@@ -47,7 +47,7 @@ async function main(): Promise<void> {
     description: "Initial SPY/QQQ pairs backtest",
   };
 
-  const engine = new BacktestEngine(new BacktestLoader({ cache: new SupabaseBarCache() }), { tickSource: createTickSource });
+  const engine = new BacktestEngine(new BacktestLoader({ cache: getBarCache() }), { tickSource: createTickSource });
   const result = await engine.run(config, () => buildBacktestStrategies(config));
 
   logger.info("runtime/backtest: completed", {
