@@ -36,7 +36,10 @@ export interface SymbolState {
   latestMidTs: EpochMs | null;
   latestSpread: number | null;
 
-  // Rolling windows
+  // Rolling windows (60 s). Each starts recording the first time it is read:
+  // nothing in the platform reads them, so keeping all four current on every
+  // quote was pure overhead. A strategy that reads one sees history from that
+  // first read on.
   quotesWindow: RollingTimeWindow<Quote>;
   tradesWindow: RollingTimeWindow<Trade>;
   midpricesWindow: RollingTimeWindow<number>;
@@ -98,9 +101,7 @@ export class SymbolStateManager {
     state.latestMidTs = quote.ts;
     state.latestSpread = quote.spread;
     state.quoteCount++;
-    state.quotesWindow.push({ ts: quote.ts, value: quote });
-    state.midpricesWindow.push({ ts: quote.ts, value: quote.midPrice });
-    state.spreadsWindow.push({ ts: quote.ts, value: quote.spread });
+    if (state instanceof SymbolStateRecord) state.trackQuote(quote);
   }
 
   /**
@@ -111,7 +112,7 @@ export class SymbolStateManager {
     const state = this.getOrCreate(trade.symbol);
     state.latestTrade = trade;
     state.tradeCount++;
-    state.tradesWindow.push({ ts: trade.ts, value: trade });
+    if (state instanceof SymbolStateRecord) state.trackTrade(trade);
   }
 
   /**
@@ -144,23 +145,58 @@ export class SymbolStateManager {
   // ------------------------------------------------------------------
 
   private _createInitialState(symbol: Symbol): SymbolState {
-    return {
-      symbol,
-      latestQuote: null,
-      latestTrade: null,
-      latestBar: null,
-      latestBid: null,
-      latestAsk: null,
-      latestMid: null,
-      latestMidTs: null,
-      latestSpread: null,
-      quotesWindow: new RollingTimeWindow(DEFAULT_WINDOWS.medium),
-      tradesWindow: new RollingTimeWindow(DEFAULT_WINDOWS.medium),
-      midpricesWindow: new RollingTimeWindow(DEFAULT_WINDOWS.medium),
-      spreadsWindow: new RollingTimeWindow(DEFAULT_WINDOWS.medium),
-      quoteCount: 0,
-      tradeCount: 0,
-      barCount: 0,
-    };
+    return new SymbolStateRecord(symbol);
+  }
+}
+
+/**
+ * SymbolState with rolling windows that are created on first read and only
+ * maintained from then on. JSON serialization leaves them out (they are
+ * accessors, not own properties).
+ */
+class SymbolStateRecord implements SymbolState {
+  latestQuote: Quote | null = null;
+  latestTrade: Trade | null = null;
+  latestBar: Bar | null = null;
+  latestBid: number | null = null;
+  latestAsk: number | null = null;
+  latestMid: number | null = null;
+  latestMidTs: EpochMs | null = null;
+  latestSpread: number | null = null;
+  quoteCount = 0;
+  tradeCount = 0;
+  barCount = 0;
+  #quotes: RollingTimeWindow<Quote> | null = null;
+  #trades: RollingTimeWindow<Trade> | null = null;
+  #mids: RollingTimeWindow<number> | null = null;
+  #spreads: RollingTimeWindow<number> | null = null;
+
+  constructor(readonly symbol: Symbol) {}
+
+  get quotesWindow(): RollingTimeWindow<Quote> {
+    return (this.#quotes ??= new RollingTimeWindow(DEFAULT_WINDOWS.medium));
+  }
+
+  get tradesWindow(): RollingTimeWindow<Trade> {
+    return (this.#trades ??= new RollingTimeWindow(DEFAULT_WINDOWS.medium));
+  }
+
+  get midpricesWindow(): RollingTimeWindow<number> {
+    return (this.#mids ??= new RollingTimeWindow(DEFAULT_WINDOWS.medium));
+  }
+
+  get spreadsWindow(): RollingTimeWindow<number> {
+    return (this.#spreads ??= new RollingTimeWindow(DEFAULT_WINDOWS.medium));
+  }
+
+  /** Pushes into whichever quote-derived windows have been read. */
+  trackQuote(quote: Quote): void {
+    this.#quotes?.push({ ts: quote.ts, value: quote });
+    this.#mids?.push({ ts: quote.ts, value: quote.midPrice });
+    this.#spreads?.push({ ts: quote.ts, value: quote.spread });
+  }
+
+  trackTrade(trade: Trade): void {
+    this.#trades?.push({ ts: trade.ts, value: trade });
   }
 }
