@@ -229,7 +229,7 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
   // Orders: a sim book fills locally — on the live quotes and trades when this
   // runtime streams them, otherwise on the next bar; the alpaca targets send
   // them to the account the check above resolved.
-  const orderAdapter = target === "sim" ? null : new AlpacaOrderExecutionAdapter(eventBus, mode);
+  const orderAdapter = target === "sim" ? null : new AlpacaOrderExecutionAdapter(eventBus, mode, latency?.orderAdapterOptions());
   let liveFills: LiveQuoteFills | null = null;
   let brokerSink: IExecutionSink;
   if (orderAdapter) {

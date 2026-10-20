@@ -127,6 +127,8 @@ export interface OrderPathProbe {
   journal(intentId: string, startNs: bigint, endNs: bigint, outcome: string): void;
   submitStart(intentId: string, ns: bigint): void;
   submitEnd(intentId: string, ns: bigint, outcome: string): void;
+  /** HTTP response headers for a submission arrived (body not yet read). */
+  responseHeaders(intentId: string, ns: bigint): void;
   orderUpdate(orderId: string, kind: OrderUpdateKind, ns: bigint): void;
   fillApplied(orderId: string, ns: bigint, terminal: boolean): void;
 }
@@ -744,6 +746,13 @@ export class LatencyProbe implements MarketDataProbe, EngineProbe, OrderPathProb
     }
     it.submitStartNs = ns;
     if (it.rxMonoNs !== null) this.hReceiveToSubmit.add(Number(ns) - it.rxMonoNs);
+  }
+
+  responseHeaders(intentId: string, ns: bigint): void {
+    const it = this.openIntents.get(intentId);
+    if (!it || it.submitStartNs === null) return;
+    this.metric("order.submit_to_response_headers_ns").add(Number(ns - it.submitStartNs));
+    if (it.sampled) it.spans.push({ stage: "response_headers", startNs: ns, endNs: ns });
   }
 
   submitEnd(intentId: string, ns: bigint, outcome: string): void {

@@ -303,6 +303,7 @@ function renderMarkdown(x: RenderInput): string {
     ["Risk + reservation", "engine.risk_ns.quote", "Per intent"],
     ["Required journal wait", "order.journal_ns", "Preserve durability"],
     ["Application receive-to-submit", "order.receive_to_submit_ns", "Only events producing an order"],
+    ["Submit-to-response headers", "order.submit_to_response_headers_ns", "fetch resolved; Alpaca targets only"],
     ["Submit-to-response", "order.submit_to_response_ns", "HTTP client boundary, not exchange arrival"],
     ["Submit-to-first update", "order.submit_to_first_update_ns", "Paper simulation; report unfilled count"],
   ];
@@ -407,7 +408,7 @@ function renderMarkdown(x: RenderInput): string {
   L.push("- Receive time is application-visible receipt (after kernel, TLS, WebSocket decode and event-loop scheduling), not NIC arrival.");
   L.push("- Observed event age mixes provider processing, transport, local scheduling and clock offset; it is not one-way network latency.");
   L.push("- Free IEX is a single-exchange view; quote sizes are round lots; it is not the NBBO.");
-  L.push("- submit_start is before DNS/TLS/client queues; it is not wire-send time. HTTP response-headers time is not measured.");
+  L.push("- submit_start is before DNS/TLS/client queues; it is not wire-send time. Response headers = fetch resolved (Alpaca targets only).");
   L.push("- Alpaca paper fills are simulated (no queue position, impact or latency slippage).");
   if (synthetic) L.push("- Synthetic workload: not calibrated to live traffic unless stated in the manifest.");
   for (const n of metrics?.notes ?? []) L.push(`- ${n}`);

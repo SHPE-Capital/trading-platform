@@ -47,6 +47,11 @@ export interface OrderExecutionAdapterOptions {
    * acknowledgements (new/accepted) that are not published on the bus.
    */
   onTradeUpdate?: (update: TradeUpdateReceipt) => void;
+  /**
+   * Latency instrumentation: called when an order submission's HTTP response
+   * headers arrive (fetch resolved), before the body is read and mapped.
+   */
+  onResponseHeaders?: (intentId: string, monoNs: bigint, status: number) => void;
 }
 
 export class AlpacaOrderExecutionAdapter {
@@ -109,6 +114,7 @@ export class AlpacaOrderExecutionAdapter {
       },
       body: JSON.stringify(body),
     });
+    this.options.onResponseHeaders?.(intent.id, process.hrtime.bigint(), response.status);
 
     if (!response.ok) {
       const errorText = await response.text();
