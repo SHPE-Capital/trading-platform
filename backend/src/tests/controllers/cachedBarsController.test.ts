@@ -1,8 +1,8 @@
 const readBars = jest.fn();
 const getCompleteDays = jest.fn();
 
-jest.mock('../../adapters/supabase/barCacheRepository', () => ({
-  SupabaseBarCache: jest.fn().mockImplementation(() => ({ readBars, getCompleteDays })),
+jest.mock('../../adapters/barCacheFactory', () => ({
+  getBarCache: () => ({ readBars, getCompleteDays }),
 }));
 jest.mock('../../utils/logger', () => ({ logger: { warn: jest.fn(), info: jest.fn(), error: jest.fn(), debug: jest.fn() } }));
 

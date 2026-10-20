@@ -111,8 +111,10 @@ export const env = {
    * for the bar loader.
    */
   alpacaDataRequestsPerMinute: optionalNumber("ALPACA_DATA_REQUESTS_PER_MINUTE", 190),
-  /** Local cache of historical quotes and trades (relative paths resolve from the process's cwd). */
+  /** Local cache of historical bars, quotes and trades (relative paths resolve from the process's cwd). */
   marketDataDir: optional("MARKET_DATA_DIR", ".local/marketdata"),
+  /** Where minute/day bars are cached: "file" (MARKET_DATA_DIR, default) or "supabase" (bars table). */
+  barCache: optional("BAR_CACHE", "file") === "supabase" ? "supabase" : "file",
 
   // Supabase
   supabaseUrl: requireEnv("SUPABASE_URL"),

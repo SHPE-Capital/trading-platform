@@ -46,6 +46,10 @@ FROM node:22-alpine AS server
 WORKDIR /app
 ENV NODE_ENV=production
 RUN addgroup -S app && adduser -S app -G app
+# Bar, quote and trade cache. Created owned by `app` so a fresh named volume
+# mounted here inherits a directory the non-root user can write.
+RUN mkdir -p /data/marketdata && chown app:app /data/marketdata
+ENV MARKET_DATA_DIR=/data/marketdata
 COPY --from=prod-deps /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY package.json ./

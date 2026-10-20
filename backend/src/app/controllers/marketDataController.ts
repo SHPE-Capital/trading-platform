@@ -1,6 +1,6 @@
 import type { Request, Response } from "express";
 import { logger } from "../../utils/logger";
-import { SupabaseBarCache } from "../../adapters/supabase/barCacheRepository";
+import { getBarCache } from "../../adapters/barCacheFactory";
 import { utcDay } from "../../core/backtest/barCache";
 import type { AppContext } from "../context";
 
@@ -59,7 +59,7 @@ export async function getCachedBars(req: Request, res: Response): Promise<void> 
     return;
   }
   try {
-    const cache = new SupabaseBarCache();
+    const cache = getBarCache();
     const [bars, completeDays] = await Promise.all([
       cache.readBars(symbol, timeframe, fromMs, toMs),
       cache.getCompleteDays(symbol, timeframe, utcDay(fromMs), utcDay(toMs)),

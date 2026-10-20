@@ -79,7 +79,7 @@ import {
   setSignalOutcome,
   upsertRunStats,
 } from "../adapters/supabase/analyticsRepository";
-import { SupabaseBarCache } from "../adapters/supabase/barCacheRepository";
+import { getBarCache } from "../adapters/barCacheFactory";
 import { PairsStrategy } from "../strategies/pairs/pairsStrategy";
 import { createPairsConfig } from "../strategies/pairs/pairsConfig";
 import { createApp } from "../app/index";
@@ -224,7 +224,7 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
   const hasDataKeys = !!(env.alpacaDataKey && env.alpacaDataSecret);
   const marketDataAdapter = hasDataKeys
     ? new AlpacaMarketDataAdapter(eventBus, mode, { invalidData: env.marketDataInvalidPolicy, ...latency?.adapterOptions() })
-    : new ReplayBarFeed(eventBus, mode, new SupabaseBarCache(), replayWindow());
+    : new ReplayBarFeed(eventBus, mode, getBarCache(), replayWindow());
 
   // Orders: a sim book fills locally — on the live quotes and trades when this
   // runtime streams them, otherwise on the next bar; the alpaca targets send
@@ -331,7 +331,7 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
   const leaseSeconds = env.runLeaseSeconds;
   // Warm-up reads through the shared bar cache, so restarting a runner costs
   // little or no Alpaca quota for history a backtest already fetched.
-  const historyLoader = new BacktestLoader({ cache: new SupabaseBarCache() });
+  const historyLoader = new BacktestLoader({ cache: getBarCache() });
 
   const liveRuns = new LiveRunCoordinator(owner, leaseSeconds, {
     registry: orchestrator,

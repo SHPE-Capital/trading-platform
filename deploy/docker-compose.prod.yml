@@ -14,6 +14,10 @@ x-backend: &backend
   env_file: ./.env
   restart: unless-stopped
   stop_grace_period: 60s
+  # Bar, quote and trade cache (BAR_CACHE=file), shared by every backend
+  # process and kept across deploys.
+  volumes:
+    - market_data:/data/marketdata
   logging:
     driver: json-file
     options:
@@ -28,6 +32,7 @@ services:
       PORT: "8082"
       APP_BUILD_SHA: ${IMAGE_TAG}
       APP_BUILD_DIRTY: "false"
+      MARKET_DATA_DIR: /data/marketdata
     ports:
       - "127.0.0.1:8082:8082"
 
@@ -38,6 +43,7 @@ services:
       PORT: "8080"
       APP_BUILD_SHA: ${IMAGE_TAG}
       APP_BUILD_DIRTY: "false"
+      MARKET_DATA_DIR: /data/marketdata
     ports:
       - "127.0.0.1:8080:8080"
 
@@ -47,7 +53,17 @@ services:
     environment:
       APP_BUILD_SHA: ${IMAGE_TAG}
       APP_BUILD_DIRTY: "false"
+      MARKET_DATA_DIR: /data/marketdata
+      # Fail a runaway backtest inside Node before the container limit bites.
+      NODE_OPTIONS: --max-old-space-size=640
+    # Live trading comes first. The worker gets a quarter of paper trading's CPU
+    # weight when both are busy, a memory cap, and is the kernel's first choice
+    # if the box runs out of memory — never the paper-trading process.
     cpus: 1.0
+    cpu_shares: 256
+    mem_limit: 768m
+    memswap_limit: 1g
+    oom_score_adj: 500
     healthcheck:
       disable: true
 
@@ -67,5 +83,6 @@ services:
       - paper-trading
 
 volumes:
+  market_data:
   caddy_data:
   caddy_config:

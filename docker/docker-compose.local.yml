@@ -19,6 +19,10 @@ services:
       dockerfile: Dockerfile
     command: ["node", "dist/runtime/backtestWorker.js"]
     env_file: ../backend/.env
+    environment:
+      MARKET_DATA_DIR: /data/marketdata
+    volumes:
+      - market_data:/data/marketdata
     restart: unless-stopped
     cpus: 1.0
     stop_grace_period: 60s
@@ -33,6 +37,9 @@ services:
     env_file: ../backend/.env
     environment:
       PORT: "8082"
+      MARKET_DATA_DIR: /data/marketdata
+    volumes:
+      - market_data:/data/marketdata
     ports:
       - "8082:8082"
     restart: unless-stopped
@@ -46,11 +53,14 @@ services:
     env_file: ../backend/.env
     environment:
       PORT: "8080"
+      MARKET_DATA_DIR: /data/marketdata
       # Production trades the club account (APP_RUNTIME_ORIGIN=aws-prod and
       # EXPECTED_BROKER_ACCOUNT come from SSM). Anywhere else the boot check
       # refuses the club account, so run this with your own paper keys or
       # EXECUTION_TARGET=sim.
       EXECUTION_TARGET: ${EXECUTION_TARGET:-alpaca-paper}
+    volumes:
+      - market_data:/data/marketdata
     ports:
       - "8080:8080"
     restart: unless-stopped
@@ -68,9 +78,16 @@ services:
     env_file: ../backend/.env
     environment:
       PORT: "8081"
+      MARKET_DATA_DIR: /data/marketdata
       EXECUTION_TARGET: alpaca-live
+    volumes:
+      - market_data:/data/marketdata
     ports:
       - "8081:8081"
     profiles: ["real-trading"]
     restart: unless-stopped
     stop_grace_period: 60s
+
+volumes:
+  # Bar, quote and trade cache shared by every backend container (BAR_CACHE=file).
+  market_data:
