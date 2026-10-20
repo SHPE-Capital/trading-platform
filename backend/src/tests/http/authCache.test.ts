@@ -1,7 +1,7 @@
 /**
  * tests/http/authCache.test.ts
  *
- * requireAuth holds a verified caller for a short while so a polling dashboard
+ * requireAuth holds a verified caller for up to an hour so a polling dashboard
  * does not cost two Supabase round trips per request. Only active members are
  * held, and never past the token's own expiry.
  */
@@ -62,11 +62,11 @@ test("a repeat request with the same token skips the Supabase round trips", asyn
   expect(mockGetAppUser).toHaveBeenCalledTimes(1);
 });
 
-test("a held caller is verified again once the minute is up", async () => {
-  const token = tokenExpiringIn(3600);
+test("a held caller is verified again once the hour is up", async () => {
+  const token = tokenExpiringIn(4 * 3600);
   await me(token);
 
-  advanceClock(61_000);
+  advanceClock(61 * 60_000);
   mockGetAppUser.mockResolvedValue(profile("suspended"));
 
   expect((await me(token)).status).toBe(403);

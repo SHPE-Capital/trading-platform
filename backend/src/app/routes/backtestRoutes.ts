@@ -18,13 +18,13 @@ import { requireAuth } from "../middleware/requireAuth";
 const router = Router();
 
 /** GET /api/backtests — list all backtest result summaries */
-router.get("/", listBacktests);
+router.get("/", requireAuth, listBacktests);
 
 /** GET /api/backtests/:id/stream — SSE: status, progress, then complete or error */
 router.get("/:id/stream", streamBacktest);
 
 /** GET /api/backtests/:id — saved result, or a finished run still in its save window */
-router.get("/:id", getBacktest);
+router.get("/:id", requireAuth, getBacktest);
 
 /**
  * POST /api/backtests/run — queue a run for a worker. Authentication makes the
