@@ -677,8 +677,22 @@ describe('insertBacktestResult', () => {
     await insertBacktestResult({ ...mockBacktestResult, equity_curve: largeCurve }, SAVED_BY);
     const [payload] = chain.insert.mock.calls[0];
     expect(payload.equity_curve).toHaveLength(5000);
-    expect(payload.equity_curve[0]).toEqual(largeCurve[0]);
-    expect(payload.equity_curve[4999]).toEqual(largeCurve[5999]);
+    expect(payload.equity_curve[0].ts).toBe(0);
+    expect(payload.equity_curve[4999].ts).toBe(5999);
+  });
+
+  it('stores only the fields a chart needs per point, not whole snapshots', async () => {
+    const chain = buildChain();
+    mockFrom.mockReturnValue(chain);
+    const point = {
+      id: 'p', ts: 1_000, isoTs: '1970-01-01T00:00:01.000Z', equity: 101, cash: 50, initialCapital: 100,
+      positions: [{ symbol: 'SPY', qty: 1 }], strategyBreakdowns: { a: {} },
+    } as any;
+    await insertBacktestResult({ ...mockBacktestResult, equity_curve: [point] }, SAVED_BY);
+    const [payload] = chain.insert.mock.calls[0];
+    expect(payload.equity_curve).toEqual([
+      { ts: 1_000, isoTs: '1970-01-01T00:00:01.000Z', equity: 101, cash: 50, initialCapital: 100 },
+    ]);
   });
 
   it('passes equity_curve through unchanged when it is under the limit', async () => {

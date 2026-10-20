@@ -15,6 +15,7 @@ import type { StrategyRun, Strategy } from "../../types/strategy";
 import type { BacktestConfig, BacktestResult } from "../../types/backtest";
 import type { UUID } from "../../types/common";
 import { mapRunStats } from "./analyticsRepository";
+import { slimEquityCurve } from "../../core/backtest/equityCurveStorage";
 
 // ------------------------------------------------------------------
 // Orders
@@ -791,7 +792,7 @@ export function downsampleEquityCurve<T>(curve: T[], targetPoints = 5000): T[] {
 export async function insertBacktestResult(result: BacktestResult, savedBy: UUID): Promise<void> {
   const supabase = getSupabaseClient();
 
-  let downsampledEquity = result.equity_curve ?? [];
+  let downsampledEquity = slimEquityCurve(result.equity_curve);
   if (downsampledEquity.length > 5000) {
     const step = (downsampledEquity.length - 1) / 4999;
     const newCurve = [];
