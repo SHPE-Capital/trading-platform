@@ -76,6 +76,7 @@ import {
   insertRunEvent,
   insertRunSnapshots,
   insertSignals,
+  pruneSnapshots,
   loadRunLedger,
   runIdsForOrders,
   setSignalOutcome,
@@ -88,6 +89,7 @@ import { createApp } from "../app/index";
 import { attachWebSocketServer } from "../app/websocket";
 import { env, type ExecutionTarget } from "../config/env";
 import { DEFAULT_SNAPSHOT_INTERVAL_MS } from "../config/defaults";
+import { SnapshotThrottle, moneyKey } from "../core/persistence/snapshotThrottle";
 import {
   updateOrder,
   insertPortfolioSnapshot,
@@ -660,18 +662,45 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
     });
   });
 
+  // Sampled every minute, written only when something changed (or hourly), so
+  // nights and weekends stop adding identical rows.
+  const snapshotThrottle = new SnapshotThrottle();
   const snapshotTimer = setInterval(() => {
     // Closed orders are already in the ledger; keeping every one in memory made
     // a long-running runner grow without bound. Six hours covers late fills and
     // reconnect reconciliation by a wide margin.
     orderState.pruneClosedOrders(CLOSED_ORDER_RETENTION_MS);
-    insertPortfolioSnapshot(portfolioState.getSnapshot(), brokerAccount).catch((err) =>
-      logger.error("persistence: insertPortfolioSnapshot failed", { err }),
-    );
-    insertRunSnapshots(runBooks.snapshot(liveRuns.heldRuns(), nowMs())).catch((err) =>
+    const now = nowMs();
+    const book = portfolioState.getSnapshot();
+    const bookKey = moneyKey(book.equity, book.cash) + JSON.stringify(book.positions.map((p) => [p.symbol, p.qty]));
+    if (snapshotThrottle.shouldWrite("book", bookKey, now)) {
+      insertPortfolioSnapshot(book, brokerAccount).catch((err) =>
+        logger.error("persistence: insertPortfolioSnapshot failed", { err }),
+      );
+    }
+    const runRows = runBooks.snapshot(liveRuns.heldRuns(), now);
+    snapshotThrottle.retain(["book", ...runRows.map((r) => r.runId)]);
+    const changedRuns = runRows.filter((r) => snapshotThrottle.shouldWrite(
+      r.runId,
+      moneyKey(r.realizedPnl, r.unrealizedPnl, r.grossExposure, r.netExposure) + JSON.stringify(r.positions),
+      now,
+    ));
+    insertRunSnapshots(changedRuns).catch((err) =>
       logger.error("persistence: insertRunSnapshots failed", { err: String(err) }),
     );
   }, DEFAULT_SNAPSHOT_INTERVAL_MS);
+
+  // Keep every snapshot for 14 days, then one per hour (0020). Once at start,
+  // then daily; a failure only delays the trim.
+  const prune = () => {
+    pruneSnapshots(14).then(
+      (removed) => { if (removed > 0) logger.info("persistence: thinned old snapshots", { removed }); },
+      (err) => logger.warn("persistence: snapshot pruning failed", { err: String(err) }),
+    );
+  };
+  const pruneTimer = setInterval(prune, 24 * 60 * 60_000);
+  pruneTimer.unref?.();
+  prune();
 
   // ------------------------------------------------------------------
   // HTTP + WebSocket server
@@ -710,6 +739,7 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
     shuttingDown = true;
     logger.warn(`bootstrap: shutting down [${mode} mode]`);
     clearInterval(snapshotTimer);
+    clearInterval(pruneTimer);
     clearInterval(leaseTimer);
     diagnostics.stop();
     orchestrator.stop();

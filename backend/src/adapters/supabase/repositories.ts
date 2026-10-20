@@ -10,7 +10,7 @@
 import { getSupabaseClient } from "./client";
 import { logger } from "../../utils/logger";
 import type { Order, Fill } from "../../types/orders";
-import type { PortfolioSnapshot } from "../../types/portfolio";
+import type { EquityPoint, PortfolioSnapshot } from "../../types/portfolio";
 import type { StrategyRun, Strategy } from "../../types/strategy";
 import type { BacktestConfig, BacktestResult } from "../../types/backtest";
 import type { UUID } from "../../types/common";
@@ -300,23 +300,33 @@ export async function getLatestPortfolioSnapshot(): Promise<PortfolioSnapshot | 
 }
 
 /**
- * The most recent `limit` snapshots, returned oldest first for charting.
- * The query orders newest first so the limit keeps the latest rows; ordering
- * ascending before limiting would return the first `limit` snapshots ever
- * written and freeze the curve once the table outgrows the limit.
+ * The book's equity curve for charting, downsampled in the database to about
+ * `points` rows (the last snapshot in each time bucket) so a chart never reads
+ * every minute of history. `brokerAccount` null reads pre-0016 snapshots.
  */
-export async function getPortfolioEquityCurve(limit = 500): Promise<PortfolioSnapshot[]> {
-  const supabase = getSupabaseClient();
-  const { data, error } = await supabase
-    .from("portfolio_snapshots")
-    .select("*")
-    .order("ts", { ascending: false })
-    .limit(limit);
+export async function getPortfolioEquityCurve(
+  points = 500,
+  brokerAccount: string | null = null,
+  sinceMs: number | null = null,
+): Promise<EquityPoint[]> {
+  const { data, error } = await getSupabaseClient().rpc("portfolio_equity_history", {
+    p_broker_account: brokerAccount,
+    p_since: sinceMs === null ? null : new Date(sinceMs).toISOString(),
+    p_points: Math.min(Math.max(Math.floor(points) || 500, 2), 5000),
+  });
   if (error) {
     logger.error("getPortfolioEquityCurve failed", { error: error.message });
     return [];
   }
-  return (data ?? []).map((row) => mapPortfolioSnapshot(row as Record<string, unknown>)).reverse();
+  return ((data ?? []) as Record<string, unknown>[]).map((row) => {
+    const ts = new Date(row.ts as string).getTime();
+    return {
+      ts,
+      isoTs: new Date(ts).toISOString(),
+      equity: Number(row.equity),
+      initialCapital: Number(row.initial_capital),
+    };
+  });
 }
 
 // ------------------------------------------------------------------

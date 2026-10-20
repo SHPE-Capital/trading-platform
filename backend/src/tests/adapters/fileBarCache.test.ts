@@ -1,5 +1,5 @@
 jest.mock('../../config/env', () => ({
-  env: { alpacaApiKey: 'k', alpacaApiSecret: 's', logLevel: 'error' },
+  env: { alpacaApiKey: 'k', alpacaApiSecret: 's', alpacaDataKey: 'k', alpacaDataSecret: 's', logLevel: 'error' },
 }));
 
 import { promises as fs } from 'node:fs';

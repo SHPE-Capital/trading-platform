@@ -192,6 +192,16 @@ export async function insertRunSnapshots(rows: RunSnapshotInsert[]): Promise<voi
   if (error) throw new Error(`insertRunSnapshots failed: ${error.message}`);
 }
 
+/**
+ * Thins snapshots older than `fullDetailDays` to one per hour per broker
+ * account / run (0020). Returns the number of rows deleted.
+ */
+export async function pruneSnapshots(fullDetailDays = 14): Promise<number> {
+  const { data, error } = await getSupabaseClient().rpc("prune_snapshots", { p_full_detail_days: fullDetailDays });
+  if (error) throw new Error(`prune_snapshots failed: ${error.message}`);
+  return Number(data ?? 0);
+}
+
 export interface SignalRow {
   id: string;
   run_id: string | null;
