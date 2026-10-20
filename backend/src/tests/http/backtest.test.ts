@@ -1,5 +1,6 @@
 import request from "supertest";
 import { createApp } from "../../app/index";
+import { env } from "../../config/env";
 import { clearVerifiedCallers } from "../../app/middleware/requireAuth";
 import { BacktestEngine } from "../../core/backtest/backtestEngine";
 import * as repositories from "../../adapters/supabase/repositories";
@@ -74,6 +75,40 @@ describe("Backtest HTTP API", () => {
       const response = await request(createApp()).post("/api/backtests/run").set("Authorization", "Bearer valid").send(payload);
       expect(response.status).toBe(202);
       expect(BacktestEngine.prototype.run).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("submission limits", () => {
+    const run = (body: object) =>
+      request(app).post("/api/backtests/run").set("Authorization", "Bearer valid").send({ ...payload, ...body });
+    const saved = { maxDays: env.backtestMaxDays, quotes: env.backtestAllowQuoteFills };
+    afterEach(() => {
+      env.backtestMaxDays = saved.maxDays;
+      env.backtestAllowQuoteFills = saved.quotes;
+    });
+
+    test("rejects dates that do not parse or run backwards", async () => {
+      expect((await run({ startDate: "not-a-date" })).status).toBe(400);
+      const backwards = await run({ startDate: "2024-03-01", endDate: "2024-01-01" });
+      expect(backwards.status).toBe(400);
+      expect(backwards.body.error).toContain("after startDate");
+      expect(mockEnqueue).not.toHaveBeenCalled();
+    });
+
+    test("rejects a range longer than BACKTEST_MAX_DAYS", async () => {
+      env.backtestMaxDays = 30;
+      const tooLong = await run({ startDate: "2024-01-01", endDate: "2024-03-01" });
+      expect(tooLong.status).toBe(400);
+      expect(tooLong.body.error).toContain("at most 30 days");
+      expect((await run({ startDate: "2024-01-01", endDate: "2024-01-20" })).status).toBe(202);
+    });
+
+    test("rejects quote fills when the server disallows them", async () => {
+      env.backtestAllowQuoteFills = false;
+      const quote = await run({ execution: { model: "quote" } });
+      expect(quote.status).toBe(400);
+      expect(quote.body.error).toContain("Quote-fill");
+      expect((await run({})).status).toBe(202);
     });
   });
 

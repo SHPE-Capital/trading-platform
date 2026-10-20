@@ -115,6 +115,13 @@ export const env = {
   marketDataDir: optional("MARKET_DATA_DIR", ".local/marketdata"),
   /** Where minute/day bars are cached: "file" (MARKET_DATA_DIR, default) or "supabase" (bars table). */
   barCache: optional("BAR_CACHE", "file") === "supabase" ? "supabase" : "file",
+  /**
+   * Longest backtest this server accepts, in calendar days (0 = no limit).
+   * Production caps it so one member's run cannot hold the shared box for hours.
+   */
+  backtestMaxDays: optionalNumber("BACKTEST_MAX_DAYS", 0),
+  /** Whether quote-fill backtests (historical SIP quotes and trades, GBs per run) are accepted here. */
+  backtestAllowQuoteFills: optionalBool("BACKTEST_ALLOW_QUOTE_FILLS", true),
 
   // Supabase
   supabaseUrl: requireEnv("SUPABASE_URL"),

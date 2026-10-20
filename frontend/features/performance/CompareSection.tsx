@@ -22,6 +22,7 @@ import { Section } from "./ReportSections";
 import { compareRunWithBacktest } from "../../services/performanceService";
 import { fetchBacktest, saveBacktest } from "../../services/backtestService";
 import { formatPercent, pnlColorClass } from "../../utils/formatting";
+import { config } from "../../config";
 import type { PerformanceReport } from "../../types/analytics";
 import type { BacktestResult, ExecutionSettings } from "../../types/api";
 
@@ -167,7 +168,7 @@ export default function CompareSection({ report, run }: Props) {
               >
                 {barFills.backtestId ? "Re-run the comparison backtest" : "Compare with a backtest of this window"}
               </button>
-              <button
+              {config.backtestQuoteFills && <button
                 type="button"
                 disabled={quoteFills.queueing || quoteFills.busy}
                 onClick={() => quoteFills.queue(!!quoteFills.backtestId)}
@@ -175,7 +176,7 @@ export default function CompareSection({ report, run }: Props) {
                 className={buttonClass}
               >
                 {quoteFills.backtestId ? "Re-run with quote fills" : "Compare with quote fills"}
-              </button>
+              </button>}
             </>
           ) : (
             <span className="text-xs text-zinc-400">Backtesting is not available for {run.strategyType} yet.</span>

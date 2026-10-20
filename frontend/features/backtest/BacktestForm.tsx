@@ -22,6 +22,7 @@ import type { BacktestConfig } from "../../types/api";
 import { useStrategyConfigs } from "../../hooks/useStrategyConfigs";
 import { useStrategyVersions } from "../../hooks/useStrategyVersions";
 import { daysAgoString } from "../../utils/dates";
+import { config } from "../../config";
 import RiskBudgetSection, { type RiskBudgetState, defaultRiskBudgetState } from "../shared/RiskBudgetSection";
 
 interface Props {
@@ -273,7 +274,7 @@ export default function BacktestForm({ onSubmit, isLoading }: Props) {
           <Field label="Price Orders At">
             <select value={fillModel} onChange={(e) => setFillModel(e.target.value as "bar" | "quote")} className={inputClass}>
               <option value="bar">Next bar&apos;s open</option>
-              <option value="quote">Real bid/ask on arrival</option>
+              {config.backtestQuoteFills && <option value="quote">Real bid/ask on arrival</option>}
             </select>
           </Field>
           {fillModel === "quote" && (
@@ -293,7 +294,9 @@ export default function BacktestForm({ onSubmit, isLoading }: Props) {
         <p className="text-xs text-zinc-500">
           {fillModel === "quote"
             ? "Each order trades at the real bid/ask when it reaches the market, the latency after the decision; a resting limit fills only on trades printing through it. The first run fetches about one window of quotes per order from Alpaca; reruns read them from the local cache."
-            : "Each order fills at the next bar's open, plus a synthetic spread and slippage."}
+            : `Each order fills at the next bar's open, plus a synthetic spread and slippage.${
+                config.backtestQuoteFills ? "" : " Quote-fill backtests run locally, not on this server."
+              }`}
         </p>
       </div>
 
