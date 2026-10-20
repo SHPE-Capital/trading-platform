@@ -21,6 +21,14 @@ export interface Position {
   strategyId?: string;
 }
 
+/** One point of a chart-sized equity history (the backend downsamples it). */
+export interface EquityPoint {
+  ts: number;
+  isoTs: string;
+  equity: number;
+  initialCapital: number;
+}
+
 export interface PortfolioSnapshot {
   id: string;
   ts: number;

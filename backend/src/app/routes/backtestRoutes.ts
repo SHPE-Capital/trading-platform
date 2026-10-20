@@ -10,7 +10,6 @@ import {
   listBacktests,
   getBacktest,
   runBacktest,
-  streamBacktest,
   saveBacktest,
 } from "../controllers/backtestController";
 import { requireAuth } from "../middleware/requireAuth";
@@ -19,9 +18,6 @@ const router = Router();
 
 /** GET /api/backtests — list all backtest result summaries */
 router.get("/", requireAuth, listBacktests);
-
-/** GET /api/backtests/:id/stream — SSE: status, progress, then complete or error */
-router.get("/:id/stream", streamBacktest);
 
 /** GET /api/backtests/:id — saved result, or a finished run still in its save window */
 router.get("/:id", requireAuth, getBacktest);

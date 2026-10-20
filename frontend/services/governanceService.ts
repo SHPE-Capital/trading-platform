@@ -1,29 +1,24 @@
 /**
  * services/governanceService.ts
  *
- * Shared-book governance views. Targets the default API base: persisted
- * rejections come from the trading runtimes but are read from the database, so
- * any API process can serve them.
+ * Shared-book governance views, read straight from Supabase (services/db.ts):
+ * persisted rejections come from the trading runtimes, and members may read them.
  */
 
-import { apiGet } from "./api";
+import { queryContention, type ContentionRow } from "./db";
 
-export interface ContentionRow {
-  ownerId: string | null;
-  ownerName: string | null;
-  strategyId: string | null;
-  strategyName: string | null;
-  /** STRATEGY_BUDGET, CAPITAL_UNAVAILABLE, CASH_RESERVE, ORDER_COOLDOWN, ... */
-  failedCheck: string;
-  rejections: number;
-  lastAt: number;
-}
+export type { ContentionRow };
 
 export interface ContentionSummary {
   days: number;
   rows: ContentionRow[];
 }
 
+const MAX_DAYS = 90;
+
 export async function fetchContention(days: number): Promise<ContentionSummary> {
-  return apiGet<ContentionSummary>(`/governance/contention?days=${days}`);
+  if (!Number.isInteger(days) || days < 1 || days > MAX_DAYS) {
+    throw new Error(`days must be a whole number from 1 to ${MAX_DAYS}`);
+  }
+  return { days, rows: await queryContention(days) };
 }

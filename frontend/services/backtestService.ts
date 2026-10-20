@@ -8,11 +8,12 @@
  */
 
 import { apiGet, apiPost } from "./api";
+import { queryBacktests, querySavedBacktest } from "./db";
 import { config as appConfig } from "../config";
 import type { BacktestConfig, BacktestResult } from "../types/api";
 
-// Backtests run in worker processes; every call here only talks to the control
-// plane. The API-only process is the natural host for that traffic, which keeps
+// Saved results are read straight from Supabase (services/db.ts). Backtests run
+// in worker processes; every other call here only talks to the control plane. The API-only process is the natural host for that traffic, which keeps
 // it off the trading runtime's event loop.
 const BASE = appConfig.backtestApiBaseUrl;
 
@@ -33,16 +34,18 @@ export interface RunBacktestResponse {
  * @returns Array of BacktestResult objects (without equity curve)
  */
 export async function fetchBacktests(): Promise<BacktestResult[]> {
-  return apiGet<BacktestResult[]>("/backtests", BASE);
+  return queryBacktests();
 }
 
 /**
- * Fetches the full result for a single backtest by ID.
+ * Fetches the full result for a single backtest by ID: a saved row straight
+ * from Supabase, otherwise the API — which serves a finished run still in its
+ * save window, or `{ id, status }` while it is queued or running.
  * @param id - Backtest UUID
  * @returns Full BacktestResult including equity curve
  */
 export async function fetchBacktest(id: string): Promise<BacktestResult> {
-  return apiGet<BacktestResult>(`/backtests/${id}`, BASE);
+  return (await querySavedBacktest(id)) ?? apiGet<BacktestResult>(`/backtests/${id}`, BASE);
 }
 
 /**

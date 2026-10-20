@@ -6,6 +6,7 @@
  */
 
 import { apiGet, apiPost } from "./api";
+import { queryRunFills, queryRunSignals } from "./db";
 import type { PerformanceReport, RunSignal } from "../types/analytics";
 import type { Fill } from "../types/portfolio";
 import type { ExecutionSettings } from "../types/api";
@@ -46,9 +47,9 @@ export function compareRunWithBacktest(
 }
 
 export function fetchRunFills(runId: string): Promise<Fill[]> {
-  return apiGet<Fill[]>(`/runs/${encodeURIComponent(runId)}/fills`);
+  return queryRunFills(runId);
 }
 
 export function fetchRunSignals(runId: string, limit = 200): Promise<RunSignal[]> {
-  return apiGet<RunSignal[]>(`/runs/${encodeURIComponent(runId)}/signals?limit=${limit}`);
+  return queryRunSignals(runId, limit);
 }
