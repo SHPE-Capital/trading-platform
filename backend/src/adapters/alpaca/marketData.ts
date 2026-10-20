@@ -261,7 +261,8 @@ export class AlpacaMarketDataAdapter {
     }
     let frameTrace: EventTrace | undefined;
     if (frame && this.probe) {
-      this.probe.frameParsed(frame, messages.length, process.hrtime.bigint(), true);
+      // Parse timing is a stage-detail measurement; frame detail skips the clock read.
+      this.probe.frameParsed(frame, messages.length, this.probe.stageDetail ? process.hrtime.bigint() : 0n, true);
       frameTrace = this.probe.frameTrace(frame);
     }
 
