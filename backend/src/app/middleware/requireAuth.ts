@@ -33,6 +33,50 @@ declare global {
   }
 }
 
+/**
+ * Recently verified callers, by token. The dashboard polls several routes, and
+ * each verification is two Supabase round trips (the auth server, then the
+ * profile). The cost: a suspension, role change or sign-out takes up to
+ * VERIFIED_TTL_MS to reach this process. Only active members are kept, so a hit
+ * is always a pass, and no entry outlives its token's own expiry.
+ */
+const VERIFIED_TTL_MS = 60_000;
+const VERIFIED_MAX_ENTRIES = 1_000;
+const verified = new Map<string, { user: AuthenticatedUser; until: number }>();
+
+/** Forgets every verified caller. For tests that reuse one token across users. */
+export function clearVerifiedCallers(): void {
+  verified.clear();
+}
+
+function verifiedCaller(token: string): AuthenticatedUser | null {
+  const entry = verified.get(token);
+  if (!entry) return null;
+  if (entry.until > Date.now()) return entry.user;
+  verified.delete(token);
+  return null;
+}
+
+function rememberCaller(token: string, user: AuthenticatedUser): void {
+  if (user.membershipStatus !== "active") return;
+  const now = Date.now();
+  if (verified.size >= VERIFIED_MAX_ENTRIES) {
+    for (const [key, entry] of verified) if (entry.until <= now) verified.delete(key);
+    if (verified.size >= VERIFIED_MAX_ENTRIES) verified.clear();
+  }
+  verified.set(token, { user, until: Math.min(now + VERIFIED_TTL_MS, tokenExpiryMs(token) ?? Infinity) });
+}
+
+/** The JWT's exp claim in ms, or null when it cannot be read. Only bounds the cache; not a verification. */
+function tokenExpiryMs(token: string): number | null {
+  try {
+    const payload = JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString("utf8")) as { exp?: unknown };
+    return typeof payload.exp === "number" ? payload.exp * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Pulls the bearer token off the Authorization header, if present. */
 function bearerToken(req: Request): string | null {
   const header = req.headers.authorization;
@@ -49,6 +93,13 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   const token = bearerToken(req);
   if (!token) {
     res.status(401).json({ error: "Not signed in" });
+    return;
+  }
+
+  const cached = verifiedCaller(token);
+  if (cached) {
+    req.user = cached;
+    next();
     return;
   }
 
@@ -85,6 +136,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
       displayName: profile.displayName,
       membershipStatus: profile.membershipStatus,
     };
+    rememberCaller(token, req.user);
     next();
   } catch (err) {
     logger.error("requireAuth: verification threw", { err: String(err) });
@@ -124,6 +176,11 @@ export function requireRole(...roles: UserRole[]) {
 export async function optionalAuth(req: Request, _res: Response, next: NextFunction): Promise<void> {
   const token = bearerToken(req);
   if (!token) return next();
+  const cached = verifiedCaller(token);
+  if (cached) {
+    req.user = cached;
+    return next();
+  }
   try {
     const { data } = await getSupabaseClient().auth.getUser(token);
     if (data?.user) {
@@ -136,6 +193,7 @@ export async function optionalAuth(req: Request, _res: Response, next: NextFunct
           displayName: profile.displayName,
           membershipStatus: profile.membershipStatus,
         };
+        rememberCaller(token, req.user);
       }
     }
   } catch {

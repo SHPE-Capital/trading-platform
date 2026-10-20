@@ -7,7 +7,8 @@
 
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
+import { usePolling } from "./usePolling";
 import {
   fetchRunPerformance,
   fetchStrategyPerformance,
@@ -39,12 +40,7 @@ function usePerformanceReport(load: (() => Promise<PerformanceReport>) | null, p
     }
   }, [load]);
 
-  useEffect(() => {
-    queueMicrotask(() => void fetchData());
-    if (pollIntervalMs <= 0) return;
-    const interval = setInterval(fetchData, pollIntervalMs);
-    return () => clearInterval(interval);
-  }, [fetchData, pollIntervalMs]);
+  usePolling(fetchData, pollIntervalMs);
 
   return { report, isLoading, error, refetch: fetchData };
 }

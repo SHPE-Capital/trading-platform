@@ -35,8 +35,10 @@ export interface BacktestWorkerOptions {
   heartbeatMs: number;
   /** Minimum gap between progress writes. */
   progressMs: number;
-  /** Idle wait between claim attempts when the queue is empty. */
+  /** Idle wait after the first empty claim; it doubles while the queue stays empty. */
   pollMs: number;
+  /** Ceiling for that doubling wait. A job queued while idle starts within this long. */
+  maxPollMs: number;
   /** How often expired staged results and old jobs are swept. */
   sweepMs: number;
 }
@@ -45,6 +47,7 @@ export const DEFAULT_WORKER_OPTIONS: BacktestWorkerOptions = {
   heartbeatMs: 15_000,
   progressMs: 1_000,
   pollMs: 2_000,
+  maxPollMs: 15_000,
   sweepMs: 5 * 60_000,
 };
 
@@ -96,6 +99,7 @@ export class BacktestWorker {
 
   private async loop(): Promise<void> {
     logger.info("BacktestWorker: started", { workerId: this.workerId });
+    let wait = this.options.pollMs;
     while (!this.stopping) {
       await this.maybeSweep();
       let processed = false;
@@ -105,7 +109,14 @@ export class BacktestWorker {
         // Claim failures are transient (network, DB restart). Back off and retry.
         logger.error("BacktestWorker: claim cycle failed", { err: String(err) });
       }
-      if (!processed && !this.stopping) await this.idle(this.options.pollMs);
+      if (processed) {
+        wait = this.options.pollMs;
+      } else if (!this.stopping) {
+        await this.idle(wait);
+        // Every claim is a database call, and the queue is empty most of the
+        // day. Slow down while it stays empty; the next job resets the pace.
+        wait = Math.min(wait * 2, this.options.maxPollMs);
+      }
     }
     logger.info("BacktestWorker: stopped", { workerId: this.workerId });
   }

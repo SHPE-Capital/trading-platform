@@ -1,5 +1,6 @@
 import request from "supertest";
 import { createApp } from "../../app/index";
+import { clearVerifiedCallers } from "../../app/middleware/requireAuth";
 import * as repositories from "../../adapters/supabase/repositories";
 import * as review from "../../adapters/supabase/reviewRepositories";
 import { getSupabaseClient } from "../../adapters/supabase/client";
@@ -40,6 +41,7 @@ describe("Strategies HTTP API", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    clearVerifiedCallers();
   });
 
   // -------------------------------------------------------------------------

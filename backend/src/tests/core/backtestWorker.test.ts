@@ -1,6 +1,6 @@
 jest.mock('../../config/env', () => ({ env: { logLevel: 'error' } }));
 
-import { BacktestWorker, type BacktestJobQueue } from '../../core/backtest/backtestWorker';
+import { BacktestWorker, type BacktestJobQueue, type BacktestWorkerOptions } from '../../core/backtest/backtestWorker';
 import type { BacktestEngine } from '../../core/backtest/backtestEngine';
 import type { BacktestJob, BacktestJobProgress } from '../../types/backtestJob';
 import type { BacktestConfig, BacktestResult } from '../../types/backtest';
@@ -49,13 +49,15 @@ function makeQueue(overrides: Partial<Record<keyof BacktestJobQueue, jest.Mock>>
   return queue as typeof queue & BacktestJobQueue;
 }
 
-function makeWorker(queue: BacktestJobQueue, run: RunFn) {
+function makeWorker(queue: BacktestJobQueue, run: RunFn, options: Partial<BacktestWorkerOptions> = {}) {
   const engine = { run } as unknown as BacktestEngine;
   return new BacktestWorker('w1', queue, () => engine, () => [], {
     heartbeatMs: 60_000,
     progressMs: 0,
     pollMs: 10,
+    maxPollMs: 10,
     sweepMs: 60_000,
+    ...options,
   });
 }
 
@@ -151,5 +153,38 @@ describe('BacktestWorker loop', () => {
 
     expect(claim.mock.calls.length).toBeGreaterThan(1);
     expect(queue.sweep).toHaveBeenCalled();
+  });
+
+  it('slows its claims while the queue stays empty and speeds up again after a job', async () => {
+    jest.useFakeTimers();
+    try {
+      const claim = jest.fn()
+        .mockResolvedValueOnce(null)        // t=0, then waits 1s
+        .mockResolvedValueOnce(null)        // t=1s, then 2s
+        .mockResolvedValueOnce(null)        // t=3s, then 4s (the cap)
+        .mockResolvedValueOnce(makeJob())   // t=7s, runs it, claims again at once
+        .mockResolvedValue(null);           // t=7s, then back to 1s
+      const queue = makeQueue({ claim });
+      const worker = makeWorker(queue, async () => RESULT, { pollMs: 1_000, maxPollMs: 4_000 });
+
+      const loop = worker.start();
+      const callsAt = async (ms: number) => {
+        await jest.advanceTimersByTimeAsync(ms);
+        return claim.mock.calls.length;
+      };
+
+      expect(await callsAt(500)).toBe(1);    // t=0.5s
+      expect(await callsAt(1_000)).toBe(2);  // t=1.5s
+      expect(await callsAt(2_000)).toBe(3);  // t=3.5s
+      expect(await callsAt(3_000)).toBe(3);  // t=6.5s: still in the 4s wait
+      expect(await callsAt(1_000)).toBe(5);  // t=7.5s: the job, then an immediate re-claim
+      expect(queue.complete).toHaveBeenCalledWith('job-1', 'w1');
+      expect(await callsAt(1_000)).toBe(6);  // t=8.5s: wait reset to 1s
+
+      await worker.stop();
+      await loop;
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

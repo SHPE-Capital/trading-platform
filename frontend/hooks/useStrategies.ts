@@ -6,7 +6,8 @@
 
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback } from "react";
+import { usePolling } from "./usePolling";
 import { fetchStrategyRuns, startPaperStrategy, stopStrategyRun } from "../services/strategiesService";
 import type { StrategyRun } from "../types/strategy";
 
@@ -36,12 +37,7 @@ export function useStrategies(pollIntervalMs = 15_000): UseStrategiesResult {
     }
   }, []);
 
-  useEffect(() => {
-    fetchData();
-    if (pollIntervalMs <= 0) return;
-    const interval = setInterval(fetchData, pollIntervalMs);
-    return () => clearInterval(interval);
-  }, [fetchData, pollIntervalMs]);
+  usePolling(fetchData, pollIntervalMs);
 
   const startStrategy = useCallback(async (selection: { strategyId: string; versionId: string }) => {
     await startPaperStrategy(selection.strategyId, selection.versionId);

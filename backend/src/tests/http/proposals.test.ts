@@ -14,6 +14,7 @@ jest.mock("../../adapters/supabase/repositories");
 
 import request from "supertest";
 import { createApp } from "../../app/index";
+import { clearVerifiedCallers } from "../../app/middleware/requireAuth";
 import { getSupabaseClient } from "../../adapters/supabase/client";
 import * as review from "../../adapters/supabase/reviewRepositories";
 
@@ -40,6 +41,7 @@ const app = createApp();
 
 beforeEach(() => {
   jest.clearAllMocks();
+  clearVerifiedCallers();
   mockListPending.mockResolvedValue([]);
 });
 
