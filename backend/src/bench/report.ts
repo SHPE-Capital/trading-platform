@@ -22,6 +22,7 @@ import fs from "fs";
 import path from "path";
 import { Histogram, type HistogramJSON } from "../core/telemetry/histogram";
 import { RunArtifacts } from "./artifacts";
+import { delayCurveSvg, latencyPercentilesSvg, type DelayPoint, type PercentileRow } from "./charts";
 import type { ProbeSnapshot } from "../core/telemetry/latencyProbe";
 import type { ResourceSummary } from "../core/telemetry/resourceMonitor";
 import type { RunManifest } from "./manifest";
@@ -154,6 +155,42 @@ export function parseCsv(text: string): Array<Record<string, string>> {
 export interface ReportOutputs {
   summaryRows: Row[];
   markdown: string;
+  /** SVG charts keyed by file name under plots/. */
+  charts: Record<string, string>;
+}
+
+/** Stages shown in the latency chart, in pipeline order. */
+const CHART_STAGES: Array<[string, string]> = [
+  ["Frame parse", "frame.parse_ns"],
+  ["Frame receive-to-done", "frame.receive_to_done_ns"],
+  ["Strategy evaluation", "engine.evaluate_ns"],
+  ["Journal wait", "order.journal_ns"],
+  ["Receive-to-submit", "order.receive_to_submit_ns"],
+  ["Submit-to-headers", "order.submit_to_response_headers_ns"],
+  ["Submit-to-response", "order.submit_to_response_ns"],
+  ["Submit-to-first update", "order.submit_to_first_update_ns"],
+];
+
+function buildCharts(rows: Row[], delayRows: Array<Record<string, string>>): Record<string, string> {
+  const charts: Record<string, string> = {};
+  const pr: PercentileRow[] = CHART_STAGES.flatMap(([label, metric]) => {
+    const r = findRow(rows, metric);
+    return r && r.count >= MIN_COUNT_ANY ? [{ label, count: r.count, p50: r.p50_ms, p95: r.p95_ms, p99: r.p99_ms }] : [];
+  });
+  if (pr.length) charts["latency-percentiles.svg"] = latencyPercentilesSvg("Latency by stage (ms, log scale)", pr);
+  if (delayRows.length) {
+    const split = delayRows.some((r) => r["split"] === "evaluation") ? "evaluation" : delayRows[0]["split"];
+    const seed = delayRows[0]["seed"];
+    const series = new Map<string, DelayPoint[]>();
+    for (const r of delayRows) {
+      if (r["split"] !== split || r["seed"] !== seed) continue;
+      const list = series.get(r["cost_scenario"]) ?? [];
+      list.push({ delayMs: Number(r["delay_ms"]), netPnl: Number(r["net_pnl_flattened"]), roundTrips: Number(r["round_trips"]) });
+      series.set(r["cost_scenario"], list);
+    }
+    charts["delay-curve.svg"] = delayCurveSvg(`Net P&L vs added delay (${split} split, seed ${seed})`, series);
+  }
+  return charts;
 }
 
 export function buildReport(run: RunArtifacts): ReportOutputs {
@@ -187,19 +224,22 @@ export function buildReport(run: RunArtifacts): ReportOutputs {
     });
   }
 
-  const md = renderMarkdown({ run, manifest, metrics, quality, overhead, delayRows, rows });
-  return { summaryRows: rows, markdown: md };
+  const charts = buildCharts(rows, delayRows);
+  const md = renderMarkdown({ run, manifest, metrics, quality, overhead, delayRows, rows, charts });
+  return { summaryRows: rows, markdown: md, charts };
 }
 
 export function writeReport(run: RunArtifacts): ReportOutputs {
   const out = buildReport(run);
   run.writeCsv("latency-summary.csv", out.summaryRows as unknown as Array<Record<string, unknown>>,
     ["metric", "source", "count", "p50_ms", "p90_ms", "p95_ms", "p99_ms", "max_ms", "unit", "caveat"]);
+  for (const [name, svg] of Object.entries(out.charts)) run.writeText(`plots/${name}`, svg);
   run.writeText("decision-report.md", out.markdown);
   return out;
 }
 
 interface RenderInput {
+  charts: Record<string, string>;
   run: RunArtifacts;
   manifest: RunManifest | null;
   metrics: MetricsFile | null;
@@ -316,6 +356,7 @@ function renderMarkdown(x: RenderInput): string {
   const res = metrics?.resources ?? null;
   L.push(`| Event-loop delay | ${res?.samples ?? 0} samples | ${fmt(res?.event_loop_delay_ms.p50)} | — | ${fmt(res?.event_loop_delay_ms.p99)} | ${fmt(res?.event_loop_delay_ms.max)} | ms | perf_hooks sampler resolution ${res?.event_loop_resolution_ms ?? "—"} ms |`);
   L.push("", "Full distributions: latency-summary.csv. Parent and child spans overlap; never sum stage percentiles into an end-to-end figure.");
+  if (x.charts["latency-percentiles.svg"]) L.push("", "![Latency percentiles by stage](plots/latency-percentiles.svg)");
 
   // 5. Capacity
   L.push("", "## 5. Capacity", "");
@@ -371,6 +412,7 @@ function renderMarkdown(x: RenderInput): string {
     for (const r of delayRows.filter((d) => d["seed"] === delayRows[0]["seed"])) {
       L.push(`| ${r["split"]} | ${r["cost_scenario"]} | ${r["delay_ms"]} | ${r["orders"]} | ${r["filled"]}+${r["partial"]}p | ${r["unfilled_stale_quote"]}/${r["unfilled_no_quote"]}/${r["unfilled_no_displayed_size"]} | ${r["round_trips"]} | ${fmt(Number(r["net_pnl_flattened"]), 2)} | ${fmt(Number(r["per_trade_pnl_mean"]), 4)} ± ${fmt(Number(r["per_trade_pnl_stderr"]), 4)} | ${fmt(Number(r["max_drawdown_usd"]), 2)} |`);
     }
+    if (x.charts["delay-curve.svg"]) L.push("", "![Net P&L vs added delay](plots/delay-curve.svg)");
     L.push("", `- ${delayVerdict}`);
     L.push("- Fills cross IEX top of book with slippage and fees; no queue position, impact or hidden liquidity. An approximation.");
   } else {
