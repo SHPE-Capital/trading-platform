@@ -370,23 +370,20 @@ export class RiskEngine {
     referencePrice?: number,
     referenceTs?: number,
   ): { failedCheck: string; reason: string } | null {
-    const checks = [
-      () => this._checkKillSwitch(intent),
-      () => this._checkMarketOpen(ts),
-      () => this._checkStaleQuote(referenceTs),
-      () => this._checkCooldown(intent, ts),
-      () => this._checkMaxPositionSize(intent, portfolio, referencePrice),
-      () => this._checkMaxNotionalExposure(intent, portfolio, referencePrice),
-      () => this._checkShortSelling(intent, portfolio),
-      () => this._checkCashReserve(intent, portfolio, referencePrice),
-      () => this._checkIntradayDrawdown(intent, portfolio),
-      () => this._checkConcentration(intent, portfolio, referencePrice),
-    ];
-    for (const check of checks) {
-      const result = check();
-      if (result) return result;
-    }
-    return null;
+    // Checked in order; the first failure wins. Written as a chain rather than
+    // an array of closures: this runs for every intent.
+    return (
+      this._checkKillSwitch(intent) ??
+      this._checkMarketOpen(ts) ??
+      this._checkStaleQuote(referenceTs) ??
+      this._checkCooldown(intent, ts) ??
+      this._checkMaxPositionSize(intent, portfolio, referencePrice) ??
+      this._checkMaxNotionalExposure(intent, portfolio, referencePrice) ??
+      this._checkShortSelling(intent, portfolio) ??
+      this._checkCashReserve(intent, portfolio, referencePrice) ??
+      this._checkIntradayDrawdown(intent, portfolio) ??
+      this._checkConcentration(intent, portfolio, referencePrice)
+    );
   }
 
   // ------------------------------------------------------------------
