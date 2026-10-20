@@ -10,7 +10,8 @@
 
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback } from "react";
+import { usePolling } from "./usePolling";
 import { fetchSystemStatus } from "../services/systemService";
 import type { SystemStatus } from "../types/api";
 
@@ -51,12 +52,7 @@ export function useSystemHealth(pollIntervalMs = 30_000): UseSystemHealthResult 
     }
   }, []);
 
-  useEffect(() => {
-    fetchData();
-    if (pollIntervalMs <= 0) return;
-    const interval = setInterval(fetchData, pollIntervalMs);
-    return () => clearInterval(interval);
-  }, [fetchData, pollIntervalMs]);
+  usePolling(fetchData, pollIntervalMs);
 
   return { status, isLoading, error, refetch: fetchData };
 }

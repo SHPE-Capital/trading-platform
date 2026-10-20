@@ -13,6 +13,8 @@
  *   BACKTEST_PER_USER_CAP=2            concurrently running jobs per member
  *   BACKTEST_MAX_ATTEMPTS=3            lease expiries before a job is failed as poison
  *   BACKTEST_RESULT_TTL_SECONDS=1800   how long an unsaved result stays saveable
+ *   BACKTEST_WORKER_MAX_IDLE_SECONDS=15   slowest queue check once it has sat empty; a job
+ *                                         queued then waits at most this long to start
  *
  * Start with: npm run dev:worker (dev) · npm run start:worker (prod)
  */
@@ -47,6 +49,7 @@ const LEASE_SECONDS = intEnv("BACKTEST_WORKER_LEASE_SECONDS", 60);
 const PER_USER_CAP = intEnv("BACKTEST_PER_USER_CAP", 2);
 const MAX_ATTEMPTS = intEnv("BACKTEST_MAX_ATTEMPTS", 3);
 const RESULT_TTL_SECONDS = intEnv("BACKTEST_RESULT_TTL_SECONDS", 1800);
+const MAX_IDLE_SECONDS = intEnv("BACKTEST_WORKER_MAX_IDLE_SECONDS", 15);
 /** Finished job rows (and any unsaved staging they still hold) are kept this long. */
 const KEEP_FINISHED_HOURS = 72;
 
@@ -80,6 +83,7 @@ async function main(): Promise<void> {
       heartbeatMs: Math.max(1_000, Math.floor((LEASE_SECONDS * 1000) / 4)),
       progressMs: 1_000,
       pollMs: 2_000,
+      maxPollMs: MAX_IDLE_SECONDS * 1000,
       sweepMs: 5 * 60_000,
     },
   );

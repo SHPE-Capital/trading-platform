@@ -11,6 +11,7 @@ jest.mock("../../adapters/supabase/riskRejectionRepository");
 
 import request from "supertest";
 import { createApp } from "../../app/index";
+import { clearVerifiedCallers } from "../../app/middleware/requireAuth";
 import { getSupabaseClient } from "../../adapters/supabase/client";
 import * as review from "../../adapters/supabase/reviewRepositories";
 import * as rejections from "../../adapters/supabase/riskRejectionRepository";
@@ -28,7 +29,10 @@ function signIn() {
 
 const app = createApp();
 
-beforeEach(() => jest.clearAllMocks());
+beforeEach(() => {
+  jest.clearAllMocks();
+  clearVerifiedCallers();
+});
 
 describe("GET /api/governance/contention", () => {
   test("requires a signed-in member", async () => {

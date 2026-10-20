@@ -1,5 +1,6 @@
 import request from "supertest";
 import { createApp } from "../../app/index";
+import { clearVerifiedCallers } from "../../app/middleware/requireAuth";
 import { BacktestEngine } from "../../core/backtest/backtestEngine";
 import * as repositories from "../../adapters/supabase/repositories";
 import * as jobs from "../../adapters/supabase/backtestJobRepository";
@@ -26,6 +27,7 @@ describe("Backtest HTTP API", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    clearVerifiedCallers();
     mockGetUser.mockResolvedValue({ data: { user: { id: "user-1" } }, error: null });
     (review.getAppUserById as jest.Mock).mockResolvedValue({
       id: "user-1", email: "member@shpe.test", displayName: "Member", role: "member", membershipStatus: "active",

@@ -10,6 +10,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { usePolling } from "./usePolling";
 import {
   fetchBrokerAccount,
   fetchBrokerDrift,
@@ -75,12 +76,7 @@ export function useBroker(period: HistoryPeriod = "1M", pollIntervalMs = 30_000)
     }
   }, [period]);
 
-  useEffect(() => {
-    queueMicrotask(() => void fetchData());
-    if (pollIntervalMs <= 0) return;
-    const interval = setInterval(fetchData, pollIntervalMs);
-    return () => clearInterval(interval);
-  }, [fetchData, pollIntervalMs]);
+  usePolling(fetchData, pollIntervalMs);
 
   return { account, positions, history, drift, unavailable, isLoading, error, refetch: fetchData };
 }

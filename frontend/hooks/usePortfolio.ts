@@ -11,6 +11,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { usePolling } from "./usePolling";
 import { fetchPortfolioSnapshot, fetchEquityCurve } from "../services/portfolioService";
 import { useWebSocket } from "./useWebSocket";
 import type { PortfolioSnapshot } from "../types/portfolio";
@@ -67,12 +68,7 @@ export function usePortfolio(pollIntervalMs = 30_000): UsePortfolioResult {
     }
   }, []);
 
-  useEffect(() => {
-    fetchData();
-    if (pollIntervalMs <= 0) return;
-    const interval = setInterval(fetchData, pollIntervalMs);
-    return () => clearInterval(interval);
-  }, [fetchData, pollIntervalMs]);
+  usePolling(fetchData, pollIntervalMs);
 
   return { snapshot, equityCurve, isLoading, error, refetch: fetchData };
 }
