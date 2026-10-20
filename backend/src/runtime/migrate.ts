@@ -57,6 +57,8 @@ const SIGNATURES: Record<string, string> = {
   // 0018 replaces save_strategy_version with a six-argument signature, so probe by name only.
   "0014": "select exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname = 'save_strategy_version')",
   "0018": "select exists (select 1 from information_schema.columns where table_name = 'strategy_versions' and column_name = 'algorithm_version')",
+  "0019": "select to_regprocedure('public.is_active_member()') is not null",
+  "0020": "select to_regprocedure('public.prune_snapshots(integer)') is not null",
 };
 
 function listMigrations(): MigrationFile[] {

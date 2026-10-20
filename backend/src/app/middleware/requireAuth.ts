@@ -37,10 +37,12 @@ declare global {
  * Recently verified callers, by token. The dashboard polls several routes, and
  * each verification is two Supabase round trips (the auth server, then the
  * profile). The cost: a suspension, role change or sign-out takes up to
- * VERIFIED_TTL_MS to reach this process. Only active members are kept, so a hit
- * is always a pass, and no entry outlives its token's own expiry.
+ * VERIFIED_TTL_MS to reach this process. Supabase access tokens live an hour and
+ * no entry outlives its token's own expiry, so in practice an entry lasts until
+ * the browser refreshes its token. Only active members are kept, so a hit is
+ * always a pass.
  */
-const VERIFIED_TTL_MS = 60_000;
+const VERIFIED_TTL_MS = 60 * 60_000;
 const VERIFIED_MAX_ENTRIES = 1_000;
 const verified = new Map<string, { user: AuthenticatedUser; until: number }>();
 
@@ -167,7 +169,9 @@ export function requireRole(...roles: UserRole[]) {
 }
 
 /**
- * Attaches req.user when a valid token is present but never rejects.
+ * Attaches req.user when a valid token belongs to an active member, but never
+ * rejects. A pending or suspended account is treated as anonymous, matching the
+ * database policies (0019).
  *
  * Used for read routes that stay open to the whole club (the book is shared, so
  * results are shared) while still letting a handler tailor the response — for
@@ -185,7 +189,7 @@ export async function optionalAuth(req: Request, _res: Response, next: NextFunct
     const { data } = await getSupabaseClient().auth.getUser(token);
     if (data?.user) {
       const profile = await getAppUserById(data.user.id);
-      if (profile) {
+      if (profile?.membershipStatus === "active") {
         req.user = {
           id: profile.id,
           email: profile.email,

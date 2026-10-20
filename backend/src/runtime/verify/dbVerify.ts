@@ -46,6 +46,13 @@ const BACKEND_FUNCTIONS = [
   "heartbeat_run_leases(text, uuid[], integer)",
   "release_run_lease(uuid, text)",
   "save_strategy_version(uuid, text, jsonb, text, uuid, integer)",
+  "prune_snapshots(integer)",
+];
+
+/** Called by signed-in members from the browser: authenticated may execute, anon may not. */
+const MEMBER_FUNCTIONS = [
+  "is_active_member()",
+  "portfolio_equity_history(text, timestamptz, integer)",
 ];
 
 const REQUIRED_INDEXES = [
@@ -114,6 +121,28 @@ const CHECKS: Check[] = [
             and (has_function_privilege('anon', to_regprocedure('public.' || f), 'execute')
               or has_function_privilege('authenticated', to_regprocedure('public.' || f), 'execute'))`,
     describe: (row) => `${row.f} is callable with the anon/user key`,
+  },
+  {
+    name: "Member functions exist",
+    sql: `select f as missing from unnest(array[${quoted(MEMBER_FUNCTIONS)}]) f
+          where to_regprocedure('public.' || f) is null`,
+    describe: (row) => `missing function: ${row.missing}`,
+  },
+  {
+    name: "Member functions are callable by members, not by the anon key",
+    sql: `select f from unnest(array[${quoted(MEMBER_FUNCTIONS)}]) f
+          where to_regprocedure('public.' || f) is not null
+            and (has_function_privilege('anon', to_regprocedure('public.' || f), 'execute')
+              or not has_function_privilege('authenticated', to_regprocedure('public.' || f), 'execute'))`,
+    describe: (row) => `${row.f} must be executable by authenticated and not by anon`,
+  },
+  {
+    // 0019: a login alone (pending or suspended membership) must not read club data.
+    name: "Read policies require active membership",
+    sql: `select tablename, policyname from pg_policies
+          where schemaname = 'public' and cmd = 'SELECT'
+            and coalesce(qual, '') not ilike '%is_active_member%'`,
+    describe: (row) => `${row.tablename}.${row.policyname} does not check is_active_member()`,
   },
   {
     name: "Auth sign-ups get a club profile (0008 trigger)",
