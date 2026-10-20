@@ -26,7 +26,7 @@ import { CapitalReservationManager } from "../oms/capitalReservation";
 import { getStrategyPriority } from "../oms/priorityConfig";
 import { logger } from "../../utils/logger";
 import { nowMs } from "../../utils/time";
-import { newId } from "../../utils/ids";
+import { newEventId, newId } from "../../utils/ids";
 import type { IStrategy } from "../../strategies/base/strategy";
 import type { EngineProbe } from "../telemetry/latencyProbe";
 import type { ExecutionMode, UUID } from "../../types/common";
@@ -143,13 +143,13 @@ export class Orchestrator {
       try {
         strategy.start();
         this.eventBus.publish({
-          id: newId(), type: "STRATEGY_STARTED", ts: nowMs(), mode: this.mode,
+          id: newEventId(), type: "STRATEGY_STARTED", ts: nowMs(), mode: this.mode,
           strategyId: strategy.id, strategyType: strategy.type,
         });
       } catch (err) {
         logger.error("Orchestrator: strategy.start threw", { strategyId: strategy.id, error: String(err) });
         this.eventBus.publish({
-          id: newId(), type: "STRATEGY_ERROR", ts: nowMs(), mode: this.mode,
+          id: newEventId(), type: "STRATEGY_ERROR", ts: nowMs(), mode: this.mode,
           strategyId: strategy.id, strategyName: strategy.config.name,
           error: String(err), phase: "start",
         });
@@ -170,7 +170,7 @@ export class Orchestrator {
     this._runKeys.delete(strategyId);
     this._consecutiveErrors.delete(strategyId);
     this.eventBus.publish({
-      id: newId(), type: "STRATEGY_STOPPED", ts: nowMs(), mode: this.mode,
+      id: newEventId(), type: "STRATEGY_STOPPED", ts: nowMs(), mode: this.mode,
       strategyId: strategy.id,
     });
     return true;
@@ -231,13 +231,13 @@ export class Orchestrator {
       try {
         strategy.start();
         this.eventBus.publish({
-          id: newId(), type: "STRATEGY_STARTED", ts: nowMs(), mode: this.mode,
+          id: newEventId(), type: "STRATEGY_STARTED", ts: nowMs(), mode: this.mode,
           strategyId: strategy.id, strategyType: strategy.type,
         });
       } catch (err) {
         logger.error("Orchestrator: strategy.start threw", { strategyId: strategy.id, error: String(err) });
         this.eventBus.publish({
-          id: newId(), type: "STRATEGY_ERROR", ts: nowMs(), mode: this.mode,
+          id: newEventId(), type: "STRATEGY_ERROR", ts: nowMs(), mode: this.mode,
           strategyId: strategy.id, strategyName: strategy.config.name,
           error: String(err), phase: "start",
         });
@@ -245,7 +245,7 @@ export class Orchestrator {
     }
 
     this.eventBus.publish({
-      id: newId(),
+      id: newEventId(),
       type: "ENGINE_STARTED",
       ts: nowMs(),
       mode: this.mode,
@@ -264,7 +264,7 @@ export class Orchestrator {
     for (const strategy of this.strategies.values()) {
       strategy.stop();
       this.eventBus.publish({
-        id: newId(), type: "STRATEGY_STOPPED", ts: nowMs(), mode: this.mode,
+        id: newEventId(), type: "STRATEGY_STOPPED", ts: nowMs(), mode: this.mode,
         strategyId: strategy.id,
       });
     }
@@ -273,7 +273,7 @@ export class Orchestrator {
     this._reservationByIntent.clear();
 
     this.eventBus.publish({
-      id: newId(),
+      id: newEventId(),
       type: "ENGINE_STOPPED",
       ts: nowMs(),
       mode: this.mode,
@@ -345,7 +345,7 @@ export class Orchestrator {
         this._closeAllPositions();
       }
       this.eventBus.publish({
-        id: newId(), type: "PORTFOLIO_RISK_VIOLATION", ts: nowMs(), mode,
+        id: newEventId(), type: "PORTFOLIO_RISK_VIOLATION", ts: nowMs(), mode,
         check: violation.check,
         reason: violation.reason,
         engageKillSwitch: violation.engageKillSwitch,
@@ -386,7 +386,7 @@ export class Orchestrator {
       this._onEvaluateSuccess(key, strategy);
       if (signal) {
         this.eventBus.publish({
-          id: newId(),
+          id: newEventId(),
           type: "STRATEGY_SIGNAL_CREATED",
           ts: nowMs(),
           mode: this.mode,
@@ -405,7 +405,7 @@ export class Orchestrator {
     this._consecutiveErrors.set(key, count);
     logger.error("Orchestrator: strategy.evaluate threw", { strategyId: strategy.id, key, error, consecutive: count });
     this.eventBus.publish({
-      id: newId(), type: "STRATEGY_ERROR", ts: nowMs(), mode: this.mode,
+      id: newEventId(), type: "STRATEGY_ERROR", ts: nowMs(), mode: this.mode,
       strategyId: strategy.id, strategyName: strategy.config.name,
       error, phase: "evaluate", runKey: key, consecutiveErrors: count,
     });
@@ -417,7 +417,7 @@ export class Orchestrator {
       });
       this.deregisterStrategy(key);
       this.eventBus.publish({
-        id: newId(), type: "STRATEGY_AUTO_DISABLED", ts: nowMs(), mode: this.mode,
+        id: newEventId(), type: "STRATEGY_AUTO_DISABLED", ts: nowMs(), mode: this.mode,
         strategyId: strategy.id, runKey: key, consecutiveErrors: count, lastError: error,
       });
     }
@@ -427,7 +427,7 @@ export class Orchestrator {
     if (!this._consecutiveErrors.has(key)) return;
     this._consecutiveErrors.delete(key);
     this.eventBus.publish({
-      id: newId(), type: "STRATEGY_RECOVERED", ts: nowMs(), mode: this.mode,
+      id: newEventId(), type: "STRATEGY_RECOVERED", ts: nowMs(), mode: this.mode,
       strategyId: strategy.id, runKey: key,
     });
   }
@@ -470,7 +470,7 @@ export class Orchestrator {
       const riskFailure = this._preflightLegs(legs, portfolio);
       if (riskFailure) {
         this.eventBus.publish({
-          id: newId(), type: "RISK_REJECTED", ts: nowMs(), mode: event.mode,
+          id: newEventId(), type: "RISK_REJECTED", ts: nowMs(), mode: event.mode,
           strategyId: signal.strategyId,
           reason: `Multi-leg pre-flight failed on ${riskFailure.symbol} [${riskFailure.failedCheck}]: ${riskFailure.reason}`,
           failedCheck: riskFailure.failedCheck,
@@ -492,7 +492,7 @@ export class Orchestrator {
       }
       if (allBuyPricesKnown && combined > this.capitalReservation.getAvailableCash(portfolio.cash)) {
         this.eventBus.publish({
-          id: newId(), type: "CAPITAL_UNAVAILABLE", ts: nowMs(), mode: event.mode,
+          id: newEventId(), type: "CAPITAL_UNAVAILABLE", ts: nowMs(), mode: event.mode,
           intentId: legs[0].id, strategyId: signal.strategyId, ...origin,
           required: combined,
           available: this.capitalReservation.getAvailableCash(portfolio.cash),
@@ -503,7 +503,7 @@ export class Orchestrator {
 
     for (const leg of legs) {
       this.eventBus.publish({
-        id: newId(), type: "ORDER_INTENT_CREATED", ts: nowMs(), mode: event.mode,
+        id: newEventId(), type: "ORDER_INTENT_CREATED", ts: nowMs(), mode: event.mode,
         strategyId: signal.strategyId, payload: leg,
         ...(trace ? { trace } : {}),
       });
@@ -652,7 +652,7 @@ export class Orchestrator {
         ...origin,
       };
       this.eventBus.publish({
-        id: newId(),
+        id: newEventId(),
         type: "ORDER_INTENT_CREATED",
         ts: nowMs(),
         mode,
@@ -692,7 +692,7 @@ export class Orchestrator {
     const riskResult = this.riskEngine.check(intent, portfolio, mid ?? undefined, symState?.latestMidTs ?? undefined);
     if (!riskResult.passed) {
       this.eventBus.publish({
-        id: newId(), type: "RISK_REJECTED", ts: nowMs(), mode: this.mode,
+        id: newEventId(), type: "RISK_REJECTED", ts: nowMs(), mode: this.mode,
         strategyId: event.strategyId,
         reason: riskResult.reason ?? "Risk check failed",
         failedCheck: riskResult.failedCheck ?? "UNKNOWN",
@@ -706,7 +706,7 @@ export class Orchestrator {
     const worstCasePrice = this.riskEngine.estimateWorstCasePrice(intent.side, intent, mid);
     if (worstCasePrice === null) {
       this.eventBus.publish({
-        id: newId(), type: "RISK_REJECTED", ts: nowMs(), mode: this.mode,
+        id: newEventId(), type: "RISK_REJECTED", ts: nowMs(), mode: this.mode,
         strategyId: event.strategyId,
         reason: "No reference price available for worst-case estimate",
         failedCheck: "NO_REFERENCE_PRICE",
@@ -723,7 +723,7 @@ export class Orchestrator {
     const budgetFail = this.riskEngine.checkStrategyBudget(intent, worstCaseNotional, portfolio, alreadyReserved, openOrderCount);
     if (budgetFail) {
       this.eventBus.publish({
-        id: newId(), type: "RISK_REJECTED", ts: nowMs(), mode: this.mode,
+        id: newEventId(), type: "RISK_REJECTED", ts: nowMs(), mode: this.mode,
         strategyId: event.strategyId,
         reason: budgetFail.reason,
         failedCheck: budgetFail.failedCheck,
@@ -737,7 +737,7 @@ export class Orchestrator {
     const reservation = this.capitalReservation.reserve(intent, worstCaseNotional, portfolio.cash);
     if (!reservation) {
       this.eventBus.publish({
-        id: newId(), type: "CAPITAL_UNAVAILABLE", ts: nowMs(), mode: this.mode,
+        id: newEventId(), type: "CAPITAL_UNAVAILABLE", ts: nowMs(), mode: this.mode,
         intentId: intent.id,
         strategyId: intent.strategyId,
         signalId: intent.signalId,
@@ -751,7 +751,7 @@ export class Orchestrator {
 
     this._reservationByIntent.set(intent.id, reservation.reservationId);
     this.eventBus.publish({
-      id: newId(), type: "CAPITAL_RESERVED", ts: nowMs(), mode: this.mode,
+      id: newEventId(), type: "CAPITAL_RESERVED", ts: nowMs(), mode: this.mode,
       reservationId: reservation.reservationId,
       amount: reservation.amount,
       intentId: intent.id,
@@ -774,7 +774,7 @@ export class Orchestrator {
     this._reservationByIntent.delete(intentId);
     this.capitalReservation.release(reservationId);
     this.eventBus.publish({
-      id: newId(), type: "CAPITAL_RELEASED", ts: nowMs(), mode: this.mode,
+      id: newEventId(), type: "CAPITAL_RELEASED", ts: nowMs(), mode: this.mode,
       reservationId,
       reason,
     });
@@ -812,7 +812,7 @@ export class Orchestrator {
 
     const snapshot = this.portfolioState.getSnapshot();
     this.eventBus.publish({
-      id: newId(), type: "PORTFOLIO_UPDATED", ts: nowMs(), mode: this.mode,
+      id: newEventId(), type: "PORTFOLIO_UPDATED", ts: nowMs(), mode: this.mode,
       payload: snapshot,
     });
 
@@ -824,7 +824,7 @@ export class Orchestrator {
         if (!wasKillSwitchActive) this._closeAllPositions();
       }
       this.eventBus.publish({
-        id: newId(), type: "PORTFOLIO_RISK_VIOLATION", ts: nowMs(), mode: this.mode,
+        id: newEventId(), type: "PORTFOLIO_RISK_VIOLATION", ts: nowMs(), mode: this.mode,
         check: violation.check,
         reason: violation.reason,
         engageKillSwitch: violation.engageKillSwitch,
@@ -850,7 +850,7 @@ export class Orchestrator {
 
     const snapshot = this.portfolioState.getSnapshot();
     this.eventBus.publish({
-      id: newId(), type: "PORTFOLIO_UPDATED", ts: nowMs(), mode: this.mode,
+      id: newEventId(), type: "PORTFOLIO_UPDATED", ts: nowMs(), mode: this.mode,
       payload: snapshot,
     });
 
@@ -862,7 +862,7 @@ export class Orchestrator {
         if (!wasKillSwitchActive) this._closeAllPositions();
       }
       this.eventBus.publish({
-        id: newId(), type: "PORTFOLIO_RISK_VIOLATION", ts: nowMs(), mode: this.mode,
+        id: newEventId(), type: "PORTFOLIO_RISK_VIOLATION", ts: nowMs(), mode: this.mode,
         check: violation.check,
         reason: violation.reason,
         engageKillSwitch: violation.engageKillSwitch,
