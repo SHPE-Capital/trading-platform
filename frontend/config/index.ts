@@ -23,6 +23,13 @@ export const config = {
   liveApiBaseUrl:
     process.env.NEXT_PUBLIC_LIVE_API_BASE_URL ?? "http://localhost:8081/api",
 
+  /**
+   * Whether the backtest server accepts quote-fill backtests. Production turns
+   * them off (BACKTEST_ALLOW_QUOTE_FILLS=false on the server); the UI then
+   * hides the option instead of offering a request that will be refused.
+   */
+  backtestQuoteFills: process.env.NEXT_PUBLIC_BACKTEST_QUOTE_FILLS !== "false",
+
   /** Whether live WebSocket push updates are enabled */
   enableWebSocket: process.env.NEXT_PUBLIC_ENABLE_WEBSOCKET === "true",
 

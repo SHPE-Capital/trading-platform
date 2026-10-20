@@ -41,6 +41,7 @@ import { executionForConfig } from "../../core/execution/quoteFillModel";
 import { getStrategyVersionById } from "../../adapters/supabase/reviewRepositories";
 import { STRATEGY_DEFINITIONS, configProblem } from "../../config/strategyDefaults";
 import { logger } from "../../utils/logger";
+import { env } from "../../config/env";
 import { newId } from "../../utils/ids";
 import type { BacktestConfig } from "../../types/backtest";
 
@@ -247,6 +248,15 @@ export async function runBacktest(req: Request, res: Response): Promise<void> {
     res.status(400).json({ error: fieldProblem });
     return;
   }
+  // Production caps the range so one member's run cannot hold the shared box for hours.
+  const spanMs = Date.parse(body.endDate) - Date.parse(body.startDate);
+  if (env.backtestMaxDays > 0 && spanMs > env.backtestMaxDays * 86_400_000) {
+    res.status(400).json({
+      error: `Backtests on this server can cover at most ${env.backtestMaxDays} days`,
+      detail: "Shorten the date range, or run the longer backtest locally.",
+    });
+    return;
+  }
   if (!BACKTESTABLE_TYPES.has(body.strategyConfig.type)) {
     res.status(400).json({ error: `Backtesting is not supported for strategy type "${body.strategyConfig.type}"` });
     return;
@@ -296,6 +306,13 @@ export async function runBacktest(req: Request, res: Response): Promise<void> {
     execution = executionForConfig(body.execution);
   } catch (err) {
     res.status(400).json({ error: (err as Error).message });
+    return;
+  }
+  if (execution?.model === "quote" && !env.backtestAllowQuoteFills) {
+    res.status(400).json({
+      error: "Quote-fill backtests are disabled on this server",
+      detail: "Use bar fills here, or run quote-fill backtests locally.",
+    });
     return;
   }
 

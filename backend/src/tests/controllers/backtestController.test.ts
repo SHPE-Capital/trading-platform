@@ -15,6 +15,8 @@ jest.mock('../../config/env', () => ({
     supabaseUrl: 'https://test.supabase.co',
     supabaseAnonKey: 'test-anon',
     supabaseServiceRoleKey: 'test-service',
+    backtestMaxDays: 0,
+    backtestAllowQuoteFills: true,
     alpacaApiKey: 'test-key',
     alpacaApiSecret: 'test-secret',
     alpacaTradingMode: 'paper',
