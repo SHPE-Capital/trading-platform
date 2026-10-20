@@ -810,14 +810,17 @@ export class Orchestrator {
     this.orderState.applyFill(event.orderId, event.fill);
     this.portfolioState.applyFill(event.fill);
 
-    const snapshot = this.portfolioState.getSnapshot();
-    this.eventBus.publish({
-      id: newEventId(), type: "PORTFOLIO_UPDATED", ts: nowMs(), mode: this.mode,
-      payload: snapshot,
-    });
+    // The full snapshot (UUID, ISO time, totals) is built only for subscribers —
+    // the live WebSocket feed; a backtest has none. The check reads the cheap view.
+    if (this.eventBus.hasSubscribers("PORTFOLIO_UPDATED")) {
+      this.eventBus.publish({
+        id: newEventId(), type: "PORTFOLIO_UPDATED", ts: nowMs(), mode: this.mode,
+        payload: this.portfolioState.getSnapshot(),
+      });
+    }
 
     const wasKillSwitchActive = this.riskEngine.isKillSwitchActive();
-    const violation = this.riskEngine.checkPortfolio(snapshot);
+    const violation = this.riskEngine.checkPortfolio(this.portfolioState.getRiskView());
     if (violation) {
       if (violation.engageKillSwitch) {
         this.riskEngine.setKillSwitch(true);
@@ -848,14 +851,17 @@ export class Orchestrator {
     this.orderState.applyFill(event.orderId, event.fill);
     this.portfolioState.applyFill(event.fill);
 
-    const snapshot = this.portfolioState.getSnapshot();
-    this.eventBus.publish({
-      id: newEventId(), type: "PORTFOLIO_UPDATED", ts: nowMs(), mode: this.mode,
-      payload: snapshot,
-    });
+    // The full snapshot (UUID, ISO time, totals) is built only for subscribers —
+    // the live WebSocket feed; a backtest has none. The check reads the cheap view.
+    if (this.eventBus.hasSubscribers("PORTFOLIO_UPDATED")) {
+      this.eventBus.publish({
+        id: newEventId(), type: "PORTFOLIO_UPDATED", ts: nowMs(), mode: this.mode,
+        payload: this.portfolioState.getSnapshot(),
+      });
+    }
 
     const wasKillSwitchActive = this.riskEngine.isKillSwitchActive();
-    const violation = this.riskEngine.checkPortfolio(snapshot);
+    const violation = this.riskEngine.checkPortfolio(this.portfolioState.getRiskView());
     if (violation) {
       if (violation.engageKillSwitch) {
         this.riskEngine.setKillSwitch(true);

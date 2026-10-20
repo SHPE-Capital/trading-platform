@@ -98,6 +98,15 @@ export class EventBus {
   }
 
   /**
+   * True when publishing this type would reach at least one handler (typed or
+   * wildcard). Lets a publisher skip building an expensive payload nobody reads.
+   * @param eventType - The EventType to check
+   */
+  hasSubscribers(eventType: EventType): boolean {
+    return this.wildcardHandlers.length > 0 || (this.handlers.get(eventType)?.length ?? 0) > 0;
+  }
+
+  /**
    * Removes all handlers for all event types. Used in tests and teardown.
    */
   clear(): void {
