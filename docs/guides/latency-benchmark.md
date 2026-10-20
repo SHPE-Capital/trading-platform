@@ -226,11 +226,26 @@ kind and code. `MARKET_DATA_INVALID_POLICY=pass` restores the old behaviour.
 Benchmark commands follow the same setting unless you pass `--invalid-data`.
 To compare code changes like for like, pin it (e.g. `--invalid-data pass`).
 
+## Revisions of delivered data
+
+Alpaca's updated bars (`u`), trade corrections (`c`) and cancels/errors (`x`)
+are applied to symbol state only. A revised bar replaces the same interval's
+bar (and the mid only if the mid came from its close). A correction or cancel
+changes the latest trade only if it is that print. Strategies are never re-run
+on a revision. Reports count them under "Revisions".
+
+## Charts
+
+Every report writes `plots/latency-percentiles.svg` and, for delay runs,
+`plots/delay-curve.svg`, linked from `decision-report.md`.
+
 ## Known caveats
 
 - **Windows**: the OS timer tick (~15.6 ms) dominates event-loop delay and
-  paced-replay timing, and the report says so. Use Linux (Docker or EC2) for
-  those numbers. Max-throughput runs are fine on Windows but noisy, so compare
+  paced-replay timing, and the report says so. Use Linux for those numbers.
+  The dev containers are Linux:
+  `docker exec shpe-trading-dev-api-1 sh -c 'cd /app && node dist/runtime/bench.js fixture --out /app/artifacts/latency'`
+  after `npm run build` (results land in `backend/artifacts/latency/`). Max-throughput runs are fine on Windows but noisy, so compare
   repetitions.
 - The A/A gate (< 5% throughput) is evaluated at maximum throughput, which is
   conservative. At live IEX rates the relevant figure is the added µs per frame.
