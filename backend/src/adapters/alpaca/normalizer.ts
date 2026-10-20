@@ -10,8 +10,7 @@
  */
 
 import type { Quote, Trade, Bar, MarketDataIssue } from "../../types/market";
-import { isoToMs } from "../../utils/time";
-import { parseRfc3339Parts } from "../../core/telemetry/clock";
+import { parseRfc3339Parts, rfc3339ToEpochMs } from "../../core/telemetry/clock";
 
 /**
  * Bump when normalized output changes for the same input, so benchmark runs
@@ -90,7 +89,7 @@ export function normalizeQuote(raw: AlpacaRawQuote): Quote {
   const totalSize = bidSize + askSize;
   const microPrice = totalSize > 0 ? (askSize * bid + bidSize * ask) / totalSize : mid;
   const imbalance = totalSize > 0 ? (bidSize - askSize) / totalSize : 0;
-  const ts = isoToMs(raw.t);
+  const ts = rfc3339ToEpochMs(raw.t);
 
   return {
     symbol: raw.S,
@@ -122,7 +121,7 @@ export function normalizeTrade(raw: AlpacaRawTrade): Trade {
     symbol: raw.S,
     price: raw.p,
     size: raw.s,
-    ts: isoToMs(raw.t),
+    ts: rfc3339ToEpochMs(raw.t),
     isoTs: raw.t,
     exchange: raw.x,
     tape: raw.z,
@@ -147,7 +146,7 @@ export function normalizeBar(raw: AlpacaRawBar, timeframe: string): Bar {
     volume: raw.v,
     vwap: raw.vw,
     tradeCount: raw.n,
-    ts: isoToMs(raw.t),
+    ts: rfc3339ToEpochMs(raw.t),
     isoTs: raw.t,
     timeframe,
   };

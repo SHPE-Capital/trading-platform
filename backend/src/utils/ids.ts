@@ -9,6 +9,7 @@
  */
 
 import { v4 as uuidv4 } from "uuid";
+import { randomBytes } from "crypto";
 import type { UUID } from "../types/common";
 
 /**
@@ -17,6 +18,18 @@ import type { UUID } from "../types/common";
  */
 export function newId(): UUID {
   return uuidv4();
+}
+
+const EVENT_ID_PREFIX = `ev-${randomBytes(4).toString("hex")}-`;
+let eventSeq = 0;
+
+/**
+ * A process-unique id for high-volume, never-persisted events (market data).
+ * About 10x cheaper than a UUID; not a UUID, so never store it in a uuid column.
+ * @returns e.g. "ev-3fa2c1d0-1234"
+ */
+export function newEventId(): string {
+  return EVENT_ID_PREFIX + (++eventSeq);
 }
 
 /**
