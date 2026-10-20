@@ -12,7 +12,7 @@
 import { RollingTimeWindow } from "./rollingWindow";
 import { DEFAULT_WINDOWS } from "../../config/defaults";
 import { barEndMs } from "../../utils/time";
-import type { Quote, Trade, Bar } from "../../types/market";
+import type { Quote, Trade, Bar, TradeCorrection, TradeCancel } from "../../types/market";
 import type { EpochMs, Symbol } from "../../types/common";
 
 // ------------------------------------------------------------------
@@ -131,6 +131,43 @@ export class SymbolStateManager {
       state.latestMid = bar.close;
       state.latestMidTs = endTs;
     }
+  }
+
+  /**
+   * Applies a revised bar (a late trade changed it). Replaces the stored bar
+   * only when it is the same interval, and moves latestMid only when the mid
+   * came from that bar's close. Returns true when state changed.
+   * @param bar - The revised bar
+   */
+  onBarRevised(bar: Bar): boolean {
+    const state = this.states.get(bar.symbol);
+    const current = state?.latestBar;
+    if (!state || !current || current.ts !== bar.ts || current.timeframe !== bar.timeframe) return false;
+    state.latestBar = bar;
+    if (state.latestMidTs === barEndMs(current) && state.latestMid === current.close) state.latestMid = bar.close;
+    return true;
+  }
+
+  /**
+   * Applies a trade correction: the latest trade is replaced when it is the
+   * corrected print. Returns true when state changed.
+   */
+  onTradeCorrected(correction: TradeCorrection): boolean {
+    const state = this.states.get(correction.symbol);
+    if (!state?.latestTrade || state.latestTrade.id !== correction.originalId) return false;
+    state.latestTrade = correction.corrected;
+    return true;
+  }
+
+  /**
+   * Applies a trade cancel/error: if the latest trade is the cancelled print it
+   * is cleared (the previous print is not known here). Returns true when state changed.
+   */
+  onTradeCanceled(cancel: TradeCancel): boolean {
+    const state = this.states.get(cancel.symbol);
+    if (!state?.latestTrade || state.latestTrade.id !== cancel.tradeId) return false;
+    state.latestTrade = null;
+    return true;
   }
 
   /**

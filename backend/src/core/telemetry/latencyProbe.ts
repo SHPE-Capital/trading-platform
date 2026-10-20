@@ -98,6 +98,8 @@ export interface MarketDataProbe extends MarketDataObserver {
   /** All of a frame's events have been dispatched. */
   frameDone(frame: InboundFrame, endNs: bigint): void;
   unhandledMessage(type: string): void;
+  /** A correction of data already delivered (updated bar, trade correction/cancel). */
+  revision(kind: string): void;
 }
 
 export type EngineStage = "state" | "evaluate" | "risk";
@@ -660,6 +662,10 @@ export class LatencyProbe implements MarketDataProbe, EngineProbe, OrderPathProb
         sample_probability: this.sampleProbability,
       });
     }
+  }
+
+  revision(kind: string): void {
+    this.count(`revisions.${kind}`);
   }
 
   unhandledMessage(type: string): void {

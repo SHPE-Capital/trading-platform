@@ -26,6 +26,9 @@ import {
   validateRawQuote,
   validateRawTrade,
   validateRawBar,
+  normalizeTradeCorrection,
+  normalizeTradeCancel,
+  validateRawTradeAdjustment,
 } from "./normalizer";
 import { logger } from "../../utils/logger";
 import { nowMs } from "../../utils/time";
@@ -340,6 +343,35 @@ export class AlpacaMarketDataAdapter {
               id: newEventId(), type: "BAR_RECEIVED", ts: nowMs(), mode: this.mode, payload: normalizeBar(m as never, "1m"),
             }));
           }
+          break;
+
+        // Revisions of data already delivered: they correct state but never
+        // re-run strategies. Unusable ones are dropped whatever the policy.
+        case "u":
+          if (validateRawBar(m)?.severity === "reject") {
+            if (frame) this.probe?.revision("bar_revised_rejected");
+            break;
+          }
+          if (frame) this.probe?.revision("bar_revised");
+          this.eventBus.publish({ id: newEventId(), type: "BAR_REVISED", ts: nowMs(), mode: this.mode, payload: normalizeBar(m as never, "1m") });
+          break;
+
+        case "c":
+          if (validateRawTradeAdjustment(m)?.severity === "reject") {
+            if (frame) this.probe?.revision("trade_corrected_rejected");
+            break;
+          }
+          if (frame) this.probe?.revision("trade_corrected");
+          this.eventBus.publish({ id: newEventId(), type: "TRADE_CORRECTED", ts: nowMs(), mode: this.mode, payload: normalizeTradeCorrection(m) });
+          break;
+
+        case "x":
+          if (validateRawTradeAdjustment(m)?.severity === "reject") {
+            if (frame) this.probe?.revision("trade_canceled_rejected");
+            break;
+          }
+          if (frame) this.probe?.revision("trade_canceled");
+          this.eventBus.publish({ id: newEventId(), type: "TRADE_CANCELED", ts: nowMs(), mode: this.mode, payload: normalizeTradeCancel(m) });
           break;
 
         default:

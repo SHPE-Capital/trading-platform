@@ -272,6 +272,8 @@ function renderMarkdown(x: RenderInput): string {
     L.push(`- Quarantined: ${quarantined.length ? quarantined.map(([k, v]) => `${k.slice(12)}=${v}`).join(", ") : "none (policy: pass, or nothing rejected)"}`);
     const unhandled = Object.entries(counters).filter(([k]) => k.startsWith("messages.unhandled."));
     L.push(`- Unhandled message types: ${unhandled.length ? unhandled.map(([k, v]) => `${k.slice(19)}=${v}`).join(", ") : "none"}`);
+    const revisions = Object.entries(counters).filter(([k]) => k.startsWith("revisions."));
+    L.push(`- Revisions (updated bars, trade corrections/cancels; state-only): ${revisions.length ? revisions.map(([k, v]) => `${k.slice(10)}=${v}`).join(", ") : "none"}`);
     const negQ = c("event.age_ns.quote.negative_count"), negT = c("event.age_ns.trade.negative_count");
     if (negQ || negT) L.push(`- **Negative event ages**: quotes ${negQ}, trades ${negT} — kept as a separate distribution; investigate clock offset.`);
     L.push(`- Connection lifecycle: ${probe.lifecycle.length} records; reconnects scheduled ${c("lifecycle.reconnect_scheduled")}; subscription acks ${c("lifecycle.subscription_ack")}`);

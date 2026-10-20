@@ -9,7 +9,7 @@
  * Outputs: Normalized Quote, Trade, and Bar objects ready for the EventBus.
  */
 
-import type { Quote, Trade, Bar, MarketDataIssue } from "../../types/market";
+import type { Quote, Trade, Bar, MarketDataIssue, TradeCorrection, TradeCancel } from "../../types/market";
 import { rfc3339ToEpochMs } from "../../core/telemetry/clock";
 
 /**
@@ -150,6 +150,60 @@ export function normalizeBar(raw: AlpacaRawBar, timeframe: string): Bar {
     isoTs: raw.t,
     timeframe,
   };
+}
+
+/**
+ * Normalizes an Alpaca trade correction (`T: "c"`).
+ * @param raw - Raw correction message
+ */
+export function normalizeTradeCorrection(raw: Record<string, unknown>): TradeCorrection {
+  const t = String(raw["t"]);
+  return {
+    symbol: String(raw["S"]),
+    originalId: String(raw["oi"]),
+    originalPrice: Number(raw["op"]),
+    originalSize: Number(raw["os"]),
+    corrected: {
+      symbol: String(raw["S"]),
+      price: Number(raw["cp"]),
+      size: Number(raw["cs"]),
+      ts: rfc3339ToEpochMs(t),
+      isoTs: t,
+      exchange: raw["x"] as string | undefined,
+      tape: raw["z"] as string | undefined,
+      conditions: raw["cc"] as string[] | undefined,
+      id: raw["ci"] !== undefined ? String(raw["ci"]) : undefined,
+    },
+  };
+}
+
+/**
+ * Normalizes an Alpaca trade cancel/error (`T: "x"`).
+ * @param raw - Raw cancel message
+ */
+export function normalizeTradeCancel(raw: Record<string, unknown>): TradeCancel {
+  const t = String(raw["t"]);
+  return {
+    symbol: String(raw["S"]),
+    tradeId: String(raw["i"]),
+    price: Number(raw["p"]),
+    size: Number(raw["s"]),
+    action: String(raw["a"] ?? ""),
+    ts: rfc3339ToEpochMs(t),
+    isoTs: t,
+  };
+}
+
+/** A correction or cancel is usable when it names its symbol, trade id(s) and time. */
+export function validateRawTradeAdjustment(raw: Record<string, unknown>): MarketDataIssue | null {
+  const common = commonIssue(raw);
+  if (common) return common;
+  if (raw["T"] === "c") {
+    if (raw["oi"] === undefined || !isFiniteNumber(raw["cp"]) || !isFiniteNumber(raw["cs"])) return reject("MISSING_FIELD");
+    if ((raw["cp"] as number) <= 0) return reject("NON_POSITIVE_PRICE");
+    return null;
+  }
+  return raw["i"] === undefined ? reject("MISSING_FIELD") : null;
 }
 
 // ------------------------------------------------------------------

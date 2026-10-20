@@ -37,6 +37,9 @@ import type {
   QuoteReceivedEvent,
   TradeReceivedEvent,
   BarReceivedEvent,
+  BarRevisedEvent,
+  TradeCorrectedEvent,
+  TradeCanceledEvent,
   OrderFilledEvent,
   OrderPartialFillEvent,
   OrderCanceledEvent,
@@ -213,6 +216,10 @@ export class Orchestrator {
     this.eventBus.on("QUOTE_RECEIVED", (e) => this._onQuote(e as QuoteReceivedEvent));
     this.eventBus.on("TRADE_RECEIVED", (e) => this._onTrade(e as TradeReceivedEvent));
     this.eventBus.on("BAR_RECEIVED", (e) => this._onBar(e as BarReceivedEvent));
+    // Revisions correct state; strategies are not re-run on data they already acted on.
+    this.eventBus.on("BAR_REVISED", (e) => this._onBarRevised(e as BarRevisedEvent));
+    this.eventBus.on("TRADE_CORRECTED", (e) => { this.symbolState.onTradeCorrected((e as TradeCorrectedEvent).payload); });
+    this.eventBus.on("TRADE_CANCELED", (e) => { this.symbolState.onTradeCanceled((e as TradeCanceledEvent).payload); });
 
     // Signals → intents → risk + reservation + execution
     this.eventBus.on("STRATEGY_SIGNAL_CREATED", (e) => this._onStrategySignal(e as any));
@@ -316,6 +323,15 @@ export class Orchestrator {
     this._proactivePortfolioCheck(event.mode);
     if (probe) probe.span(event.trace, "state", start, probe.now());
     this._evaluateStrategies(event.payload.symbol, "trade", event.trace);
+  }
+
+  /** A revised bar re-marks positions only when the mid came from that bar. */
+  private _onBarRevised(event: BarRevisedEvent): void {
+    const bar = event.payload;
+    const before = this.symbolState.get(bar.symbol)?.latestMid;
+    if (!this.symbolState.onBarRevised(bar)) return;
+    const after = this.symbolState.get(bar.symbol)?.latestMid;
+    if (after !== before && after != null) this.portfolioState.updatePrice(bar.symbol, after);
   }
 
   private _onBar(event: BarReceivedEvent): void {
