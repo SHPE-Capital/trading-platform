@@ -3,8 +3,8 @@
  *
  * Audit finding 5: RollingTimeWindow.evict copied the whole window (slice) on
  * every evicting push. It now advances a head index and compacts in bulk.
- * This property test runs random operation sequences — including out-of-order
- * and duplicate timestamps and external evict() calls — against a verbatim
+ * This property test runs random in-order operation sequences — including
+ * duplicate timestamps and external evict() calls — against a verbatim
  * copy of the previous implementation and requires identical observable
  * results, bit for bit for RollingNumericWindow's mean and stdDev (the pairs
  * strategy's z-score depends on them).
@@ -82,8 +82,9 @@ function runSequence(seed: number, windowMs: number, ops: number): void {
   for (let i = 0; i < ops; i++) {
     const r = rand();
     if (r < 0.85) {
-      // Mostly forward in time, sometimes equal, sometimes backwards (out-of-order prints).
-      const step = rand() < 0.1 ? -Math.floor(rand() * windowMs * 0.5) : rand() < 0.2 ? 0 : Math.floor(rand() * windowMs * 0.2);
+      // Forward in time, sometimes equal. Late (out-of-order) items are covered
+      // separately below: the window now keeps them in time order.
+      const step = rand() < 0.2 ? 0 : Math.floor(rand() * windowMs * 0.2);
       t += step;
       const item = { ts: t, value: 100 + rand() * 10 - 5 };
       w.push(item);
@@ -139,5 +140,33 @@ describe("RollingTimeWindow head-index eviction matches the previous implementat
     expect(w.size()).toBe(101);
     // Live items plus at most a compaction's worth of evicted prefix.
     expect((w as unknown as { items: unknown[] }).items.length).toBeLessThanOrEqual(2 * 101 + 32);
+  });
+});
+
+describe("late (out-of-order) items", () => {
+  it("are kept in time order and evicted from the newest timestamp, like a brute-force model", () => {
+    const rand = seededRandom(31);
+    const windowMs = 1_000;
+    const w = new RollingNumericWindow(windowMs);
+    const all: Array<{ ts: number; value: number; seq: number }> = [];
+    let t = 10_000;
+    for (let i = 0; i < 4_000; i++) {
+      t += Math.floor(rand() * 60);
+      const ts = rand() < 0.15 ? t - Math.floor(rand() * 1_500) : t; // some arrive late, some too late to keep
+      const item = { ts, value: Math.round(rand() * 1_000) / 10, seq: i };
+      all.push(item);
+      w.push({ ts: item.ts, value: item.value });
+      const newest = Math.max(...all.map((x) => x.ts));
+      const expected = all
+        .filter((x) => x.ts >= newest - windowMs)
+        .sort((a, b) => a.ts - b.ts || a.seq - b.seq);
+      if (i % 50 === 0 || i > 3_990) {
+        expect(w.getItems().map((x) => x.ts)).toEqual(expected.map((x) => x.ts));
+        expect(w.getValues()).toEqual(expected.map((x) => x.value));
+        const mean = expected.reduce((a, x) => a + x.value, 0) / expected.length;
+        expect(w.mean()!).toBeCloseTo(mean, 6);
+        expect(w.getLatest()!.ts).toBe(newest);
+      }
+    }
   });
 });
