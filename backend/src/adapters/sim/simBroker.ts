@@ -115,21 +115,25 @@ export class SimBroker implements IBroker {
     return [];
   }
 
+  /** Downsampled in the database (0020) to ~500 points across the whole period, newest included. */
   async getPortfolioHistory(period: string): Promise<BrokerHistoryPoint[]> {
     const since = Date.now() - (PERIOD_MS[period] ?? PERIOD_MS["1M"]);
-    const { data, error } = await getSupabaseClient()
-      .from("portfolio_snapshots").select("ts, equity, total_pnl, return_pct")
-      .eq("broker_account", this.accountId)
-      .gte("ts", new Date(since).toISOString())
-      .order("ts", { ascending: true })
-      .limit(5000);
+    const { data, error } = await getSupabaseClient().rpc("portfolio_equity_history", {
+      p_broker_account: this.accountId,
+      p_since: new Date(since).toISOString(),
+      p_points: 500,
+    });
     if (error) throw new Error(`SimBroker history read failed: ${error.message}`);
-    return (data ?? []).map((r) => ({
-      ts: new Date(r.ts as string).getTime(),
-      equity: Number(r.equity),
-      profitLoss: Number(r.total_pnl),
-      profitLossPct: Number(r.return_pct),
-    }));
+    return ((data ?? []) as Record<string, unknown>[]).map((r) => {
+      const equity = Number(r.equity);
+      const initial = Number(r.initial_capital);
+      return {
+        ts: new Date(r.ts as string).getTime(),
+        equity,
+        profitLoss: equity - initial,
+        profitLossPct: initial > 0 ? (equity - initial) / initial : 0,
+      };
+    });
   }
 }
 

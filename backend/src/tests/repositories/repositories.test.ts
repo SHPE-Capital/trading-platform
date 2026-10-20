@@ -336,24 +336,31 @@ describe('getLatestPortfolioSnapshot', () => {
 // getPortfolioEquityCurve
 // ---------------------------------------------------------------------------
 describe('getPortfolioEquityCurve', () => {
+  const withRpc = (result: unknown) => {
+    const rpc = jest.fn().mockResolvedValue(result);
+    (getSupabaseClient as jest.Mock).mockReturnValue({ from: mockFrom, rpc });
+    return rpc;
+  };
+
   it('returns empty array on error', async () => {
-    const limitFn = jest.fn().mockResolvedValue({ data: null, error: { message: 'err' } });
-    const chain = buildChain({ limit: limitFn });
-    chain.select.mockReturnValue(chain);
-    chain.order.mockReturnValue(chain);
-    mockFrom.mockReturnValue(chain);
-    const result = await getPortfolioEquityCurve();
-    expect(result).toEqual([]);
+    withRpc({ data: null, error: { message: 'err' } });
+    expect(await getPortfolioEquityCurve()).toEqual([]);
   });
 
-  it('passes the limit argument', async () => {
-    const limitFn = jest.fn().mockResolvedValue({ data: [], error: null });
-    const chain = buildChain({ limit: limitFn });
-    chain.select.mockReturnValue(chain);
-    chain.order.mockReturnValue(chain);
-    mockFrom.mockReturnValue(chain);
-    await getPortfolioEquityCurve(200);
-    expect(limitFn).toHaveBeenCalledWith(200);
+  it('asks the database for a downsampled curve of one broker account', async () => {
+    const rpc = withRpc({ data: [{ ts: '2026-10-20T14:00:00Z', equity: '101000.5', initial_capital: '100000' }], error: null });
+    const result = await getPortfolioEquityCurve(200, 'sim:club');
+    expect(rpc).toHaveBeenCalledWith('portfolio_equity_history', { p_broker_account: 'sim:club', p_since: null, p_points: 200 });
+    expect(result).toEqual([{
+      ts: Date.parse('2026-10-20T14:00:00Z'), isoTs: '2026-10-20T14:00:00.000Z', equity: 101000.5, initialCapital: 100000,
+    }]);
+  });
+
+  it('clamps nonsense point counts', async () => {
+    const rpc = withRpc({ data: [], error: null });
+    await getPortfolioEquityCurve(Number.NaN);
+    await getPortfolioEquityCurve(1_000_000);
+    expect(rpc.mock.calls.map((c) => c[1].p_points)).toEqual([500, 5000]);
   });
 });
 

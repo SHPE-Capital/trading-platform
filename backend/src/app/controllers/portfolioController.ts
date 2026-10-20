@@ -37,11 +37,12 @@ export async function getPortfolioSnapshot(req: Request, res: Response): Promise
   }
 }
 
-/** GET /api/portfolio/equity-curve — query param: ?limit=500 */
+/** GET /api/portfolio/equity-curve — ?limit=500 is the number of chart points, newest history downsampled */
 export async function getEquityCurve(req: Request, res: Response): Promise<void> {
   const limit = parseInt(String(req.query["limit"] ?? "500"), 10);
+  const { brokerAccount } = req.app.locals.ctx as AppContext;
   try {
-    const curve = await getPortfolioEquityCurve(limit);
+    const curve = await getPortfolioEquityCurve(limit, brokerAccount ?? null);
     res.json(curve);
   } catch (err) {
     logger.error("getEquityCurve error", { err });

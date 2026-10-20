@@ -61,6 +61,15 @@ export interface Position {
  */
 export type PortfolioRiskView = Pick<PortfolioSnapshot, "equity" | "positions">;
 
+/** One point of a downsampled equity chart (portfolio_equity_history, 0020). */
+export interface EquityPoint {
+  /** Snapshot time (Unix ms) */
+  ts: number;
+  isoTs: string;
+  equity: number;
+  initialCapital: number;
+}
+
 export interface PortfolioSnapshot {
   /** Snapshot ID */
   id: UUID;

@@ -96,14 +96,14 @@ describe('getEquityCurve', () => {
     mockGetCurve.mockResolvedValue([]);
     const res = mockRes();
     await getEquityCurve(mockReq({ query: { limit: '200' } as never }), res);
-    expect(mockGetCurve).toHaveBeenCalledWith(200);
+    expect(mockGetCurve).toHaveBeenCalledWith(200, null);
   });
 
   it('uses default limit of 500 when not provided', async () => {
     mockGetCurve.mockResolvedValue([]);
     const res = mockRes();
     await getEquityCurve(mockReq(), res);
-    expect(mockGetCurve).toHaveBeenCalledWith(500);
+    expect(mockGetCurve).toHaveBeenCalledWith(500, null);
   });
 });
 
