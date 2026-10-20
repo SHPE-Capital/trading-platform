@@ -627,6 +627,10 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
   });
 
   const snapshotTimer = setInterval(() => {
+    // Closed orders are already in the ledger; keeping every one in memory made
+    // a long-running runner grow without bound. Six hours covers late fills and
+    // reconnect reconciliation by a wide margin.
+    orderState.pruneClosedOrders(CLOSED_ORDER_RETENTION_MS);
     insertPortfolioSnapshot(portfolioState.getSnapshot(), brokerAccount).catch((err) =>
       logger.error("persistence: insertPortfolioSnapshot failed", { err }),
     );
@@ -707,6 +711,9 @@ function simOrderBook(
   });
   return { sink, liveFills: quoteModel ? new LiveQuoteFills(eventBus, sink, execution) : null };
 }
+
+/** How long a runner keeps closed orders in memory (they are in the ledger). */
+const CLOSED_ORDER_RETENTION_MS = 6 * 3_600_000;
 
 /**
  * Window a keyless sim runtime replays: REPLAY_FROM..REPLAY_TO, defaulting to
