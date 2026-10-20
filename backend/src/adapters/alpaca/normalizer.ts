@@ -10,7 +10,7 @@
  */
 
 import type { Quote, Trade, Bar, MarketDataIssue } from "../../types/market";
-import { parseRfc3339Parts, rfc3339ToEpochMs } from "../../core/telemetry/clock";
+import { rfc3339ToEpochMs } from "../../core/telemetry/clock";
 
 /**
  * Bump when normalized output changes for the same input, so benchmark runs
@@ -171,7 +171,8 @@ function isFiniteNumber(v: unknown): v is number {
 function commonIssue(raw: Record<string, unknown>): MarketDataIssue | null {
   if (typeof raw["S"] !== "string" || raw["S"] === "") return reject("MISSING_FIELD");
   if (typeof raw["t"] !== "string") return reject("MISSING_FIELD");
-  if (parseRfc3339Parts(raw["t"]) === null) return reject("BAD_TIMESTAMP");
+  // Unusable exactly when the normalized ts would be NaN (same parser as normalizeQuote).
+  if (Number.isNaN(rfc3339ToEpochMs(raw["t"]))) return reject("BAD_TIMESTAMP");
   return null;
 }
 
