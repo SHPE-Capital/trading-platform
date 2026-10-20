@@ -12,6 +12,7 @@
  */
 
 import { getSupabaseClient } from "./client";
+import { slimEquityCurve } from "../../core/backtest/equityCurveStorage";
 import { logger } from "../../utils/logger";
 import type { UUID } from "../../types/common";
 import type { BacktestConfig, BacktestResult } from "../../types/backtest";
@@ -272,7 +273,8 @@ export async function sweepBacktestJobs(keepFinishedHours: number): Promise<numb
  * deterministic, so both write the same thing.
  */
 export async function writeJobArtifacts(jobId: UUID, result: BacktestResult): Promise<void> {
-  const { orders = [], fills = [], ...summary } = result;
+  const { orders = [], fills = [], ...rest } = result;
+  const summary = { ...rest, equity_curve: slimEquityCurve(rest.equity_curve) };
   const rows: { job_id: UUID; kind: string; seq: number; payload: unknown }[] = [
     { job_id: jobId, kind: "summary", seq: 0, payload: summary },
   ];
