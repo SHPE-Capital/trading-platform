@@ -12,7 +12,8 @@
  * explicit save writes it to backtest_results (0009).
  *
  * Inputs:  HTTP requests from the frontend backtest view.
- * Outputs: JSON backtest result data and SSE progress streams.
+ * Outputs: JSON backtest result data. Progress reaches the browser over
+ *          Supabase Realtime on backtest_jobs, not through this API.
  */
 
 import { BACKTESTABLE_TYPES } from "../../core/backtest/strategyFactory";
@@ -35,7 +36,6 @@ import {
   readJobResultFull,
   deleteJobArtifacts,
 } from "../../adapters/supabase/backtestJobRepository";
-import { BacktestStreamManager } from "../../core/backtest/backtestStreamManager";
 import { BACKTEST_ENGINE_VERSION } from "../../core/backtest/backtestEngine";
 import { executionForConfig } from "../../core/execution/quoteFillModel";
 import { getStrategyVersionById } from "../../adapters/supabase/reviewRepositories";
@@ -46,11 +46,6 @@ import { newId } from "../../utils/ids";
 import type { BacktestConfig } from "../../types/backtest";
 
 /** Strategy types a worker knows how to build (see core/backtest/strategyFactory.ts). */
-
-const streams = new BacktestStreamManager({
-  getJob: (id) => getBacktestJob(id),
-  savedResultExists: (id) => backtestResultExists(id),
-});
 
 /**
  * GET /api/backtests
@@ -160,29 +155,6 @@ export async function saveBacktest(req: Request, res: Response): Promise<void> {
   );
   logger.info("saveBacktest: saved", { id, savedBy: req.user!.id });
   res.status(201).json({ id, alreadySaved: false });
-}
-
-/**
- * GET /api/backtests/:id/stream
- * SSE: `status` (queued → running), `progress`, then `complete` or `error`.
- * Works for any job from any replica — progress comes from the job row.
- */
-export async function streamBacktest(req: Request, res: Response): Promise<void> {
-  const id = String(req.params.id);
-  let cleanup: (() => void) | null;
-  try {
-    cleanup = await streams.subscribe(id, res);
-  } catch (err) {
-    logger.error("streamBacktest: could not read job", { id, err });
-    if (!res.headersSent) res.status(500).json({ error: "Failed to open backtest stream" });
-    else res.end();
-    return;
-  }
-  if (!cleanup) {
-    res.status(404).json({ error: `No backtest ${id}` });
-    return;
-  }
-  res.on("close", cleanup);
 }
 
 /**

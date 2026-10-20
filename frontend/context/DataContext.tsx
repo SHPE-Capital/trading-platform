@@ -4,13 +4,13 @@ import { createContext, useContext } from "react";
 import { usePortfolio } from "../hooks/usePortfolio";
 import { useStrategies } from "../hooks/useStrategies";
 import { useSystemHealth } from "../hooks/useSystemHealth";
-import type { PortfolioSnapshot } from "../types/portfolio";
+import type { EquityPoint, PortfolioSnapshot } from "../types/portfolio";
 import type { StrategyRun } from "../types/strategy";
 import type { SystemStatus } from "../types/api";
 
 interface PortfolioData {
   snapshot: PortfolioSnapshot | null;
-  equityCurve: PortfolioSnapshot[];
+  equityCurve: EquityPoint[];
   isLoading: boolean;
   error: string | null;
   refetch: () => void;

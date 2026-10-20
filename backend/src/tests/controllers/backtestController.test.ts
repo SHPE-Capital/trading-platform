@@ -13,6 +13,8 @@ jest.mock('../../core/backtest/backtestEngine');
 jest.mock('../../config/env', () => ({
   env: {
     supabaseUrl: 'https://test.supabase.co',
+    backtestMaxDays: 0,
+    backtestAllowQuoteFills: true,
     supabaseAnonKey: 'test-anon',
     supabaseServiceRoleKey: 'test-service',
     alpacaApiKey: 'test-key',

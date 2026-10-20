@@ -1,10 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { PerformanceReport } from "../../types/analytics";
+import type { BacktestJobHandlers } from "../../lib/watchBacktestJob";
 
 vi.mock("../../services/performanceService", () => ({ compareRunWithBacktest: vi.fn() }));
 vi.mock("../../services/backtestService", () => ({ fetchBacktest: vi.fn(), saveBacktest: vi.fn(async () => ({ id: "bt-9", alreadySaved: false })) }));
+
+/** Captures the handlers a comparison passes to the Realtime job watcher. */
+const watch = vi.hoisted(() => ({ calls: [] as { jobId: string; handlers: BacktestJobHandlers }[] }));
+vi.mock("../../lib/watchBacktestJob", () => ({
+  watchBacktestJob: (jobId: string, handlers: BacktestJobHandlers) => {
+    watch.calls.push({ jobId, handlers });
+    return vi.fn();
+  },
+}));
 
 import CompareSection from "../../features/performance/CompareSection";
 import * as perf from "../../services/performanceService";
@@ -20,7 +30,10 @@ const report = {
   slippage: { measuredFills: 0, avgBps: 0, medianBps: 0, totalCost: 0, bySymbol: [] },
 } as PerformanceReport;
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  watch.calls = [];
+});
 
 describe("CompareSection", () => {
   it("shows the benchmark over the same window beside live", () => {
@@ -85,16 +98,30 @@ describe("CompareSection", () => {
     expect(screen.getByRole("button", { name: "Re-run with quote fills" })).toBeDisabled();
   });
 
-  it("keeps polling while the backtest is queued", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
+  it("follows a queued comparison and reloads it once the job settles", async () => {
     vi.mocked(backtests.fetchBacktest)
       .mockResolvedValueOnce({ id: "bt-1", status: "queued" } as never)
-      .mockResolvedValueOnce({ id: "bt-1", status: "failed", error_message: "no bars", config: { initialCapital: 1 } } as never);
+      .mockResolvedValueOnce({
+        id: "bt-1", status: "completed", started_at: 1, saved_at: 2,
+        config: { name: "bt", strategyConfig: {}, startDate: "", endDate: "", initialCapital: 5_000, dataGranularity: "bar", commissionPerShare: 0 },
+        metrics: { totalReturn: 30, totalReturnPct: 0.006, maxDrawdown: 0, winRate: 1, totalTrades: 1, avgWin: 30, avgLoss: 0 },
+        equity_curve: [{ ts: 1, equity: 5_000 }, { ts: 3, equity: 5_030 }],
+      } as never);
     render(<CompareSection report={report} run={{ id: "run-p", strategyType: "pairs_trading", compareBacktestId: "bt-1" }} />);
     expect(await screen.findByText(/Backtest queued/)).toBeInTheDocument();
-    await vi.advanceTimersByTimeAsync(5_000);
+    expect(watch.calls.map((c) => c.jobId)).toEqual(["bt-1"]);
+
+    await act(async () => watch.calls[0].handlers.onComplete("bt-1"));
+    expect(await screen.findByText("Backtest of this window")).toBeInTheDocument();
+  });
+
+  it("shows the worker's failure for a comparison that fails", async () => {
+    vi.mocked(backtests.fetchBacktest).mockResolvedValue({ id: "bt-1", status: "running" } as never);
+    render(<CompareSection report={report} run={{ id: "run-p", strategyType: "pairs_trading", compareBacktestId: "bt-1" }} />);
+    expect(await screen.findByText(/Backtest running/)).toBeInTheDocument();
+
+    act(() => watch.calls[0].handlers.onError("no bars"));
     expect(await screen.findByText(/Backtest failed: no bars/)).toBeInTheDocument();
-    vi.useRealTimers();
   });
 
   it("explains when the strategy type cannot be backtested", () => {

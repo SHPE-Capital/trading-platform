@@ -11,7 +11,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { fetchBacktests, fetchBacktest, runBacktest, saveBacktest } from "../services/backtestService";
-import { config as appConfig } from "../config";
+import { watchBacktestJob } from "../lib/watchBacktestJob";
 import type { BacktestConfig, BacktestResult } from "../types/api";
 
 interface BacktestProgress {
@@ -65,7 +65,7 @@ export function useBacktest(): UseBacktestResult {
   const [reused, setReused] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const esRef = useRef<EventSource | null>(null);
+  const stopWatchRef = useRef<(() => void) | null>(null);
 
   const fetchData = useCallback(async () => {
     try {
@@ -81,8 +81,8 @@ export function useBacktest(): UseBacktestResult {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  // Close any open SSE connection when the component unmounts
-  useEffect(() => () => { esRef.current?.close(); }, []);
+  // Stop following a job when the component unmounts
+  useEffect(() => () => { stopWatchRef.current?.(); }, []);
 
   const run = useCallback(async (config: Omit<BacktestConfig, "id">, force = false): Promise<string> => {
     setIsRunning(true);
@@ -117,56 +117,28 @@ export function useBacktest(): UseBacktestResult {
       setQueueStatus(queued.status === "running" ? "running" : "queued");
       setQueuedAt(Date.now());
 
-      // The run happens in a worker process; any API process relays its
-      // progress from the job row. isRunning stays true until the stream ends.
-      const es = new EventSource(`${appConfig.backtestApiBaseUrl}/backtests/${backtestId}/stream`);
-      esRef.current = es;
-
-      es.addEventListener("status", (e: MessageEvent) => {
-        try {
-          const { status } = JSON.parse(e.data as string) as { status: string };
-          if (status === "queued" || status === "running") setQueueStatus(status);
-        } catch {}
-      });
-
-      es.addEventListener("progress", (e: MessageEvent) => {
-        const { barIndex, totalBars } = JSON.parse(e.data as string) as { barIndex: number; totalBars: number };
-        setQueueStatus("running");
-        // Cap at 99 — the bar reaches 100% only when the complete event fires.
-        setProgress({ barIndex, totalBars, pct: Math.min(99, Math.round((barIndex / totalBars) * 100)) });
-      });
-
-      es.addEventListener("complete", (e: MessageEvent) => {
-        es.close();
-        esRef.current = null;
-        let resultId = backtestId;
-        try {
-          const data = JSON.parse(e.data as string) as { backtestId?: string };
-          if (data.backtestId) resultId = data.backtestId;
-        } catch {}
-        fetchBacktest(resultId)
-          .then((result) => { setSelectedResult(result); return fetchData(); })
-          .catch((err) => { setError(err instanceof Error ? err.message : "Failed to load result"); })
-          .finally(finish);
-      });
-
-      es.addEventListener("error", (e: Event) => {
-        // A named `error` event carries the job's failure. A bare connection
-        // error while the job is live is the browser auto-reconnecting — let it.
-        if (!(e instanceof MessageEvent) || !e.data) {
-          if (es.readyState === EventSource.CLOSED) {
-            esRef.current = null;
-            setError("Lost the connection to the backtest stream");
-            finish();
-          }
-          return;
-        }
-        es.close();
-        esRef.current = null;
-        let msg = "Backtest failed";
-        try { msg = (JSON.parse(e.data as string) as { message: string }).message; } catch {}
-        setError(msg);
-        finish();
+      // The run happens in a worker process; its status and progress arrive
+      // over Supabase Realtime. isRunning stays true until the job settles.
+      stopWatchRef.current?.();
+      stopWatchRef.current = watchBacktestJob(backtestId, {
+        onStatus: (status) => setQueueStatus(status),
+        onProgress: ({ barIndex, totalBars }) => {
+          setQueueStatus("running");
+          // Cap at 99 — the bar reaches 100% only when the job completes.
+          setProgress({ barIndex, totalBars, pct: Math.min(99, Math.round((barIndex / totalBars) * 100)) });
+        },
+        onComplete: (resultId) => {
+          stopWatchRef.current = null;
+          fetchBacktest(resultId)
+            .then((result) => { setSelectedResult(result); return fetchData(); })
+            .catch((err) => { setError(err instanceof Error ? err.message : "Failed to load result"); })
+            .finally(finish);
+        },
+        onError: (message) => {
+          stopWatchRef.current = null;
+          setError(message);
+          finish();
+        },
       });
 
       return backtestId;

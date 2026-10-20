@@ -14,7 +14,7 @@ import { useState, useEffect, useCallback } from "react";
 import { usePolling } from "./usePolling";
 import { fetchPortfolioSnapshot, fetchEquityCurve } from "../services/portfolioService";
 import { useWebSocket } from "./useWebSocket";
-import type { PortfolioSnapshot } from "../types/portfolio";
+import type { EquityPoint, PortfolioSnapshot } from "../types/portfolio";
 
 interface PortfolioUpdatedMsg {
   type: string;
@@ -23,7 +23,7 @@ interface PortfolioUpdatedMsg {
 
 interface UsePortfolioResult {
   snapshot: PortfolioSnapshot | null;
-  equityCurve: PortfolioSnapshot[];
+  equityCurve: EquityPoint[];
   isLoading: boolean;
   error: string | null;
   refetch: () => void;
@@ -34,9 +34,11 @@ interface UsePortfolioResult {
  * @param pollIntervalMs - How often to re-fetch in milliseconds (0 = no polling)
  * @returns UsePortfolioResult with snapshot, curve, loading state, and error
  */
+const CURVE_REFRESH_MS = 5 * 60_000;
+
 export function usePortfolio(pollIntervalMs = 30_000): UsePortfolioResult {
   const [snapshot, setSnapshot] = useState<PortfolioSnapshot | null>(null);
-  const [equityCurve, setEquityCurve] = useState<PortfolioSnapshot[]>([]);
+  const [equityCurve, setEquityCurve] = useState<EquityPoint[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -52,15 +54,10 @@ export function usePortfolio(pollIntervalMs = 30_000): UsePortfolioResult {
     });
   }, [lastMessage]);
 
-  const fetchData = useCallback(async () => {
+  const fetchSnapshot = useCallback(async () => {
     try {
       setError(null);
-      const [snap, curve] = await Promise.all([
-        fetchPortfolioSnapshot(),
-        fetchEquityCurve(),
-      ]);
-      setSnapshot(snap);
-      setEquityCurve(curve);
+      setSnapshot(await fetchPortfolioSnapshot());
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load portfolio");
     } finally {
@@ -68,7 +65,22 @@ export function usePortfolio(pollIntervalMs = 30_000): UsePortfolioResult {
     }
   }, []);
 
-  usePolling(fetchData, pollIntervalMs);
+  // The curve grows by live WebSocket points between reloads, so the full
+  // history only needs re-reading every few minutes.
+  const fetchCurve = useCallback(async () => {
+    try {
+      setEquityCurve(await fetchEquityCurve());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load portfolio");
+    }
+  }, []);
+
+  usePolling(fetchSnapshot, pollIntervalMs);
+  usePolling(fetchCurve, pollIntervalMs > 0 ? CURVE_REFRESH_MS : 0);
+
+  const fetchData = useCallback(async () => {
+    await Promise.all([fetchSnapshot(), fetchCurve()]);
+  }, [fetchSnapshot, fetchCurve]);
 
   return { snapshot, equityCurve, isLoading, error, refetch: fetchData };
 }

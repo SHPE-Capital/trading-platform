@@ -21,6 +21,7 @@ import ExecutionSummary from "../backtest/ExecutionSummary";
 import { Section } from "./ReportSections";
 import { compareRunWithBacktest } from "../../services/performanceService";
 import { fetchBacktest, saveBacktest } from "../../services/backtestService";
+import { watchBacktestJob } from "../../lib/watchBacktestJob";
 import { formatPercent, pnlColorClass } from "../../utils/formatting";
 import { config } from "../../config";
 import type { PerformanceReport } from "../../types/analytics";
@@ -28,7 +29,6 @@ import type { BacktestResult, ExecutionSettings } from "../../types/api";
 
 /** Strategy types the backtest engine can simulate (backend core/backtest/strategyFactory.ts). */
 const BACKTESTABLE = new Set(["pairs_trading"]);
-const POLL_MS = 5_000;
 const QUOTE_FILLS: ExecutionSettings = { model: "quote" };
 
 interface Props {
@@ -37,7 +37,7 @@ interface Props {
 }
 
 /**
- * One comparison backtest of the run's window: queued on request, polled until
+ * One comparison backtest of the run's window: queued on request, followed until
  * it settles, then saved so it does not expire. `execution` picks the fill
  * model; omitted, the backtest fills at bar opens.
  */
@@ -51,35 +51,40 @@ function useComparison(runId: string | undefined, existingId: string | undefined
     if (existingId) queueMicrotask(() => setBacktestId(existingId));
   }, [existingId]);
 
-  // Poll the comparison backtest until it settles (the API answers "queued" or
-  // "running" until then), and keep the result: an unsaved one expires.
+  // Load the comparison; while it is queued or running, follow its job over
+  // Realtime and reload once it settles. Keep the result: an unsaved one expires.
   useEffect(() => {
     if (!backtestId) return;
     let stopped = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const poll = async () => {
+    let stopWatch: (() => void) | undefined;
+    const load = async () => {
       try {
         const bt = await fetchBacktest(backtestId);
         if (stopped) return;
         setBacktest(bt);
         if (bt.status !== "completed" && bt.status !== "failed") {
-          timer = setTimeout(poll, POLL_MS);
+          stopWatch ??= watchBacktestJob(backtestId, {
+            onComplete: () => { stopWatch = undefined; void load(); },
+            onError: (message) => {
+              stopWatch = undefined;
+              if (stopped) return;
+              setBacktest((prev) => ({ ...(prev ?? bt), status: "failed", error_message: message }));
+            },
+          });
         } else if (bt.status === "completed" && bt.saved_at == null && !bt.reused_from_id) {
           saveBacktest(backtestId).catch(() => {});
         }
       } catch (err) {
         if (stopped) return;
         // A finished comparison nobody saved in time is gone; offer a re-run.
-        if (err instanceof Error && err.message.includes("not found")) {
-          setBacktest(null);
-          setQueueError("The previous comparison expired — run it again.");
-        } else {
-          timer = setTimeout(poll, POLL_MS);
-        }
+        setBacktest(null);
+        setQueueError(err instanceof Error && err.message.includes("not found")
+          ? "The previous comparison expired — run it again."
+          : err instanceof Error ? err.message : "Could not load the comparison backtest");
       }
     };
-    void poll();
-    return () => { stopped = true; clearTimeout(timer); };
+    void load();
+    return () => { stopped = true; stopWatch?.(); };
   }, [backtestId]);
 
   const queue = useCallback(async (force: boolean) => {

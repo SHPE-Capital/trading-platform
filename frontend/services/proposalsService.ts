@@ -10,6 +10,7 @@
  */
 
 import { apiGet, apiPost } from "./api";
+import { queryComments, queryPendingApprovals, queryProposalSummaries, queryVersions } from "./db";
 import { config } from "../config";
 import type {
   PendingApproval,
@@ -28,7 +29,7 @@ import type {
 
 /** Full config history for one strategy, newest first. */
 export async function fetchVersions(strategyId: string): Promise<StrategyVersion[]> {
-  return apiGet<StrategyVersion[]>(`/strategies/${strategyId}/versions`);
+  return queryVersions(strategyId);
 }
 
 /**
@@ -50,17 +51,17 @@ export async function createVersion(
 
 /** The review queue. Omit status for open proposals with full context. */
 export async function fetchPendingApprovals(): Promise<PendingApproval[]> {
-  return apiGet<PendingApproval[]>("/proposals?status=open");
+  return queryPendingApprovals();
 }
 
 /** Settled proposals of one status, for the history tab. */
 export async function fetchProposalsByStatus(status: ProposalStatus): Promise<ProposalSummary[]> {
-  return apiGet<ProposalSummary[]>(`/proposals?status=${status}`);
+  return queryProposalSummaries(status);
 }
 
 /** Every proposal regardless of status, newest first — the "All" tab. */
 export async function fetchAllProposals(): Promise<ProposalSummary[]> {
-  return apiGet<ProposalSummary[]>("/proposals?status=all");
+  return queryProposalSummaries();
 }
 
 /** Everything the review page renders, in one request. */
@@ -112,7 +113,7 @@ export async function withdrawProposal(id: string): Promise<StrategyProposal> {
 // ------------------------------------------------------------------
 
 export async function fetchComments(proposalId: string): Promise<ProposalComment[]> {
-  return apiGet<ProposalComment[]>(`/proposals/${proposalId}/comments`);
+  return queryComments(proposalId);
 }
 
 /** Verdict kinds (approve / request_changes) are rejected for non-leads. */

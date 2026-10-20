@@ -119,14 +119,6 @@ describe("Backtest HTTP API", () => {
     expect(response.body.error).toContain("required");
   });
 
-  test("GET /api/backtests/:id/stream — 404 for an unknown id", async () => {
-    (jobs.getBacktestJob as jest.Mock).mockResolvedValue(null);
-    (repositories.backtestResultExists as jest.Mock).mockResolvedValue(false);
-
-    const response = await request(app).get("/api/backtests/unknown/stream");
-    expect(response.status).toBe(404);
-  });
-
   test("GET /health — returns 200 ok", async () => {
     const response = await request(app).get("/health");
     expect(response.status).toBe(200);

@@ -1,13 +1,12 @@
 /**
  * lib/supabaseClient.ts
  *
- * Browser-side Supabase client, used only for authentication — sign-in,
- * sign-out, and reading the current session's JWT.
- *
- * Deliberately NOT used to query tables directly. All data access goes through
- * the backend REST API, which holds the service-role key and enforces the
- * ownership and role rules. This client's job is to obtain the token that
- * services/api.ts attaches to those requests.
+ * Browser-side Supabase client: authentication (sign-in, sign-out, the
+ * session's JWT that services/api.ts attaches to backend calls), read-only
+ * history queries (services/db.ts), and Realtime subscriptions
+ * (lib/watchBacktestJob.ts). Queries run as the signed-in member, so row level
+ * security decides what they see: only active members read club data (0019),
+ * and no browser role can write any table. Writes go through the backend.
  *
  * Inputs:  NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY
  * Outputs: A singleton SupabaseClient, or null when auth is not configured.
@@ -42,6 +41,15 @@ export function getSupabase(): SupabaseClient | null {
     });
   }
   return _client;
+}
+
+/** The client, or a clear error when auth is not configured (data reads need it). */
+export function requireSupabase(): SupabaseClient {
+  const client = getSupabase();
+  if (!client) {
+    throw new Error("Supabase is not configured: set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY");
+  }
+  return client;
 }
 
 /**
