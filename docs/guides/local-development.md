@@ -145,7 +145,7 @@ workdir (the remapped workdir, when used, is `.local/supabase-workdir`).
 
 ```text
 cd backend
-npm run data:pull -- --symbols SPY,QQQ --from 2026-10-01 --to 2026-10-07
+npm run data:pull -- --symbols SPY,AAPL --from 2026-10-01 --to 2026-10-07
 ```
 
 Back at the repo root, disable streaming and select a cached period in the shell:
@@ -164,6 +164,9 @@ the command. Leave shell trading keys unset for cached-bar simulation: runtime
 data credentials can fall back to them. Choose dates/symbols actually seeded.
 For the difference between this feed and the incomplete recorded-session UI,
 see [replay workflows](replay.md).
+
+SPY/AAPL are the course reference's default symbols. Seed SPY/QQQ instead for
+the default pairs strategy, or supply the symbols in your own configuration.
 
 ## Ports, data safety, and troubleshooting
 

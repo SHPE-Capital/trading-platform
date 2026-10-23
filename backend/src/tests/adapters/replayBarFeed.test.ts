@@ -38,6 +38,56 @@ function setup(barsBySymbol: Record<string, Bar[]>, speed = 1) {
 }
 
 describe('ReplayBarFeed', () => {
+  it('starts playback when the first strategy subscribes after an empty boot', async () => {
+    const { feed, published, step, delays } = setup({ SPY: [bar('SPY', T0)] });
+    await feed.connect();
+    expect(delays()).toHaveLength(0);
+    feed.subscribe(['SPY']);
+    await new Promise((r) => setImmediate(r));
+    expect(delays()).toEqual([0]);
+    step();
+    expect(published).toHaveLength(1);
+  });
+
+  it('resumes an exhausted feed when a newly subscribed symbol has later bars', async () => {
+    const { feed, published, step } = setup({
+      SPY: [bar('SPY', T0)], AAPL: [bar('AAPL', T0 + MIN)],
+    });
+    feed.subscribe(['SPY']);
+    await feed.connect();
+    step();
+    feed.subscribe(['AAPL']);
+    await new Promise((r) => setImmediate(r));
+    expect(step()).toBe(0);
+    expect(published.map((b) => b.symbol)).toEqual(['SPY', 'AAPL']);
+  });
+
+  it('keeps one timer when new symbols finish loading during playback', async () => {
+    const { feed, delays } = setup({
+      SPY: [bar('SPY', T0), bar('SPY', T0 + MIN)], AAPL: [bar('AAPL', T0)],
+    });
+    feed.subscribe(['SPY']);
+    await feed.connect();
+    feed.subscribe(['AAPL']);
+    await new Promise((r) => setImmediate(r));
+    expect(delays()).toEqual([0]);
+    feed.disconnect();
+  });
+
+  it('discards a pending cache read after disconnect', async () => {
+    const { feed, source, published, delays } = setup({});
+    let resolve!: (bars: Bar[]) => void;
+    source.readBars.mockImplementationOnce(() => new Promise<Bar[]>((r) => { resolve = r; }));
+    feed.subscribe(['SPY']);
+    const connected = feed.connect();
+    feed.disconnect();
+    resolve([bar('SPY', T0)]);
+    await connected;
+    expect(delays()).toHaveLength(0);
+    expect(published).toHaveLength(0);
+    expect(feed.position).toBeNull();
+  });
+
   it('publishes bars minute by minute, re-stamped as the minute ending at publish time', async () => {
     const { feed, published, step } = setup({ SPY: [bar('SPY', T0), bar('SPY', T0 + MIN, 101)] });
     feed.subscribe(['SPY']);

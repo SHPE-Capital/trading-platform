@@ -56,10 +56,14 @@ simulated orders and orders on your own Alpaca paper account.
    needs **no Alpaca account**. Nobody shares the club account, and nobody fights over
    Alpaca's one-data-stream-per-account limit.
 2. **Seed the market data.** With no keys the runner replays cached 1-minute bars (default:
-   the last five days). Run `npm run data:pull` once per machine. The replay runs at real
-   speed by default (one bar per minute), which is too slow for a lesson: set
-   `REPLAY_SPEED=60` (or higher) in `backend/.env`, and `REPLAY_FROM`/`REPLAY_TO` to pick a
-   day with plenty of movement. This also makes the lesson work outside market hours.
+   the last five days). Run `npm run data:pull` from `backend/` once per machine,
+   seeding **SPY and AAPL** for the reference strategy (or the symbols learners choose).
+   Follow [local data seeding](../guides/local-development.md#seeding-replay-data)
+   for the hosted-cache credentials. The replay runs at real speed by default
+   (one bar per minute), which is too slow for a lesson: set `REPLAY_SPEED=60`
+   (or higher), `REPLAY_FROM`, and `REPLAY_TO` in the **launcher's shell** before
+   `npm run dev:stack`. Docker does not forward those settings from `backend/.env`.
+   Choose a seeded day with plenty of movement. This also makes the lesson work outside market hours.
    Learners with their own free Alpaca data key can add `LOCAL_STREAM_DATA=1` to trade the live
    IEX stream instead (market hours only).
 3. **Restarts.** After you edit backend code you must restart the backend. With the Docker
@@ -73,6 +77,35 @@ simulated orders and orders on your own Alpaca paper account.
 6. **Dry-run the steps** yourself once, on the replay settings you will teach with. Every code
    block in `lesson-steps.md` was compiled step by step, but your environment is the one that
    matters.
+
+## Verify the reference before writing your own
+
+Choose **Beginner Reversal (course)** on Strategies, keep the default SPY/AAPL
+symbols and one-share size/cap, save a configuration, and start its selected
+version on paper. A fresh runner waits for this first subscription, then starts
+cached playback automatically. It needs two distinct bars to make its first
+decision and a later bar to fill a queued simulator order. Accelerated replay
+still uses wall-clock risk cooldowns, so a `60x` replay can skip orders during
+the default five-second cooldown. A completed replay is finite; restart the
+paper runner to replay the selected window again.
+
+On Backtests, choose the same reference (or its saved configuration), select
+the exact seeded date range, and run. Cached complete days work without Alpaca
+data keys; an uncovered range needs personal data credentials. Wait for the
+worker's result, inspect orders/fills, and **Save** it to retain it. See
+[backtesting](../guides/backtesting.md) for the API and CLI workflows.
+
+For a code-level check without Docker, credentials, or broker orders, run from
+`backend/`:
+
+```text
+npm test -- --runInBand src/tests/int/beginnerTrading.test.ts src/tests/adapters/replayBarFeed.test.ts
+```
+
+These tests exercise cached historical backtesting, a strategy launched after
+an empty replay boot, journaled local fills, and the paper adapter's submission
+path with mocked HTTP responses. They do not establish connectivity to your
+running database or personal Alpaca account.
 
 ## Making it easy to follow along
 

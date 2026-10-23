@@ -57,6 +57,8 @@ export class ReplayBarFeed {
   private cursor = 0;
   private handle: unknown = null;
   private running = false;
+  /** Ignore cache reads that finish after this connection has been stopped. */
+  private generation = 0;
   /** Original period start the replay resumes from; advances past each published minute. */
   private resumeFrom: number;
 
@@ -82,17 +84,18 @@ export class ReplayBarFeed {
   }
 
   async connect(): Promise<void> {
+    if (this.running) return;
     this.running = true;
     await this._load([...this.subscribed]);
     logger.info("ReplayBarFeed: replaying cached bars", {
       from: msToIso(this.window.fromMs), to: msToIso(this.window.toMs),
       speed: this.window.speed, symbols: [...this.subscribed], minutes: this.keys.length,
     });
-    this._scheduleNext(0);
   }
 
   disconnect(): void {
     this.running = false;
+    this.generation++;
     if (this.handle !== null) this.timers.clearTimeout(this.handle);
     this.handle = null;
   }
@@ -103,6 +106,7 @@ export class ReplayBarFeed {
   }
 
   private async _load(symbols: Symbol[]): Promise<void> {
+    const generation = this.generation;
     // Symbols added mid-replay join from the current position, not the start.
     const from = this.resumeFrom;
     for (const symbol of symbols) {
@@ -113,6 +117,8 @@ export class ReplayBarFeed {
         logger.error("ReplayBarFeed: could not read cached bars", { symbol, err: String(err) });
         continue;
       }
+      if (!this.running || generation !== this.generation) return;
+      if (!this.subscribed.has(symbol)) continue;
       if (bars.length === 0) {
         logger.warn("ReplayBarFeed: no cached bars for symbol in the replay window — run `npm run data:pull`", { symbol });
       }
@@ -125,10 +131,13 @@ export class ReplayBarFeed {
     // The schedule holds only unpublished minutes, so it is the whole queue.
     this.keys = [...this.schedule.keys()].filter((k) => k >= this.resumeFrom).sort((a, b) => a - b);
     this.cursor = 0;
+    // The normal platform boots with no runs. A strategy launched from the UI
+    // must start an idle feed, including after an earlier replay has finished.
+    this._scheduleNext(0);
   }
 
   private _scheduleNext(delayMs: number): void {
-    if (!this.running) return;
+    if (!this.running || this.handle !== null) return;
     if (this.cursor >= this.keys.length) {
       logger.info("ReplayBarFeed: replay finished");
       return;

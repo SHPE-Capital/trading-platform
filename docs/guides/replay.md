@@ -32,6 +32,11 @@ The feed subscribes to their symbols. This is useful for inspecting decisions;
 use [backtesting](backtesting.md) for a queued, historical experiment with a
 result report.
 
+A fresh runner can start with no subscriptions: launching the first strategy
+loads its cached symbols and starts playback. Additional symbols join from the
+current replay position. The selected window plays once; restart the paper
+runner to replay that window again for an already-subscribed symbol.
+
 ## Benchmark recordings
 
 Use [the latency runbook](latency-benchmark.md) for `bench:capture`,
