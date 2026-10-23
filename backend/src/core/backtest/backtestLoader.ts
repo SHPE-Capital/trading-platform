@@ -335,6 +335,14 @@ export class BacktestLoader {
     timeframe: string,
   ): AsyncGenerator<Bar[]> {
     const baseUrl = "https://data.alpaca.markets/v2";
+    if (!env.alpacaDataKey || !env.alpacaDataSecret) {
+      throw new Error(
+        `BacktestLoader: historical bars for ${symbol} (${startDate} to ${endDate}) are not fully cached, ` +
+        "and Alpaca market-data credentials are not configured. Set your personal ALPACA_DATA_KEY and " +
+        "ALPACA_DATA_SECRET in backend/.env, then restart npm run dev:stack; or seed the local bar cache " +
+        "with npm run data:pull for this symbol and date range.",
+      );
+    }
     const headers = {
       "APCA-API-KEY-ID": env.alpacaDataKey,
       "APCA-API-SECRET-KEY": env.alpacaDataSecret,
@@ -358,6 +366,13 @@ export class BacktestLoader {
       const response = await this._fetchWithRetry(url, { headers });
 
       if (!response.ok) {
+        if (response.status === 401) {
+          throw new Error(
+            `BacktestLoader: Alpaca rejected the market-data credentials for ${symbol} (401 Unauthorized). ` +
+            "Check your personal ALPACA_DATA_KEY and ALPACA_DATA_SECRET, then restart npm run dev:stack. " +
+            "This is a market-data authentication failure, not an app login failure.",
+          );
+        }
         const text = await response.text();
         throw new Error(
           `BacktestLoader: failed to fetch bars for ${symbol} | Status: ${response.status} ${response.statusText} | Body: ${text}`,

@@ -2,6 +2,8 @@ jest.mock('../../config/env', () => ({
   env: {
     alpacaApiKey: 'test-key',
     alpacaApiSecret: 'test-secret',
+    alpacaDataKey: 'test-data-key',
+    alpacaDataSecret: 'test-data-secret',
     alpacaTradingMode: 'paper',
     alpacaPaperBaseUrl: 'https://paper-api.alpaca.markets',
     alpacaLiveBaseUrl: 'https://api.alpaca.markets',
@@ -26,6 +28,7 @@ jest.mock('../../config/env', () => ({
 }));
 
 import { BacktestLoader } from '../../core/backtest/backtestLoader';
+import { env } from '../../config/env';
 
 const START = '2024-01-15T09:00:00Z';
 const END = '2024-01-15T16:00:00Z';
@@ -36,6 +39,21 @@ function alpacaBar(isoTs: string, close = 100) {
 
 beforeEach(() => {
   global.fetch = jest.fn();
+  Object.assign(env, { alpacaDataKey: 'test-data-key', alpacaDataSecret: 'test-data-secret' });
+});
+
+describe('market-data authentication', () => {
+  it('explains missing data credentials without issuing an unauthenticated request', async () => {
+    Object.assign(env, { alpacaDataKey: '', alpacaDataSecret: '' });
+    await expect(new BacktestLoader().loadBars(['AAPL'], START, END)).rejects.toThrow(/AAPL.*not fully cached.*ALPACA_DATA_KEY/);
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it('explains rejected credentials without returning the upstream HTML error page', async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({ ok: false, status: 401 });
+    await expect(new BacktestLoader().loadBars(['AAPL'], START, END)).rejects.toThrow(/Alpaca rejected.*AAPL.*401 Unauthorized/);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('loadBars: success', () => {

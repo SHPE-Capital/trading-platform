@@ -113,6 +113,15 @@ runtime. Personal paper execution commands live in
 [paper trading](live-paper-trading.md#use-your-personal-alpaca-paper-account-locally).
 Keep credentials out of code, frontend variables, screenshots and commits.
 
+If a backtest reports missing market-data credentials, its symbol/date range is
+not fully covered by the local cache. Add personal `ALPACA_DATA_KEY` and
+`ALPACA_DATA_SECRET` to `backend/.env`, stop the running launcher, and rerun
+`npm run dev:stack` so the worker receives them. Restarting only the worker does
+not inject newly edited `.env` credentials. Alternatively, seed that exact
+symbol/date range from the hosted cache as described below. An Alpaca `401`
+means the supplied data credentials were rejected; signing into the app again
+does not resolve it. Fully cached historical ranges work without Alpaca keys.
+
 ### Seeding replay data
 
 `data:pull` copies bars already cached by the hosted platform into your local

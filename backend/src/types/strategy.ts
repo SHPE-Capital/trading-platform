@@ -27,7 +27,8 @@ export type StrategyType =
   | "market_making"
   | "neural_network"
   | "minute_reversal"
-  | "beginner_reversal";
+  | "beginner_reversal"
+  | "tutorial";
 
 /** Strategy lifecycle status */
 export type StrategyRunStatus = "idle" | "running" | "paused" | "stopped" | "error";
