@@ -10,6 +10,7 @@
  * would force a VERSION bump for no behaviour change.
  */
 
+import { mcarrascoReversalManifest } from "../strategies/mcarrasco_reversal/manifest";
 import { DEFAULT_PAIRS_CONFIG, createPairsConfig } from "../strategies/pairs/pairsConfig";
 import { PairsStrategy } from "../strategies/pairs/pairsStrategy";
 import type { PairsStrategyConfig } from "../strategies/pairs/pairsTypes";
@@ -23,6 +24,7 @@ import {
 import type { MinuteReversalConfig } from "../strategies/minuteReversal/minuteReversalTypes";
 import { beginnerReversalManifest } from "../strategies/beginnerReversal/manifest";
 import { asProblem, type StrategyManifest } from "./strategyManifest";
+
 
 const pairsManifest: StrategyManifest = {
   type: "pairs_trading",
@@ -75,6 +77,7 @@ export const STRATEGY_CATALOG: readonly StrategyManifest[] = [
   pairsManifest,
   minuteReversalManifest,
   beginnerReversalManifest,
+  mcarrascoReversalManifest,
 ];
 
 const seen = new Set<string>();
