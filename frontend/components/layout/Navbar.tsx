@@ -56,7 +56,7 @@ export default function Navbar() {
   return (
     <nav className="sticky top-0 z-50 flex h-14 items-center justify-between border-b border-zinc-200 bg-white px-6 dark:border-zinc-800 dark:bg-zinc-950">
       {/* Brand */}
-      <Link href="/dashboard" className="text-sm font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
+      <Link href="/dashboard" className="shrink-0 whitespace-nowrap text-sm font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
         {config.appName}
       </Link>
 
@@ -69,7 +69,7 @@ export default function Navbar() {
               <Link
                 href={href}
                 className={[
-                  "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                  "whitespace-nowrap rounded-md px-2.5 py-1.5 text-sm font-medium transition-colors 2xl:px-3",
                   isActive
                     ? "bg-zinc-100 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-50"
                     : "text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-50",
@@ -82,8 +82,9 @@ export default function Navbar() {
         })}
       </ul>
 
-      {/* System health + account */}
-      <div className="flex items-center gap-4 text-xs text-zinc-500 dark:text-zinc-400">
+      {/* System health + account. Below 2xl the fills target and the user's name
+          move into tooltips so the bar stays on one line at 1280px. */}
+      <div className="flex shrink-0 items-center gap-3 whitespace-nowrap text-xs text-zinc-500 dark:text-zinc-400 2xl:gap-4">
         {data && (
           <div className="flex items-center gap-2 whitespace-nowrap" title={fillsWithAccount ? `${data.title} ${fillsWithAccount}.` : data.title}>
             <span
@@ -92,7 +93,7 @@ export default function Navbar() {
             >
               {data.label}
             </span>
-            {fills && <span>{fills}</span>}
+            {fills && <span className="hidden 2xl:inline">{fills}</span>}
           </div>
         )}
         <div className="flex items-center gap-2">
@@ -102,8 +103,8 @@ export default function Navbar() {
 
         {isConfigured && (
           user ? (
-            <div className="flex items-center gap-2">
-              <span className="text-zinc-600 dark:text-zinc-300">
+            <div className="flex items-center gap-2" title={user.displayName ?? user.email}>
+              <span className="hidden text-zinc-600 dark:text-zinc-300 2xl:inline">
                 {user.displayName ?? user.email}
               </span>
               {user.role === "lead" && (
