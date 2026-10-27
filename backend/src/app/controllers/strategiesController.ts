@@ -90,7 +90,7 @@ export async function startStrategyRun(req: Request, res: Response): Promise<voi
   }
   const configId = strategyId;
 
-  const { orchestrator, liveRuns, executionMode, portfolioState } = req.app.locals.ctx as AppContext;
+  const { orchestrator, liveRuns, executionMode, portfolioState, marketData } = req.app.locals.ctx as AppContext;
   if (!orchestrator || !liveRuns) {
     res.status(503).json({ error: "Orchestrator not available in this runtime mode" });
     return;
@@ -99,6 +99,15 @@ export async function startStrategyRun(req: Request, res: Response): Promise<voi
     res.status(403).json({
       error: "Self-service starts are paper-only",
       detail: "Real-money runs must be started through lead approval.",
+    });
+    return;
+  }
+  // A run on a runner with no data would sit silently and never trade.
+  const dataStatus = marketData?.status();
+  if (dataStatus?.source === "none") {
+    res.status(503).json({
+      error: "No market data on this runner, so the run would never trade. Add your own Alpaca paper keys and restart the stack.",
+      detail: dataStatus.message,
     });
     return;
   }
@@ -192,7 +201,7 @@ export async function startStrategyRun(req: Request, res: Response): Promise<voi
     expiresAt,
     versionId: version.id,
     ownerId: req.user!.id,
-    meta: { sandbox: true },
+    meta: { sandbox: true, ...(marketData && { marketData: marketData.runStamp() }) },
     allocatedCapital: allocatedCapital(effectiveConfig, portfolioState?.getSnapshot().equity),
     ...liveRuns.leaseFields(),
   };

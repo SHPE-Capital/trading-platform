@@ -53,10 +53,11 @@ export function loadDataCredentials() {
   const pick = (name) => process.env[name] || file[name] || "";
   const key = pick("ALPACA_DATA_KEY") || pick("ALPACA_API_KEY");
   const secret = pick("ALPACA_DATA_SECRET") || pick("ALPACA_API_SECRET");
-  const streamOptIn = pick("LOCAL_STREAM_DATA") === "1";
-  if (!key || !secret) return { key: "", secret: "", source: null, streamOptIn };
+  // The paper runner streams live data unless turned off with LOCAL_STREAM_DATA=0.
+  const stream = pick("LOCAL_STREAM_DATA") !== "0";
+  if (!key || !secret) return { key: "", secret: "", source: null, stream };
   const fromShell = Boolean(process.env.ALPACA_DATA_KEY || process.env.ALPACA_API_KEY);
-  return { key, secret, source: fromShell ? "shell" : "backend/.env", streamOptIn };
+  return { key, secret, source: fromShell ? "shell" : "backend/.env", stream };
 }
 
 /** Account numbers only one deployment may use, read from the backend's own list. */

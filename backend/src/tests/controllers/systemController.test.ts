@@ -145,6 +145,26 @@ describe('getSystemStatus: sim book', () => {
   });
 });
 
+describe('getSystemStatus: market data', () => {
+  it("reports the trading runtime's market data status", async () => {
+    mockSupabaseOk();
+    const marketData = { status: () => ({ source: 'alpaca-stream', feed: 'iex', state: 'live' }) };
+    const res = mockRes();
+    const req = { app: { locals: { ctx: { executionTarget: 'sim', marketData } } } } as unknown as Request;
+    await getSystemStatus(req, res);
+    const body = (res.json as jest.Mock).mock.calls[0][0];
+    expect(body.marketData).toEqual({ source: 'alpaca-stream', feed: 'iex', state: 'live' });
+  });
+
+  it('reports null on a process with no market data (the API-only server)', async () => {
+    mockSupabaseOk();
+    mockAlpacaOk();
+    const res = mockRes();
+    await getSystemStatus(mockReq(), res);
+    expect((res.json as jest.Mock).mock.calls[0][0].marketData).toBeNull();
+  });
+});
+
 describe('getSystemStatus: Alpaca error codes', () => {
   it('maps 401 to an invalid-credentials message', async () => {
     mockSupabaseOk();

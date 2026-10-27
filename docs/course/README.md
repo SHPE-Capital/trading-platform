@@ -52,16 +52,15 @@ simulated orders and orders on your own Alpaca paper account.
 1. **Run it locally, in sim.** Each learner (or pair) runs their own stack: `npm run dev:stack`
    ([local development](../guides/local-development.md)), or the
    [no-Docker path](../guides/local-development-no-docker.md) on a locked-down laptop. The
-   paper runner starts with `EXECUTION_TARGET=sim`, which fills orders in a local book and
-   needs **no Alpaca account**. Nobody shares the club account, and nobody fights over
-   Alpaca's one-data-stream-per-account limit.
-2. **Seed the market data.** With no keys the runner replays cached 1-minute bars (default:
-   the last five days). Run `npm run data:pull` once per machine. The replay runs at real
-   speed by default (one bar per minute), which is too slow for a lesson: set
-   `REPLAY_SPEED=60` (or higher) in `backend/.env`, and `REPLAY_FROM`/`REPLAY_TO` to pick a
-   day with plenty of movement. This also makes the lesson work outside market hours.
-   Learners with their own free Alpaca data key can add `LOCAL_STREAM_DATA=1` to trade the live
-   IEX stream instead (market hours only).
+   paper runner starts with `EXECUTION_TARGET=sim`, which fills orders in a local book.
+   Nobody shares the club account, and nobody fights over Alpaca's
+   one-data-stream-per-account limit.
+2. **Market data: every learner brings their own free Alpaca paper keys.** They go in
+   `backend/.env` as `ALPACA_DATA_KEY`/`ALPACA_DATA_SECRET` ([setup](setup.md#3-get-your-own-alpaca-paper-keys));
+   without them the runner has no data and refuses to start strategies. Live data is the
+   IEX stream and only moves during market hours, so schedule the "watch it trade" steps
+   for market hours. Outside them, run the same strategy as a **backtest** over a past week
+   instead; the navbar badge shows which situation a learner is in.
 3. **Restarts.** After you edit backend code you must restart the backend. With the Docker
    stack on Windows, edits on the host may not trigger nodemon in the container, so be ready
    to restart the container yourself (`docker compose restart <service>`). Rehearse this; a

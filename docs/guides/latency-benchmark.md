@@ -63,7 +63,8 @@ Synthetic rates are workload parameters, not a model of IEX. Reports say so.
 
 Alpaca's free plan allows **one** market-data stream per account. Before
 capturing, make sure nothing else is streaming with the same keys. The local
-paper runner only streams if you started the stack with `LOCAL_STREAM_DATA=1`.
+paper runner streams by default: stop the stack, or start it with
+`LOCAL_STREAM_DATA=0`, before a standalone capture.
 
 ```sh
 # backend/.env (or your shell): ALPACA_DATA_KEY / ALPACA_DATA_SECRET = YOUR keys
@@ -99,7 +100,7 @@ broker calls, without opening a second stream:
 
 ```sh
 # Local stack (repo root):
-LATENCY_PROBE=true LATENCY_RECORD=true LOCAL_STREAM_DATA=1 npm run dev:stack
+LATENCY_PROBE=true LATENCY_RECORD=true npm run dev:stack
 # → backend/artifacts/latency/<run-id>/ ; metrics.json refreshes every 60 s
 ```
 

@@ -358,6 +358,15 @@ export class BacktestLoader {
       const response = await this._fetchWithRetry(url, { headers });
 
       if (!response.ok) {
+        // Missing or rejected keys answer with an HTML page; say what to do instead.
+        if (response.status === 401 || response.status === 403) {
+          throw new Error(
+            `BacktestLoader: cannot fetch bars for ${symbol} — Alpaca rejected the data request ` +
+              `(${response.status}), so this runner has no usable Alpaca data keys and ${symbol} is not ` +
+              `in the local bar cache for ${startDate}..${endDate}. Seed the cache with \`npm run data:pull\`, ` +
+              `or start the stack with your own Alpaca keys.`,
+          );
+        }
         const text = await response.text();
         throw new Error(
           `BacktestLoader: failed to fetch bars for ${symbol} | Status: ${response.status} ${response.statusText} | Body: ${text}`,

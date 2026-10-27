@@ -15,6 +15,7 @@ import { useState, useEffect } from "react";
 import type { SystemStatus, ServiceHealth } from "../../types/api";
 import { formatIsoTimestamp } from "../../utils/dates";
 import { useWebSocket } from "../../hooks/useWebSocket";
+import { describeFills, describeMarketData } from "../../utils/marketData";
 
 interface Props {
   readonly status: SystemStatus | null;
@@ -63,6 +64,8 @@ export default function SystemHealthCard({ status, isLoading }: Props) {
   }
 
   const banner = BANNER[status.status];
+  const data = describeMarketData(status.marketData);
+  const fills = describeFills(status.execution);
 
   return (
     <div className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
@@ -83,6 +86,15 @@ export default function SystemHealthCard({ status, isLoading }: Props) {
           />
         )}
       </div>
+
+      {data && (
+        <div className="mt-4 rounded border border-zinc-200 px-2.5 py-2 text-xs dark:border-zinc-800">
+          <p className="font-medium text-zinc-700 dark:text-zinc-200">
+            Market data: {data.label}{fills && <span className="font-normal text-zinc-500"> · {fills}</span>}
+          </p>
+          <p className="mt-0.5 text-zinc-500 dark:text-zinc-400">{data.title}</p>
+        </div>
+      )}
 
       <p className="mt-4 text-xs text-zinc-400">
         Mode: <span className="font-medium capitalize text-zinc-600 dark:text-zinc-300">{status.mode}</span>

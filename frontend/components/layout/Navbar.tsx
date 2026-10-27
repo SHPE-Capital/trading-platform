@@ -15,6 +15,14 @@ import { usePathname } from "next/navigation";
 import { config } from "../../config";
 import { useSystemHealthData } from "../../context/DataContext";
 import { useAuth } from "../../context/AuthContext";
+import { describeFills, describeMarketData, type DataTone } from "../../utils/marketData";
+
+const TONE_CLASSES: Record<DataTone, string> = {
+  ok:      "border-green-300 bg-green-50 text-green-700 dark:border-green-800 dark:bg-green-950 dark:text-green-300",
+  neutral: "border-zinc-300 bg-zinc-50 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300",
+  warn:    "border-yellow-300 bg-yellow-50 text-yellow-800 dark:border-yellow-800 dark:bg-yellow-950 dark:text-yellow-300",
+  error:   "border-red-300 bg-red-50 text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-300",
+};
 
 const NAV_LINKS = [
   { href: "/dashboard",  label: "Dashboard"   },
@@ -41,6 +49,9 @@ export default function Navbar() {
     status.status === "healthy"  ? status.mode :
     status.status === "degraded" ? "Degraded" :
                                     "Unhealthy";
+  const data = describeMarketData(status?.marketData);
+  const fills = describeFills(status?.execution, false);
+  const fillsWithAccount = describeFills(status?.execution);
 
   return (
     <nav className="sticky top-0 z-50 flex h-14 items-center justify-between border-b border-zinc-200 bg-white px-6 dark:border-zinc-800 dark:bg-zinc-950">
@@ -73,6 +84,17 @@ export default function Navbar() {
 
       {/* System health + account */}
       <div className="flex items-center gap-4 text-xs text-zinc-500 dark:text-zinc-400">
+        {data && (
+          <div className="flex items-center gap-2 whitespace-nowrap" title={fillsWithAccount ? `${data.title} ${fillsWithAccount}.` : data.title}>
+            <span
+              data-testid="market-data-badge"
+              className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${TONE_CLASSES[data.tone]}`}
+            >
+              {data.label}
+            </span>
+            {fills && <span>{fills}</span>}
+          </div>
+        )}
         <div className="flex items-center gap-2">
           <span className={`h-2 w-2 rounded-full ${dotColor}`} />
           <span className="capitalize">{label}</span>

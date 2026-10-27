@@ -161,13 +161,6 @@ export const env = {
   /** How often a trading runtime copies its broker's orders and fills into the ledger. */
   brokerSyncIntervalMs: optionalNumber("BROKER_SYNC_INTERVAL_MS", 60_000),
 
-  // Sim replay — used by a sim runtime with no data keys. Cached 1-minute bars
-  // from REPLAY_FROM to REPLAY_TO are published as if live, REPLAY_SPEED times
-  // faster than they happened.
-  replayFrom: optional("REPLAY_FROM", ""),
-  replayTo: optional("REPLAY_TO", ""),
-  replaySpeed: optionalNumber("REPLAY_SPEED", 1),
-
   // Sim fills. With live data a sim runtime prices orders on the stream's
   // quotes and trades, assuming SIM_LATENCY_MS from decision to market; a
   // replay has bars only and fills on the next bar.

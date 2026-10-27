@@ -91,10 +91,11 @@ launches the gated real-trading entry point. Stop each process with Ctrl+C.
 ## Market data and execution
 
 Direct processes read `backend/.env`. There is **no Docker launcher filtering**
-or `LOCAL_STREAM_DATA` opt-in on this path:
+or `LOCAL_STREAM_DATA` switch on this path:
 
-- With no data or trading credentials, a sim runner replays cached bars. Seed
-  your development target using [data-pull instructions](local-development.md#seeding-replay-data),
+- With no data or trading credentials, a trading runner receives no market data
+  and refuses to start strategies. Backtests can still run over seeded bars: see
+  [data-pull instructions](local-development.md#seeding-cached-bars),
   substituting its hosted-development Supabase credentials for the local target.
 - With personal `ALPACA_DATA_KEY` and `ALPACA_DATA_SECRET`, the runner streams
   live data and backtests can fetch historical bars. Keep `EXECUTION_TARGET=sim`
@@ -109,8 +110,6 @@ or `LOCAL_STREAM_DATA` opt-in on this path:
 Broker preflight still refuses protected accounts outside their permitted
 origin. Environment-file keys are gitignored; do not share them in code.
 
-For cached-bar replay, remove data **and trading** credentials, then set
-`REPLAY_FROM`, `REPLAY_TO`, and `REPLAY_SPEED` in `backend/.env` or the shell.
 For managing runs, continue with [paper trading](live-paper-trading.md).
 Docker volume backups, automatic port selection, `doctor`, and `dev:reset`
 belong to the Docker path and do not manage this hosted project.

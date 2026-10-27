@@ -177,8 +177,8 @@ orders with the same quote model, applied as quotes and trades arrive
   open of the bar in progress, which can predate a decision made mid-minute.
 
 Fill counts and costs are logged when the runtime stops.
-`SIM_EXECUTION_MODEL=bar` restores next-bar fills. A keyless sim replays bars
-only, so it always uses the bar model.
+`SIM_EXECUTION_MODEL=bar` restores next-bar fills. A sim runtime without data
+keys receives no market data and refuses new runs.
 
 ## Not covered yet
 

@@ -414,7 +414,7 @@ export async function approveProposal(req: Request, res: Response): Promise<void
     return;
   }
 
-  const { orchestrator, liveRuns, executionMode, portfolioState } = req.app.locals.ctx as AppContext;
+  const { orchestrator, liveRuns, executionMode, portfolioState, marketData } = req.app.locals.ctx as AppContext;
   if (!orchestrator || !liveRuns) {
     res.status(503).json({
       error: "Orchestrator not available in this runtime mode",
@@ -553,6 +553,7 @@ export async function approveProposal(req: Request, res: Response): Promise<void
       versionId: version.id,
       proposalId: proposal.id,
       ownerId: proposal.requestedBy,
+      ...(marketData && { meta: { marketData: marketData.runStamp() } }),
       allocatedCapital: allocatedCapital(config as { riskBudget?: { maxCapitalPct?: number } }, portfolioState?.getSnapshot().equity),
       ...liveRuns.leaseFields(),
     };

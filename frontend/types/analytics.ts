@@ -108,6 +108,8 @@ export interface RunSummary {
   versionNumber: number | null;
   sandbox: boolean;
   backfill: boolean;
+  /** The data the run traded on; null for runs started before this was recorded. */
+  marketData?: { source: string; feed: string | null } | null;
   startedAt: number | null;
   stoppedAt: number | null;
   pnl: number;

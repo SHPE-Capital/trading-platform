@@ -97,6 +97,11 @@ export class AlpacaMarketDataAdapter {
     this.url = options.url;
   }
 
+  /** True while the socket is open and authenticated. */
+  get connected(): boolean {
+    return this.isConnected;
+  }
+
   /**
    * Opens the WebSocket connection to the Alpaca data stream and authenticates.
    * @returns Promise that resolves when the connection is authenticated
