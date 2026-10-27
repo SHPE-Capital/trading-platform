@@ -228,6 +228,7 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
     : null;
   const marketDataAdapter = alpacaData ?? {
     subscribe: (_symbols: string[]): void => {},
+    unsubscribe: (_symbols: string[]): void => {},
     connect: async (): Promise<void> => {
       logger.error("bootstrap: no Alpaca data keys — this runner receives no market data. " +
         "Add your own Alpaca paper keys (ALPACA_DATA_KEY/ALPACA_DATA_SECRET) and restart.");
@@ -356,6 +357,10 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
     subscribe: (symbols) => {
       marketData.noteSubscribed(symbols);
       marketDataAdapter.subscribe(symbols);
+    },
+    unsubscribe: (symbols) => {
+      marketData.noteUnsubscribed(symbols);
+      marketDataAdapter.unsubscribe(symbols);
     },
     leases: {
       claimOrphans: () => claimOrphanedRuns(owner, mode, env.runtimeOrigin, leaseSeconds, brokerAccount),

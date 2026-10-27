@@ -85,6 +85,10 @@ export class MarketDataMonitor {
     for (const s of symbols) this.symbols.add(s);
   }
 
+  noteUnsubscribed(symbols: readonly string[]): void {
+    for (const s of symbols) this.symbols.delete(s);
+  }
+
   runStamp(): RunMarketData {
     return this.deps.source === "none"
       ? { source: "none", feed: null }

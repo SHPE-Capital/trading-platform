@@ -51,6 +51,13 @@ describe('MarketDataMonitor', () => {
     expect(m.status()).toMatchObject({ state: 'idle', subscribedSymbols: 0 });
   });
 
+  it('goes back to idle once every subscribed symbol is released', () => {
+    const { m } = monitor();
+    m.noteSubscribed(['SPY', 'QQQ']);
+    m.noteUnsubscribed(['SPY', 'QQQ']);
+    expect(m.status()).toMatchObject({ state: 'idle', subscribedSymbols: 0 });
+  });
+
   it('is live while bars keep arriving', () => {
     const { m, bar, advance } = monitor();
     m.noteSubscribed(['SPY', 'QQQ', 'SPY']);
