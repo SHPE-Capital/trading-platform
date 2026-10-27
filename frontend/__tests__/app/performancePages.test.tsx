@@ -13,6 +13,7 @@ vi.mock("../../services/performanceService", () => ({
 }));
 vi.mock("../../services/strategiesService", () => ({
   fetchStrategyRun: vi.fn(),
+  fetchStrategyDefaults: vi.fn(async () => ({ actions: { backtest: { allowed: true } } })),
   stopStrategyRun: vi.fn(),
 }));
 vi.mock("../../services/portfolioService", () => ({ fetchOrders: vi.fn(async () => []) }));

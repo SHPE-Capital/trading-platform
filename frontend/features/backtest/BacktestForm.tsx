@@ -19,6 +19,8 @@
 
 import { useState, useEffect, useMemo } from "react";
 import type { BacktestConfig } from "../../types/api";
+import { useStrategyTypes } from "../../hooks/useStrategyTypes";
+import type { StrategyType, ParamSpec } from "../../types/strategy";
 import { useStrategyConfigs } from "../../hooks/useStrategyConfigs";
 import { useStrategyVersions } from "../../hooks/useStrategyVersions";
 import { daysAgoString } from "../../utils/dates";
@@ -30,15 +32,31 @@ interface Props {
 }
 
 export default function BacktestForm({ onSubmit, isLoading }: Props) {
-  const { strategies, definition, isLoading: configsLoading } = useStrategyConfigs("pairs_trading");
+  const { types, isLoading: typesLoading } = useStrategyTypes();
+  const options = types.filter((t) => t.actions?.backtest.allowed === true &&
+    (t.type === "pairs_trading" || (t.params?.length ?? 0) > 0));
+  const [selectedType, setSelectedType] = useState<StrategyType>("pairs_trading");
+  const activeType = options.find((t) => t.type === selectedType)?.type ?? options[0]?.type;
+  return <div className="flex flex-col gap-4">
+    <Field label="Strategy Type">
+      <select aria-label="Strategy Type" className={inputClass} value={activeType ?? ""} onChange={(e) => setSelectedType(e.target.value as StrategyType)} disabled={typesLoading}>
+        {options.map((t) => <option key={t.type} value={t.type}>{t.label}{t.status === "experimental" ? " (experimental)" : t.status === "retired" ? " (retired)" : ""}</option>)}
+      </select>
+    </Field>
+    {activeType ? <StrategyBacktestForm key={activeType} type={activeType} onSubmit={onSubmit} isLoading={isLoading} /> :
+      <p className="text-sm text-zinc-500">{typesLoading ? "Loading strategy types?" : "No backtestable strategies available."}</p>}
+  </div>;
+}
+
+function StrategyBacktestForm({ type, onSubmit, isLoading }: Props & { type: StrategyType }) {
+  const { strategies, definition, isLoading: configsLoading, save } = useStrategyConfigs(type);
+  const [genericConfig, setGenericConfig] = useState<Record<string, unknown>>({});
+  const [formError, setFormError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const [selectedId, setSelectedId] = useState<string>("new");
 
-  // Newest version of the selected saved config — tagged onto the run so a
-  // later explicit save links back to it (proposal pages look backtests up by
-  // strategy_version_id). Best-effort: if fields are edited below after
-  // picking a config, this still tags the run against that version even
-  // though the tested config may now differ slightly from what's saved.
+  // Attribute a result to an immutable version only when its effective config matches.
   const { versions: selectedVersions } = useStrategyVersions(selectedId !== "new" ? selectedId : null);
   const latestVersionId = selectedVersions[0]?.id;
 
@@ -83,6 +101,7 @@ export default function BacktestForm({ onSubmit, isLoading }: Props) {
 
     if (Object.keys(src).length === 0) return;
 
+    setGenericConfig({ ...definition?.defaultConfig, ...src });
     setLeg1((src.leg1Symbol as string | undefined) ?? "SPY");
     setLeg2((src.leg2Symbol as string | undefined) ?? "QQQ");
     setEntryZScore((src.entryZScore as number | undefined) ?? 2.0);
@@ -105,21 +124,22 @@ export default function BacktestForm({ onSubmit, isLoading }: Props) {
   }, [selectedId, definition, strategies]);
 
   const orderSizeConflict = useMemo(() => {
-    if (riskBudget.maxOrderNotionalPct === null) return undefined;
+    if (type !== "pairs_trading" || riskBudget.maxOrderNotionalPct === null) return undefined;
     const capUsd = initialCapital * (riskBudget.maxOrderNotionalPct / 100);
     if (tradeNotionalUsd > capUsd) {
       return `Trade notional ($${tradeNotionalUsd.toLocaleString()}) exceeds the per-order cap ($${capUsd.toLocaleString()} at ${riskBudget.maxOrderNotionalPct}%). No orders will execute.`;
     }
     return undefined;
-  }, [riskBudget.maxOrderNotionalPct, tradeNotionalUsd, initialCapital]);
+  }, [type, riskBudget.maxOrderNotionalPct, tradeNotionalUsd, initialCapital]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const selectedStrategy = strategies.find((s) => s.id === selectedId);
 
-    await onSubmit({
-      name: `${leg1}/${leg2} Pairs Backtest ${startDate} → ${endDate}`,
-      strategyConfig: {
+    const strategyConfig: Record<string, unknown> = type !== "pairs_trading" ? {
+      ...normalizeParams(genericConfig, definition?.params ?? []), type,
+      riskBudget: budgetConfig(riskBudget),
+    } : {
         type: "pairs_trading",
         name: `Pairs: ${leg1}/${leg2}`,
         symbols: [leg1, leg2],
@@ -140,14 +160,13 @@ export default function BacktestForm({ onSubmit, isLoading }: Props) {
         priceSource: "mid",
         olsWindowMs: olsWindowMins * 60_000,
         olsRecalcIntervalBars,
-        riskBudget: {
-          maxCapitalPct: riskBudget.maxCapitalPct / 100,
-          ...(riskBudget.maxOpenOrders !== null && { maxOpenOrders: riskBudget.maxOpenOrders }),
-          ...(riskBudget.maxOrderNotionalPct !== null && {
-            maxOrderNotionalPct: riskBudget.maxOrderNotionalPct / 100,
-          }),
-        },
-      },
+        riskBudget: budgetConfig(riskBudget),
+      };
+    const selectedConfig = selectedStrategy ? { ...definition?.defaultConfig, ...selectedStrategy.config, type } : undefined;
+    const matchesVersion = selectedConfig && configKey(selectedConfig) === configKey({ ...definition?.defaultConfig, ...strategyConfig });
+    await onSubmit({
+      name: `${type === "pairs_trading" ? `${leg1}/${leg2} Pairs` : definition?.label ?? type} Backtest ${startDate} to ${endDate}`,
+      strategyConfig,
       startDate: new Date(startDate).toISOString(),
       endDate: new Date(endDate).toISOString(),
       initialCapital,
@@ -155,7 +174,7 @@ export default function BacktestForm({ onSubmit, isLoading }: Props) {
       commissionPerShare: 0.005,
       ...(fillModel === "quote" && { execution: { model: "quote", latencyMs } }),
       strategyId: selectedStrategy?.id,
-      strategyVersionId: selectedStrategy ? latestVersionId : undefined,
+      strategyVersionId: matchesVersion ? latestVersionId : undefined,
       riskConfig: {
         gapBufferBps,
         spreadBufferBps,
@@ -180,9 +199,7 @@ export default function BacktestForm({ onSubmit, isLoading }: Props) {
               </span>
             )}
           </div>
-          <select className={inputClass} value="pairs_trading" disabled>
-            <option value="pairs_trading">Pairs Trading</option>
-          </select>
+          <p className="text-sm">{definition?.label ?? type}</p>
         </div>
         <Field label="Configuration">
           {configsLoading ? (
@@ -202,8 +219,26 @@ export default function BacktestForm({ onSubmit, isLoading }: Props) {
         </Field>
       </div>
 
+      {type !== "pairs_trading" && <>
+        <Field label="Configuration name">
+          <input aria-label="Configuration name" className={inputClass} value={String(genericConfig.name ?? "")} onChange={(e) => setGenericConfig({ ...genericConfig, name: e.target.value })} required />
+        </Field>
+        {(definition?.params ?? []).map((spec) => <ParameterField key={spec.key} spec={spec} value={genericConfig[spec.key]} onChange={(value) => setGenericConfig({ ...genericConfig, [spec.key]: value })} />)}
+        {definition?.actions?.save.allowed && <button type="button" disabled={saving} className="text-left text-sm underline" onClick={async () => {
+          setSaving(true); setFormError(null);
+          try {
+            const saved = await save(String(genericConfig.name ?? definition.label), {
+              ...normalizeParams(genericConfig, definition.params ?? []), type, riskBudget: budgetConfig(riskBudget),
+            });
+            setSelectedId(saved.id);
+          }
+          catch (err) { setFormError(err instanceof Error ? err.message : "Could not save configuration"); }
+          finally { setSaving(false); }
+        }}>{saving ? "Saving?" : "Save as new configuration"}</button>}
+        {formError && <p role="alert">{formError}</p>}
+      </>}
       {/* Strategy config fields */}
-      <div className="grid grid-cols-2 gap-3 rounded-md border border-zinc-200 p-3 dark:border-zinc-700">
+      {type === "pairs_trading" && <div className="grid grid-cols-2 gap-3 rounded-md border border-zinc-200 p-3 dark:border-zinc-700">
         <Field label="Leg 1">
           <input type="text" value={leg1} onChange={(e) => setLeg1(e.target.value.toUpperCase())} className={inputClass} required />
         </Field>
@@ -234,9 +269,9 @@ export default function BacktestForm({ onSubmit, isLoading }: Props) {
             <option value="rolling_ols">Rolling OLS</option>
           </select>
         </Field>
-      </div>
+      </div>}
 
-      {hedgeRatioMethod === "rolling_ols" && (
+      {type === "pairs_trading" && hedgeRatioMethod === "rolling_ols" && (
         <div className="grid grid-cols-2 gap-3 rounded-md border border-zinc-200 p-3 dark:border-zinc-700">
           <p className="col-span-2 text-xs text-zinc-500">
             OLS estimates the hedge ratio by regressing leg 1 on leg 2 over the window below.
@@ -365,7 +400,7 @@ export default function BacktestForm({ onSubmit, isLoading }: Props) {
 
       <button
         type="submit"
-        disabled={isLoading}
+        disabled={isLoading || configsLoading || !definition}
         className="mt-2 rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-zinc-700 disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-900"
       >
         {isLoading ? "Queuing…" : "Run Backtest"}
@@ -384,4 +419,49 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       {children}
     </div>
   );
+}
+
+function ParameterField({ spec, value, onChange }: { spec: ParamSpec; value: unknown; onChange: (value: unknown) => void }) {
+  const id = `backtest-param-${spec.key}`;
+  return <div className="flex flex-col gap-1">
+    <label htmlFor={id} className="text-xs font-medium text-zinc-500">{spec.label}</label>
+    {spec.kind === "boolean" ? <input id={id} type="checkbox" checked={Boolean(value)} onChange={(e) => onChange(e.target.checked)} /> :
+      <input id={id} className={inputClass} type={spec.kind === "number" ? "number" : "text"}
+        value={Array.isArray(value) ? value.join(", ") : String(value ?? "")}
+        min={spec.min} max={spec.max} step={spec.step} required
+        onChange={(e) => onChange(spec.kind === "number" ? Number(e.target.value) : e.target.value)} />}
+    {spec.hint && <p className="text-xs text-zinc-500">{spec.hint}</p>}
+  </div>;
+}
+
+function normalizeParams(config: Record<string, unknown>, params: ParamSpec[]) {
+  const result = { ...config };
+  for (const spec of params) {
+    if (spec.kind === "symbols" && typeof result[spec.key] === "string") {
+      result[spec.key] = (result[spec.key] as string).toUpperCase().split(",").map((s) => s.trim()).filter(Boolean);
+    }
+  }
+  return result;
+}
+
+// Ignore descriptive fields; compare nested parameters independent of object key order.
+function configKey(config: Record<string, unknown>): string {
+  const { id: _id, name: _name, ...parameters } = config;
+  void _id; void _name;
+  const ordered = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(ordered);
+    if (value && typeof value === "object") return Object.fromEntries(
+      Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => [key, ordered(item)]),
+    );
+    return value;
+  };
+  return JSON.stringify(ordered(parameters));
+}
+
+function budgetConfig(risk: RiskBudgetState) {
+  return {
+    maxCapitalPct: risk.maxCapitalPct / 100,
+    ...(risk.maxOpenOrders !== null && { maxOpenOrders: risk.maxOpenOrders }),
+    ...(risk.maxOrderNotionalPct !== null && { maxOrderNotionalPct: risk.maxOrderNotionalPct / 100 }),
+  };
 }

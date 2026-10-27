@@ -25,7 +25,7 @@ export default function StrategiesPage() {
   const [selectedType, setSelectedType] = useState<StrategyType>(DEFAULT_TYPE);
 
   // A type is launchable from here when it has the bespoke form or describes its params.
-  const options = types.filter((t) => t.type === DEFAULT_TYPE || (t.params?.length ?? 0) > 0);
+  const options = types.filter((t) => t.actions?.startTrading.allowed !== false && (t.type === DEFAULT_TYPE || (t.params?.length ?? 0) > 0));
   const activeType = options.some((t) => t.type === selectedType) ? selectedType : DEFAULT_TYPE;
 
   return (

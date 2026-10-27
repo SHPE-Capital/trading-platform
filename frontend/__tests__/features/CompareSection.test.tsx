@@ -3,6 +3,9 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { PerformanceReport } from "../../types/analytics";
 
+vi.mock("../../services/strategiesService", () => ({
+  fetchStrategyDefaults: vi.fn(async (type: string) => ({ actions: { backtest: { allowed: type !== "unsupported" } } })),
+}));
 vi.mock("../../services/performanceService", () => ({ compareRunWithBacktest: vi.fn() }));
 vi.mock("../../services/backtestService", () => ({ fetchBacktest: vi.fn(), saveBacktest: vi.fn(async () => ({ id: "bt-9", alreadySaved: false })) }));
 
@@ -40,7 +43,7 @@ describe("CompareSection", () => {
     } as never);
 
     render(<CompareSection report={report} run={{ id: "run-p", strategyType: "pairs_trading" }} />);
-    await userEvent.click(screen.getByRole("button", { name: "Compare with a backtest of this window" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Compare with a backtest of this window" }));
 
     expect(perf.compareRunWithBacktest).toHaveBeenCalledWith("run-p", false);
     expect(await screen.findByText("Backtest of this window")).toBeInTheDocument();
@@ -67,7 +70,7 @@ describe("CompareSection", () => {
     } as never);
 
     render(<CompareSection report={report} run={{ id: "run-p", strategyType: "pairs_trading" }} />);
-    await userEvent.click(screen.getByRole("button", { name: "Compare with quote fills" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Compare with quote fills" }));
 
     expect(perf.compareRunWithBacktest).toHaveBeenCalledWith("run-p", false, { model: "quote" });
     expect(await screen.findByText("Backtest of this window, quote fills")).toBeInTheDocument();
@@ -82,7 +85,7 @@ describe("CompareSection", () => {
     render(<CompareSection report={report} run={{ id: "run-p", strategyType: "pairs_trading", compareQuoteBacktestId: "bt-q" }} />);
     expect(await screen.findByText(/Quote-fill backtest running/)).toBeInTheDocument();
     expect(backtests.fetchBacktest).toHaveBeenCalledWith("bt-q");
-    expect(screen.getByRole("button", { name: "Re-run with quote fills" })).toBeDisabled();
+    expect(await screen.findByRole("button", { name: "Re-run with quote fills" })).toBeDisabled();
   });
 
   it("keeps polling while the backtest is queued", async () => {
@@ -98,8 +101,8 @@ describe("CompareSection", () => {
   });
 
   it("explains when the strategy type cannot be backtested", () => {
-    render(<CompareSection report={report} run={{ id: "run-m", strategyType: "minute_reversal" }} />);
-    expect(screen.getByText(/Backtesting is not available for minute_reversal yet/)).toBeInTheDocument();
+    render(<CompareSection report={report} run={{ id: "run-m", strategyType: "unsupported" }} />);
+    expect(screen.getByText(/Backtesting is not available for unsupported yet/)).toBeInTheDocument();
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
 });

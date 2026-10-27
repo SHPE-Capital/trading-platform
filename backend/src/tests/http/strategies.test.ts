@@ -4,12 +4,18 @@ import * as repositories from "../../adapters/supabase/repositories";
 import * as review from "../../adapters/supabase/reviewRepositories";
 import { getSupabaseClient } from "../../adapters/supabase/client";
 import { PairsStrategy } from "../../strategies/pairs/pairsStrategy";
+import { strategyDefinition } from "../../config/strategyPolicy";
+import { STRATEGY_DEFINITIONS, STRATEGY_FACTORY } from "../../config/strategyDefaults";
 import { BeginnerReversalStrategy } from "../../strategies/beginnerReversal/beginnerReversalStrategy";
-import { STRATEGY_DEFINITIONS, STRATEGY_FACTORY, isLaunchable } from "../../config/strategyDefaults";
+import type { AppContext } from "../../app/context";
 
 jest.mock("../../adapters/supabase/repositories");
 jest.mock("../../adapters/supabase/reviewRepositories");
 jest.mock("../../adapters/supabase/client");
+jest.mock("../../adapters/supabase/analyticsRepository", () => ({
+  ...jest.requireActual("../../adapters/supabase/analyticsRepository"),
+  insertRunEvent: jest.fn().mockResolvedValue(undefined),
+}));
 
 const mockGetAll = repositories.getAllStrategyRuns as jest.Mock;
 const mockGetById = repositories.getStrategyRunById as jest.Mock;
@@ -87,6 +93,41 @@ describe("Strategies HTTP API", () => {
   // POST /api/strategies/start — start a run
   // -------------------------------------------------------------------------
   describe("POST /api/strategies/start", () => {
+    test("starts a saved beginner version on the paper runner using the catalog factory", async () => {
+      signedInAs();
+      mockGetStrategyById.mockResolvedValue({
+        id: "cfg-beginner", owner_id: "user-1", name: "Beginner UI check", strategy_type: "beginner_reversal",
+      });
+      (review.getStrategyVersionById as jest.Mock).mockResolvedValue({
+        id: "ver-beginner", strategyId: "cfg-beginner", config: { symbols: ["SPY"], maxPositionQty: 2 },
+      });
+      (repositories.countRunningRunsForOwner as jest.Mock).mockResolvedValue(0);
+      (repositories.insertStrategyRun as jest.Mock).mockResolvedValue(undefined);
+      const activate = jest.fn();
+      const prepare = jest.fn().mockResolvedValue(undefined);
+      const runner = createApp({
+        executionMode: "paper", executionTarget: "sim",
+        orchestrator: { hasStrategyWithConfigId: () => false },
+        liveRuns: {
+          prepare, activate,
+          leaseFields: () => ({ leaseOwner: "test-runner", leaseExpiresAt: Date.now() + 90_000 }),
+        },
+      } as unknown as AppContext);
+
+      const res = await request(runner).post("/api/strategies/start")
+        .set("Authorization", "Bearer valid")
+        .send({ strategyId: "cfg-beginner", versionId: "ver-beginner" });
+
+      expect(res.status).toBe(201);
+      expect(res.body).toMatchObject({ strategyType: "beginner_reversal", executionMode: "paper", versionId: "ver-beginner" });
+      const strategy = prepare.mock.calls[0][0];
+      expect(strategy).toBeInstanceOf(BeginnerReversalStrategy);
+      expect(strategy.config).toMatchObject({ id: "cfg-beginner", symbols: ["SPY"], qtyPerTrade: 1, maxPositionQty: 2 });
+      expect(activate).toHaveBeenCalledWith(res.body.id, strategy, expect.any(Number));
+      expect((repositories.insertStrategyRun as jest.Mock).mock.invocationCallOrder[0])
+        .toBeLessThan(activate.mock.invocationCallOrder[0]);
+    });
+
     test("returns 503 when no orchestrator context (API-only mode)", async () => {
       signedInAs();
       const res = await request(app)
@@ -158,7 +199,7 @@ describe("Strategies HTTP API", () => {
     const original = definition.status;
     afterEach(() => { definition.status = original; });
 
-    test("GET /configs/types lists ready types and hides planned ones", async () => {
+    test("GET /configs/types hides planned types and exposes the ready beginner strategy with its form", async () => {
       signedInAs();
       definition.status = "planned";
       const hidden = await request(app).get("/api/strategies/configs/types").set("Authorization", "Bearer valid");
@@ -170,11 +211,21 @@ describe("Strategies HTTP API", () => {
 
       definition.status = "ready";
       const shown = await request(app).get("/api/strategies/configs/types").set("Authorization", "Bearer valid");
-      expect(shown.body.find((d: { type: string }) => d.type === "beginner_reversal")).toMatchObject({
-        status: "ready",
-        algorithmVersion: BeginnerReversalStrategy.VERSION,
-        params: expect.arrayContaining([expect.objectContaining({ key: "qtyPerTrade" })]),
-      });
+      expect(shown.status).toBe(200);
+      expect(shown.body).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          type: "beginner_reversal",
+          status: "ready",
+          actions: expect.objectContaining({
+            save: { allowed: true }, backtest: { allowed: true }, startTrading: { allowed: true },
+          }),
+          params: expect.arrayContaining([
+            expect.objectContaining({ key: "symbols", kind: "symbols" }),
+            expect.objectContaining({ key: "qtyPerTrade", kind: "number" }),
+            expect.objectContaining({ key: "maxPositionQty", kind: "number" }),
+          ]),
+        }),
+      ]));
     });
 
     test("POST /configs refuses a planned type but accepts it once ready", async () => {
@@ -198,7 +249,7 @@ describe("Strategies HTTP API", () => {
     test("restoring a persisted run still resolves the factory for a non-ready type", () => {
       definition.status = "retired";
       expect(STRATEGY_FACTORY.beginner_reversal).toBeInstanceOf(Function);
-      expect(isLaunchable("beginner_reversal")).toBe(false);
+      expect(strategyDefinition("beginner_reversal")?.actions.startTrading.allowed).toBe(false);
     });
   });
 

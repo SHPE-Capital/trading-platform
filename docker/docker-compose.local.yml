@@ -32,6 +32,7 @@ services:
     command: ["node", "dist/index.js"]
     env_file: ../backend/.env
     environment:
+      STRATEGY_POLICY_PROFILE: development
       PORT: "8082"
     ports:
       - "8082:8082"
@@ -45,6 +46,7 @@ services:
     command: ["node", "dist/runtime/paper-trading.js"]
     env_file: ../backend/.env
     environment:
+      STRATEGY_POLICY_PROFILE: development
       PORT: "8080"
       # Production trades the club account (APP_RUNTIME_ORIGIN=aws-prod and
       # EXPECTED_BROKER_ACCOUNT come from SSM). Anywhere else the boot check
@@ -67,6 +69,7 @@ services:
     command: ["node", "dist/runtime/real-trading.js"]
     env_file: ../backend/.env
     environment:
+      STRATEGY_POLICY_PROFILE: development
       PORT: "8081"
       EXECUTION_TARGET: alpaca-live
     ports:

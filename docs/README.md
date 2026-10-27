@@ -1,34 +1,29 @@
 # Documentation
 
-| Folder | What's in it |
+Start with the task index in [guides](guides/README.md) or the component overview
+in [system architecture](architecture/design.md).
+
+| Area | Purpose |
 |---|---|
-| [guides/](guides/) | How to do things: [local development](guides/local-development.md), [deployment](guides/deployment.md), [backtesting](guides/backtesting.md), [replay](guides/replay.md), [live paper trading](guides/live-paper-trading.md), [testing](guides/testing.md), [member instructions](guides/member-instructions.md), [is my strategy doing what I expect?](guides/troubleshooting-strategies.md) |
-| [architecture/](architecture/) | How it is built: [system design](architecture/design.md), [backtest decisions and fills](architecture/backtest-execution.md), and the risk, OMS, sizing, execution and broker-ledger layers |
-| [strategies/](strategies/) | [Strategy overview](strategies/overview.md) and per-strategy write-ups; [adding a strategy](guides/adding-a-strategy.md) |
-| [course/](course/) | [Intro course](course/README.md): beginners write and launch their first strategy |
-| [history/](history/) | Point-in-time handoffs and PR summaries. Accurate when written, not kept current |
+| [Guides](guides/README.md) | Current setup, development, experiments, trading, troubleshooting and deployment procedures |
+| [Architecture](architecture/design.md) | Current process boundaries and links to risk, OMS, sizing, execution, backtest semantics, strategy policy and broker ledger |
+| [Strategies](strategies/overview.md) | Strategy-specific models and explanations; implementation workflow is [adding a strategy](guides/adding-a-strategy.md) |
+| [Course](course/README.md) | Separate beginner teaching material; may repeat guide content |
+| [History](history/) | Dated findings and [archived implementation plans](history/implementation-plans/README.md); not maintained as operating instructions |
 
 ## Repository layout
 
+```text
+backend/    TypeScript API, trading runners, historical worker, and tests
+frontend/   Next.js App Router frontend and Vitest suites
+supabase/   Local project configuration and authoritative schema migrations
+docker/     Local development and built-image Compose stacks
+deploy/     Production Compose/Caddy files and server environment template
+scripts/    Local stack/setup/doctor tooling and strategy-version checks
 ```
-backend/    services and their Dockerfile, nodemon configs in backend/config/nodemon/
-frontend/   Next.js app and its Dockerfile
-supabase/   local Supabase config, migrations, seed
-docker/     docker-compose.dev.yml (hot reload), docker-compose.local.yml (built images)
-deploy/     docker-compose.prod.yml, Caddyfile, server.env.example (copied to EC2 by CI)
-scripts/    local-stack.mjs (npm run dev:stack), check-strategy-versions.mjs
-```
 
-Rules of thumb: a Dockerfile lives next to the app it builds; Compose files live in
-`docker/` (local) or `deploy/` (production); tool configs that must sit at a package
-root (tsconfig, jest, eslint) stay there; everything else goes in a subfolder.
-
-## Benchmarking
-
-[Latency benchmark agent guide](guides/LATENCY_BENCHMARK_AGENT_GUIDE.md) contains
-the implementation plan for measuring quote/trade processing, recording
-and replay, paper-order timing, and strategy delay sensitivity on the planned
-2-vCPU, 8-GB AWS host. [Latency benchmark runbook](guides/latency-benchmark.md)
-is how to run what was built (`npm run bench:*` in `backend/`), and
-[the 2026-10-12 audit](history/latency-audit-2026-10-12.md) records the codebase
-findings and what is still to be measured.
+For installation and local credentials, use [local development](guides/local-development.md).
+For latency commands and measurement caveats, use
+[the benchmark runbook](guides/latency-benchmark.md). Earlier proposals and
+[the 2026-10-12 audit](history/latency-audit-2026-10-12.md) are historical evidence,
+not claims about current performance.

@@ -42,7 +42,8 @@ import {
   updateStrategy,
   StrategyAlreadyLiveError,
 } from "../../adapters/supabase/repositories";
-import { STRATEGY_DEFINITIONS, STRATEGY_FACTORY, configProblem, isLaunchable } from "../../config/strategyDefaults";
+import { strategyDefinition } from "../../config/strategyPolicy";
+import { STRATEGY_DEFINITIONS, STRATEGY_FACTORY, configProblem } from "../../config/strategyDefaults";
 import { env } from "../../config/env";
 import { newId } from "../../utils/ids";
 import { nowMs } from "../../utils/time";
@@ -460,7 +461,7 @@ export async function approveProposal(req: Request, res: Response): Promise<void
     res.status(400).json({ error: `Unknown strategy type: ${strategyType}` });
     return;
   }
-  if (!isLaunchable(strategyType as string)) {
+  if (!strategyDefinition(strategyType as string, { profile: "shared", executionTarget: "alpaca-live" })?.actions.startTrading.allowed) {
     res.status(400).json({ error: `Strategy type ${strategyType} is not available for new runs` });
     return;
   }

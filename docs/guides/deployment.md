@@ -10,7 +10,11 @@ failure. Vercel deploys the frontend on its own from the same push.
 
 ### AWS
 1. Allocate an Elastic IP and attach it to the instance.
-2. Security group inbound: 22 (your IP only), 80 and 443 (anywhere). Nothing else.
+2. Security group inbound: 80 and 443 publicly for Caddy; SSH access is also
+   needed by the current GitHub-hosted deployment runner. Your-IP-only SSH permits
+   manual administration but blocks that workflow. The broad-SSH limitation and
+   planned replacement are described under [Hardening](#hardening). Do not expose
+   backend/database ports publicly.
 3. Disk of 20 GB or more. Run `uname -m`; if it prints `aarch64`, set the GitHub
    variable `DEPLOY_PLATFORM=linux/arm64`.
 4. DNS: A records `api.<domain>` and `paper.<domain>` to the Elastic IP. With no
@@ -66,6 +70,10 @@ Then put the Vercel URL into the server's `CORS_ORIGIN` and restart the stack.
 ## Server `.env`
 See [deploy/server.env.example](../../deploy/server.env.example). Keep
 `EXECUTION_TARGET=sim` until you intentionally move to `alpaca-paper`.
+Production Compose pins `STRATEGY_POLICY_PROFILE=shared`; `aws-prod` refuses a
+development policy profile. Supply `EXPECTED_BROKER_ACCOUNT` for that origin.
+See [strategy policy](../architecture/strategy-policy.md) for lifecycle rules
+and [broker ledger](../architecture/broker-ledger.md) for account preflight.
 
 ## Operating it
 ```bash
@@ -79,7 +87,9 @@ $dc up -d            # re-apply after editing .env
 - Rollback: re-run Deploy on an older commit.
 - Health: `curl https://api.<DOMAIN>/health`, `curl https://paper.<DOMAIN>/health`.
 - Trades and events: Supabase tables `orders`, `fills`, `signals`, `risk_rejections`,
-  `run_events`, `event_logs`, `portfolio_snapshots`.
+  `run_events`, and `portfolio_snapshots`; use [broker ledger](../architecture/broker-ledger.md)
+  for reconciliation/reporting. `event_logs` is not an automatically populated
+  recording pipeline; see [replay limits](replay.md#recorded-event-playback-current-boundary).
 
 ## Hardening
 

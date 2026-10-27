@@ -1,135 +1,116 @@
 # Local development without Docker
 
-[local-development.md](./local-development.md) describes the one-command path
-(`npm run dev:stack`): the official Supabase CLI runs Supabase's own containers,
-and Docker Compose runs the frontend, API, paper runner, and backtest worker.
-That is the lowest-overhead path when Docker Desktop is available.
+Use this alternative when Docker is unavailable. It replaces local Supabase
+containers with **your own hosted development project**, and runs app processes
+directly with Node. Keep that project separate from staging/production.
+Common tool installation is in [local development](local-development.md#prerequisites).
+You need Git, Node.js 22+, and a Supabase project; Docker and its launcher are
+not used in this path.
 
-This guide is the alternative for a machine without Docker (locked-down laptop,
-no admin rights, Docker Desktop won't start, etc). It swaps the local Supabase
-container for a free **hosted** Supabase project and runs every process
-directly with Node — nothing else about the app changes: same migrations,
-schema, RLS, and Alpaca key handling as the Docker path.
+## 1. Install dependencies and create environment files
 
-## Prerequisites
+Clone/open the repository. From the repo root, install each package:
 
-- Node.js 22+
-- A free [Supabase](https://supabase.com) project (replaces the local Supabase container)
-- Optional: a free [Alpaca](https://alpaca.markets) paper account for real
-  market data/order testing — without it everything still works in sim mode
-
-## 1. Create a hosted Supabase project
-
-In the Supabase dashboard, create a project and note:
-
-- **Project URL** and **anon key** — Settings → API
-- **service_role key** — Settings → API (treat as the most sensitive value you'll copy)
-- **DATABASE_URL** — Connect → "Session pooler" connection string, with the
-  database password you set when creating the project
-- Optional: **root CA cert** — Database → SSL Configuration → Download (lets
-  the migration tool verify the server instead of trusting any certificate)
-
-## 2. Install dependencies
-
-```bash
-cd backend && npm install
-cd ../frontend && npm install
+```text
+npm --prefix backend install
+npm --prefix frontend install
 ```
 
-Skip the repo-root `npm install` / `npm run setup` — those only install and
-configure the Docker-based Supabase CLI stack, which this path doesn't use.
+Using your editor, copy `backend/.env.example` to `backend/.env`, and
+`frontend/.env.example` to `frontend/.env.local` if they do not already exist.
+Skip `npm run setup`, whose prerequisite check expects Docker. Root Supabase CLI
+installation is not needed for this path.
 
-## 3. Configure the backend
+## 2. Configure your development database
 
-```bash
-cd backend
-cp .env.example .env
+From your hosted Supabase project, obtain the project URL, anon key, service-role
+key, and Postgres session-pooler connection string with your database password.
+Set in `backend/.env`:
+
+```dotenv
+SUPABASE_URL=https://your-development-project.supabase.co
+SUPABASE_ANON_KEY=your-anon-key
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+DATABASE_URL=your-postgres-session-pooler-connection-string
+EXECUTION_TARGET=sim
+STRATEGY_POLICY_PROFILE=development
+APP_RUNTIME_ORIGIN=local-personal
 ```
 
-Fill in `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`,
-`DATABASE_URL` (and `DATABASE_CA_CERT` if you downloaded it) from step 1.
-Leave `EXECUTION_TARGET=sim` unless you're also providing your own Alpaca
-paper keys — see "Market data" below.
+Keep the same origin across this API, worker and paper runner. It scopes queued
+jobs and run adoption; use a distinct origin if several personal environments
+share one development project. `NODE_ENV` alone does not enable experimental
+strategies; see [strategy policy](../architecture/strategy-policy.md).
 
-## 4. Apply the schema
+If you use `DATABASE_CA_CERT`, supply the downloaded database root certificate
+as required by the migration tool. Run from `backend/`:
 
-```bash
-npm run db:migrate   # applies every supabase/migrations/*.sql in order, directly over DATABASE_URL
-npm run db:status    # confirms what's applied
+```text
+npm run db:migrate
+npm run db:status
 ```
 
-This is the same migration runner the Docker path uses underneath — it just
-targets your hosted project's Postgres instead of a local one. No Supabase CLI
-or Docker involved.
+This applies `supabase/migrations/` through the repository's Node migration
+runner, using `DATABASE_URL`. It does not require Docker or Supabase CLI.
 
-## 5. Configure the frontend
+## 3. Configure frontend authentication
 
-```bash
-cd frontend
-cp .env.example .env.local
+Set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` in
+`frontend/.env.local` to this project's values. Never expose the service-role
+key to the frontend. Keep the API URL defaults for local ports 8080/8082.
+
+In Supabase authentication URL settings, allow the local app URL and redirects.
+Create/invite your user through Supabase's user administration; the app has a
+login screen, not a dedicated sign-up page. On your own development project,
+activate your profile and grant yourself the lead role if needed:
+
+```sql
+update public.app_users
+set membership_status = 'active', role = 'lead'
+where email = 'you@example.com';
 ```
 
-Set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` to the same
-project's values. Leave the `NEXT_PUBLIC_*_API_BASE_URL` defaults as-is —
-they already point at the ports the backend processes use below.
+Unlike Docker bootstrap, this path does not create `lead@local.test`. Hosted
+invitation/password procedures are in [deployment onboarding](deployment.md#supabase).
 
-## 6. Create your account and activate it
+## 4. Start processes
 
-There's no automatic local-lead bootstrap on a hosted project (that's specific
-to `dev:stack`). Instead:
+Open four terminals. Start each command from the indicated package directory:
 
-1. Start the frontend (next section) and sign up through the app's sign-up
-   page. This creates the Supabase auth user and, via the `0008` migration's
-   trigger, a `pending` row in `public.app_users`.
-2. In the Supabase dashboard's SQL editor, activate yourself as a lead:
+| Directory | Command | Purpose |
+|---|---|---|
+| `backend/` | `npm run dev:paper-trading` | Paper/sim runner on :8080 |
+| `backend/` | `npm run dev:api` | API/backtests on :8082 |
+| `backend/` | `npm run dev:worker` | Queued backtest execution |
+| `frontend/` | `npm run dev` | App on :3000 |
 
-   ```sql
-   update public.app_users
-   set membership_status = 'active', role = 'lead'
-   where email = 'you@example.com';
-   ```
+Open http://localhost:3000 and sign in with your hosted development account.
+Use these explicit commands rather than backend `npm run dev`, which also
+launches the gated real-trading entry point. Stop each process with Ctrl+C.
 
-Any lead can activate further members the same way afterward (see
-[local-development.md § Membership](./local-development.md#membership)).
+## Market data and execution
 
-## 7. Run the processes
+Direct processes read `backend/.env`. There is **no Docker launcher filtering**
+or `LOCAL_STREAM_DATA` opt-in on this path:
 
-Each in its own terminal:
+- With no data or trading credentials, a sim runner replays cached bars. Seed
+  your development target using [data-pull instructions](local-development.md#seeding-replay-data),
+  substituting its hosted-development Supabase credentials for the local target.
+- With personal `ALPACA_DATA_KEY` and `ALPACA_DATA_SECRET`, the runner streams
+  live data and backtests can fetch historical bars. Keep `EXECUTION_TARGET=sim`
+  to fill locally. Data credentials fall back to trading credentials only when
+  the data variables are absent; empty template values do not trigger that fallback.
+- To send personal paper orders, set `EXECUTION_TARGET=alpaca-paper`,
+  `ALPACA_TRADING_MODE=paper`, and personal `ALPACA_API_KEY`/`ALPACA_API_SECRET`
+  in this process's environment. Set the data-key fields to the same personal
+  credentials as well, or remove the data-variable lines to allow fallback.
+  Restart affected processes.
 
-```bash
-cd backend && npm run dev:paper-trading   # :8080 — sim book by default
-cd backend && npm run dev:api             # :8082 — backtest/control API
-cd backend && npm run dev:worker          # backtest worker (needed to run backtests)
-cd frontend && npm run dev                # :3000
-```
+Broker preflight still refuses protected accounts outside their permitted
+origin. Environment-file keys are gitignored; do not share them in code.
 
-- App: http://localhost:3000
-- Paper runner: http://localhost:8080
-- API: http://localhost:8082
-
-`dev:real-trading` (:8081) is deliberately left out of this list, same as the
-Docker stack — promoting to real-money trading is its own explicit step, not
-a side effect of starting the stack.
-
-## Market data
-
-Same rules as the Docker path:
-
-- No Alpaca keys → sim and backtests replay the local bar cache. Seed it with
-  `npm run data:pull` (see [local-development.md § Seeding replay data](./local-development.md#seeding-replay-data) —
-  that command already talks to a hosted API/Supabase and needs no Docker).
-- Your own free Alpaca keys in `backend/.env` → backtests and the paper
-  runner pull real bars/orders against **your own** account.
-- The club's shared Alpaca account is refused at boot by
-  `backend/src/core/broker/brokerPreflight.ts` outside the `aws-prod` origin —
-  that check runs inside the backend process itself, so it applies here exactly
-  as it does under Docker.
-
-## Everything else
-
-Ports, data safety expectations, membership model, and the paper/live
-boundary are identical to the Docker path — see the rest of
-[local-development.md](./local-development.md). The only things this guide
-replaces are: the local Supabase container (→ hosted project), `dev:stack`'s
-local-lead bootstrap (→ sign up + one SQL update), and running processes in
-containers (→ running them directly with `npm run dev:*`).
+For cached-bar replay, remove data **and trading** credentials, then set
+`REPLAY_FROM`, `REPLAY_TO`, and `REPLAY_SPEED` in `backend/.env` or the shell.
+For managing runs, continue with [paper trading](live-paper-trading.md).
+Docker volume backups, automatic port selection, `doctor`, and `dev:reset`
+belong to the Docker path and do not manage this hosted project.

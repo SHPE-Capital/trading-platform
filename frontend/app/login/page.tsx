@@ -10,7 +10,7 @@
 
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "../../context/AuthContext";
@@ -26,10 +26,9 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  if (user) {
-    // Already signed in — nothing to do here.
-    router.replace("/approvals");
-  }
+  useEffect(() => {
+    if (user) router.replace("/approvals");
+  }, [user, router]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -50,6 +49,8 @@ export default function LoginPage() {
       setIsSubmitting(false);
     }
   };
+
+  if (user) return null;
 
   if (!isConfigured) {
     return (

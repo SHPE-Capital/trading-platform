@@ -25,6 +25,7 @@ services:
     <<: *backend
     command: ["node", "dist/index.js"]
     environment:
+      STRATEGY_POLICY_PROFILE: shared
       PORT: "8082"
       APP_BUILD_SHA: ${IMAGE_TAG}
       APP_BUILD_DIRTY: "false"
@@ -35,6 +36,7 @@ services:
     <<: *backend
     command: ["node", "dist/runtime/paper-trading.js"]
     environment:
+      STRATEGY_POLICY_PROFILE: shared
       PORT: "8080"
       APP_BUILD_SHA: ${IMAGE_TAG}
       APP_BUILD_DIRTY: "false"
@@ -45,6 +47,7 @@ services:
     <<: *backend
     command: ["node", "dist/runtime/backtestWorker.js"]
     environment:
+      STRATEGY_POLICY_PROFILE: shared
       APP_BUILD_SHA: ${IMAGE_TAG}
       APP_BUILD_DIRTY: "false"
     cpus: 1.0

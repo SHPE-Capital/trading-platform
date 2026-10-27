@@ -1,7 +1,8 @@
 # Adding a strategy
 
-A strategy becomes launchable from the frontend by being listed, with a status, in
-the strategy catalog. No frontend code is needed if it describes its parameters.
+A strategy is registered once in the strategy catalog. Its lifecycle and runtime
+policy determine where it can trade; backtesting uses the same implementation.
+No bespoke frontend code is needed if it describes its parameters.
 
 ## The four edits
 
@@ -20,39 +21,35 @@ The reference implementation is `backend/src/strategies/beginnerReversal/`.
 | Field | Purpose |
 |---|---|
 | `type`, `label`, `description` | Identity and picker text |
-| `status` | `planned`, `ready` or `retired` (below) |
+| `status` | `planned`, `experimental`, `ready` or `retired`; see [policy](../architecture/strategy-policy.md) |
+| `hidden` | Optional. Hide from every picker, independently of lifecycle |
+| `backtestable` | Optional, defaults to `true`. Whether the common engine can simulate it |
 | `version` | `YourStrategy.VERSION`. Read it from the class so they cannot drift |
 | `defaultConfig` | Fully-populated config that pre-fills a new configuration |
 | `create(config)` | Builds the strategy from a saved config; fill missing fields from defaults here |
 | `params` | Optional. Fields for the generic form (`number`, `text`, `symbols`, `boolean`). Omit for a strategy with a bespoke form, or one that should not be offered in the UI |
 
-## Two things the manifest does not cover
+## Construction, decision clock, and release
 
-- **Decision clock.** Declare `readonly triggers: readonly MarketEventKind[]` on the strategy
-  (pairs trading and `beginnerReversal` use `["bar"]`). The orchestrator only calls
-  `evaluate()` for those event kinds, live and in backtests. Omit it and the strategy is called on
-  every quote, trade and bar, and must itself avoid counting one observation twice.
-- **Backtesting.** Being `ready` makes a strategy launchable on paper; it does not make it
-  backtestable. The backtest engine builds strategies from `BACKTESTABLE_TYPES` and
-  `buildBacktestStrategies` in `backend/src/core/backtest/strategyFactory.ts`, which today
-  only knows pairs trading.
+Trading, backtest workers, and the CLI use the same catalog-derived
+`STRATEGY_FACTORY`. `create(config)` must fill missing fields from defaults;
+the common factory supplies an ID and pins the type. There is no separate
+backtest registration or frontend allowlist.
 
-## Status: a gate on new launches only
+Declare `readonly triggers: readonly MarketEventKind[]` (for example `["bar"]`)
+on the strategy. The orchestrator evaluates only those event kinds. The current
+historical engine emits bars for decisions; sparse quotes/trades used to price
+fills do not constitute a full quote/trade strategy feed.
 
-| Status | Picker | Save a config | Start / approve a run | Existing runs |
-|---|---|---|---|---|
-| `planned` | hidden | refused | refused | n/a |
-| `ready` | shown (if it has `params`) | yes | yes | keep running |
-| `retired` | hidden | refused | refused | **keep running, and are restored after a restart** |
+Use `experimental` for a compiling prototype and review the
+[lifecycle/profile eligibility rules](../architecture/strategy-policy.md) before
+release. That page owns status, visibility, backtest capability, and runtime
+profile behavior. `hidden` affects pickers, not request authorization.
 
-The runtime never consults status when it rebuilds a persisted run. It resolves the
-factory by type alone (`STRATEGY_FACTORY`, which includes every status), so changing a
-strategy's status cannot interrupt or orphan anything that is already trading. Only
-three places check it, all in the API: creating a config, starting a run, and approving
-a proposal (`isLaunchable()` in `config/strategyDefaults.ts`).
-
-`GET /api/strategies/configs/types` returns the `ready` types with their `params`; the
-Strategies page builds its picker and form from that response.
+After restarting the affected services, verify your definition and action
+metadata at authenticated `GET /api/strategies/configs/types`, then exercise the
+form and intended runtime. See [paper trading](live-paper-trading.md) for launch
+steps and [backtesting](backtesting.md#cli-workflow) for CLI configuration.
 
 ## Why the catalog is in `config/`
 
@@ -76,14 +73,14 @@ Log the reason when a guard you wrote suppresses a trade (info), and routine ski
 [troubleshooting](troubleshooting-strategies.md#for-strategy-authors). A manifest `validate()` hook (optional) rejects an
 unrunnable config when it is saved instead of when it is started.
 
-## What a planned strategy still costs
-
-`planned` stops a strategy being launched, not compiled: its code is imported by the
-catalog like any other, so a type error in it still breaks the build. Keep unfinished
-work on a branch until it compiles.
-
 ## Tests to write
 
 - A unit test for `evaluate()` (see `backend/src/tests/strategy/beginnerReversalStrategy.test.ts`).
-- Nothing else is required for registration: the catalog test in
-  `backend/src/tests/http/strategies.test.ts` covers the gate for every type.
+- Exercise catalog/policy expectations in `backend/src/tests/http/strategies.test.ts`
+  and `backend/src/tests/core/strategyPolicy.test.ts` when changing eligibility.
+- If supporting a new input/execution capability, test it through the historical
+  engine as well; registration alone does not establish equivalent behavior.
+
+All catalog entries are imported during compilation, including hidden/planned
+entries. Keep code that does not compile on a branch. Commands and CI behavior
+are documented in [testing](testing.md).

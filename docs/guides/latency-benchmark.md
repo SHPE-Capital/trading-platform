@@ -1,12 +1,15 @@
 # Latency benchmark runbook
 
 How to measure this platform's latency and decide whether latency work is worth
-doing. It implements [the agent guide](LATENCY_BENCHMARK_AGENT_GUIDE.md); the
-codebase audit and first findings are in
+doing. This is the current command reference. The earlier
+[implementation specification](../history/implementation-plans/guides-LATENCY_BENCHMARK_AGENT_GUIDE.md)
+is historical design context; the codebase audit and first findings are in
 [history/latency-audit-2026-10-12.md](../history/latency-audit-2026-10-12.md).
 
-Everything runs from `backend/`. Outputs go to `artifacts/latency/<run-id>/` at
-the repo root (git-ignored). Every run directory is new: nothing overwrites an
+Benchmark CLI commands run from `backend/`. Their outputs go to
+`artifacts/latency/<run-id>/` at the repo root (git-ignored). Runner instrumentation
+is enabled in the runner's environment and can use a different artifact root
+(see section 3). Every run directory is new: nothing overwrites an
 earlier result.
 
 ## What can run where
@@ -234,9 +237,10 @@ To compare code changes like for like, pin it (e.g. `--invalid-data pass`).
   repetitions.
 - The A/A gate (< 5% throughput) is evaluated at maximum throughput, which is
   conservative. At live IEX rates the relevant figure is the added µs per frame.
-- SIP needs a paid plan (`--feed sip` returns 403 on the free plan). IEX
-  quotes can be sparse, so expect stale-quote rejections on less liquid
-  symbols.
+- Live SIP capture needs the corresponding streaming entitlement; a `403`
+  indicates the account cannot access that requested feed. This differs from
+  historical SIP windows used for backtest fills. IEX quotes can be sparse, so
+  expect stale-quote rejections on less liquid symbols.
 - Replay steps the application clock (`nowMs()`) to recorded receive times in
   its own process. It refuses to run in a process locked for live trading.
 

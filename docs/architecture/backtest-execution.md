@@ -12,9 +12,11 @@ A strategy declares which market events call its `evaluate()`:
 readonly triggers: readonly ("bar" | "quote" | "trade")[] = ["bar"];
 ```
 
-The orchestrator skips every other event kind for that strategy, live and in
-backtests, so both sample the market the same way. Every event still updates
-symbol state, so a bar strategy can read the latest quote. A strategy that
+The orchestrator skips other event kinds for that strategy in either runtime.
+The historical engine currently supplies bar events for strategy decisions;
+quote/trade windows price fills rather than supplying a complete strategy feed.
+During live streaming, each event still updates symbol state, so a bar strategy
+can read the latest quote. A strategy that
 declares no triggers is called on every quote, trade and bar, and must guard
 against counting one observation twice itself.
 
@@ -111,32 +113,15 @@ cancels.
 Risk checks value a stop from the worse of the mid and its stop price, and the
 Alpaca adapter sends `stop_price`.
 
-## Using it
+## Configuration and result evidence
 
-In the app, pick **Real bid/ask on arrival** under Fills in the backtest form,
-and set the order latency. The result then shows how its fills were priced. On
-a run's page, **Compare with quote fills** replays the run's window that way,
-beside the bar-model comparison.
+The app/API/CLI workflow and comparison requests are documented in
+[backtesting](../guides/backtesting.md). This page owns execution semantics.
 
-Through the API, ask for quote fills per backtest with `execution` in
-`POST /api/backtests/run`:
-
-```json
-{
-  "strategyConfig": { "type": "pairs_trading", "symbols": ["SPY", "QQQ"] },
-  "startDate": "2026-10-12T13:30:00Z",
-  "endDate": "2026-10-13T20:00:00Z",
-  "execution": { "model": "quote", "latencyMs": 250 }
-}
-```
-
-Omitted fields take defaults: 250 ms latency, 5 s lookback, 5 s wait, 0 bps
-extra slippage, SIP feed. `latencyMs + maxQuoteWaitMs` may not exceed 30 s.
-
-To check the model against reality, use `POST /api/runs/:runId/compare-backtest`
-with the same `execution` body. That replays a live paper run's window with
-quote fills, kept separate from the bar-model comparison. Compare its fill
-prices with the run's actual Alpaca fills to calibrate `latencyMs`.
+The quote model resolves omitted settings to 250 ms latency, 5 s quote lookback,
+5 s maximum wait, 0 bps extra slippage, and the SIP feed.
+`latencyMs + maxQuoteWaitMs` may not exceed 30 seconds. These settings and the
+bar fill-model overrides participate in experiment identity.
 
 ### What a result reports
 
@@ -167,9 +152,10 @@ Files hold Alpaca's raw records and are readable from Python
 (`pandas.read_json(path, lines=True)`). Order ticks with `rfc3339ToNanos`;
 Alpaca trims trailing fraction digits, so the timestamp strings do not sort.
 
-Cost: about one request per order on the first run, then nothing. In one
-measurement, 186 orders over two SPY/QQQ sessions took about 60 s to fetch at the
-free rate limit. A re-run took under a second.
+Fetch cost depends on cache coverage and order behavior. Market orders need
+short arrival windows; resting limits/stops can require additional trade
+windows. Cached windows avoid repeated provider requests. Historical benchmark
+timings are not a latency guarantee for another dataset or environment.
 
 ## The sim runtime
 

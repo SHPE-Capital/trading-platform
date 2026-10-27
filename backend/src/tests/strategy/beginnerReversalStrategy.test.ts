@@ -123,6 +123,21 @@ describe('BeginnerReversalStrategy', () => {
     info.mockRestore();
   });
 
+  it('caps long positions and sells to close a long after an up bar', () => {
+    const { onBar, fill } = setup({ maxPositionQty: 1 });
+    fill('SPY', 'buy', 1);
+    onBar(bar('SPY', 0, 100));
+    expect(onBar(bar('SPY', 1, 99))).toBeNull();
+    expect(onBar(bar('SPY', 2, 100))).toMatchObject({ direction: 'close_long', qty: 1 });
+  });
+
+  it('emits no signals when disabled even after being started', () => {
+    const { onBar } = setup({ enabled: false });
+    expect(onBar(bar('SPY', 0, 100))).toBeNull();
+    expect(onBar(bar('SPY', 1, 99))).toBeNull();
+    expect(onBar(bar('SPY', 2, 101))).toBeNull();
+  });
+
   it('stays silent until started', () => {
     const strategy = new BeginnerReversalStrategy(createBeginnerReversalConfig({ symbols: ['SPY'] }));
     const symbolState = new SymbolStateManager();

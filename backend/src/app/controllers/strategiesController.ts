@@ -17,9 +17,8 @@ import {
   STRATEGY_DEFINITIONS,
   STRATEGY_FACTORY,
   configProblem,
-  isLaunchable,
-  launchableDefinitions,
 } from "../../config/strategyDefaults";
+import { runtimeStrategyPolicy, strategyDefinition, visibleStrategyDefinitions } from "../../config/strategyPolicy";
 import { insertRunEvent } from "../../adapters/supabase/analyticsRepository";
 import { allocatedCapital } from "../../core/analytics/runPerformance";
 import { env } from "../../config/env";
@@ -125,8 +124,9 @@ export async function startStrategyRun(req: Request, res: Response): Promise<voi
     return;
   }
   // Status gates NEW runs only; a run that already exists is restored by type alone.
-  if (!isLaunchable(strategyType)) {
-    res.status(400).json({ error: `Strategy type ${strategyType} is not available for new runs` });
+  const action = strategyDefinition(strategyType, runtimeStrategyPolicy((req.app.locals.ctx as AppContext).executionTarget))?.actions.startTrading;
+  if (!action?.allowed) {
+    res.status(400).json({ error: action?.reason ?? `Unknown strategy type: ${strategyType}` });
     return;
   }
 
@@ -289,11 +289,11 @@ export async function listStrategies(_req: Request, res: Response): Promise<void
 
 /**
  * GET /api/strategies/configs/types
- * The strategy types a member may launch (status "ready"), each with the
- * metadata and parameter specs the frontend needs to draw its form.
+ * Visible catalog entries with operation-specific eligibility for this runtime.
  */
-export function listStrategyTypes(_req: Request, res: Response): void {
-  res.json(launchableDefinitions());
+export function listStrategyTypes(req: Request, res: Response): void {
+  const ctx = req.app.locals.ctx as AppContext;
+  res.json(visibleStrategyDefinitions(runtimeStrategyPolicy(ctx?.executionTarget)));
 }
 
 /** GET /api/strategies/configs/defaults/:type */
@@ -304,7 +304,8 @@ export async function getStrategyDefaults(req: Request, res: Response): Promise<
     res.status(404).json({ error: `No default config for strategy type: ${type}` });
     return;
   }
-  res.json(def);
+  const ctx = req.app.locals.ctx as AppContext;
+  res.json(strategyDefinition(type, runtimeStrategyPolicy(ctx?.executionTarget)));
 }
 
 /**
@@ -331,8 +332,9 @@ export async function createStrategy(req: Request, res: Response): Promise<void>
     res.status(400).json({ error: `Unknown strategy type: ${strategy_type}` });
     return;
   }
-  if (def.status !== "ready") {
-    res.status(400).json({ error: `Strategy type ${strategy_type} is not available (status: ${def.status})` });
+  const saveAction = strategyDefinition(strategy_type)!.actions.save;
+  if (!saveAction.allowed) {
+    res.status(400).json({ error: saveAction.reason });
     return;
   }
   const problem = configProblem(strategy_type, config);

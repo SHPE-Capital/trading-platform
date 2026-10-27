@@ -16,6 +16,7 @@ import type { StrategyType } from "../types/strategy";
 import type { IStrategy } from "../strategies/base/strategy";
 import { STRATEGY_CATALOG } from "./strategyCatalog";
 import type { ParamSpec, StrategyStatus } from "./strategyManifest";
+import { newId } from "../utils/ids";
 
 export interface StrategyDefinition {
   type: StrategyType;
@@ -23,6 +24,8 @@ export interface StrategyDefinition {
   description: string;
   /** Whether new configs and runs of this type may be created. */
   status: StrategyStatus;
+  hidden?: boolean;
+  backtestable?: boolean;
   /**
    * Current algorithm version sourced directly from the strategy class
    * (e.g. PairsStrategy.VERSION). Never stored in the strategies table —
@@ -37,10 +40,11 @@ export interface StrategyDefinition {
 /**
  * Maps each strategy type to a factory that instantiates the IStrategy from a
  * raw config object. Includes EVERY status: restoring a persisted run must work
- * whatever its type's status is today. Gate new launches with isLaunchable().
+ * whatever its type's status is today. Gate new launches with strategyPolicy.ts.
  */
 export const STRATEGY_FACTORY: Record<string, (config: Record<string, unknown>) => IStrategy> =
-  Object.fromEntries(STRATEGY_CATALOG.map((m) => [m.type, m.create]));
+  Object.fromEntries(STRATEGY_CATALOG.map((m) => [m.type, (config: Record<string, unknown>) =>
+    m.create({ ...config, id: config.id ?? newId(), type: m.type })]));
 
 export const STRATEGY_DEFINITIONS: Record<string, StrategyDefinition> = Object.fromEntries(
   STRATEGY_CATALOG.map((m): [string, StrategyDefinition] => [
@@ -50,6 +54,8 @@ export const STRATEGY_DEFINITIONS: Record<string, StrategyDefinition> = Object.f
       label: m.label,
       description: m.description,
       status: m.status,
+      hidden: m.hidden,
+      backtestable: m.backtestable ?? true,
       algorithmVersion: m.version,
       defaultConfig: m.defaultConfig,
       ...(m.params && { params: m.params }),
@@ -63,14 +69,4 @@ export const STRATEGY_DEFINITIONS: Record<string, StrategyDefinition> = Object.f
  */
 export function configProblem(type: string, config: Record<string, unknown>): string | null {
   return STRATEGY_CATALOG.find((m) => m.type === type)?.validate?.(config) ?? null;
-}
-
-/** True when new configs and runs of this type may be created. */
-export function isLaunchable(type: string): boolean {
-  return STRATEGY_DEFINITIONS[type]?.status === "ready";
-}
-
-/** Definitions the frontend may offer for launching. */
-export function launchableDefinitions(): StrategyDefinition[] {
-  return Object.values(STRATEGY_DEFINITIONS).filter((d) => d.status === "ready");
 }

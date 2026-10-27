@@ -83,8 +83,8 @@ export interface ParamSpec {
   hint?: string;
 }
 
-/** Release gate: only "ready" types can be saved or started. */
-export type StrategyStatus = "planned" | "ready" | "retired";
+/** Lifecycle; server-provided actions determine eligibility in this runtime. */
+export type StrategyStatus = "planned" | "experimental" | "ready" | "retired";
 
 /** Hardcoded type definition returned by GET /strategies/configs/defaults/:type and /configs/types */
 export interface StrategyDefinition {
@@ -92,6 +92,13 @@ export interface StrategyDefinition {
   label: string;
   description: string;
   status?: StrategyStatus;
+  hidden?: boolean;
+  backtestable?: boolean;
+  actions?: {
+    save: { allowed: boolean; reason?: string };
+    backtest: { allowed: boolean; reason?: string };
+    startTrading: { allowed: boolean; reason?: string };
+  };
   /** Current algorithm version sourced from the strategy class constant. */
   algorithmVersion: number;
   defaultConfig: Record<string, unknown>;

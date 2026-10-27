@@ -12,5 +12,6 @@
 - Follow the **existing code style and project structure**.
 - Prefer **clean, self-explanatory code** over excessive comments. Use comments only for intent, context, or non-obvious logic.
 - **Update documentation, comments, and tests** when relevant.
-- **Run tests, linters, and formatters** before submitting changes. (Testing in Jest needs to be fully implemented soon for this purpose)
+- **Run the relevant checks** before submitting changes; [testing](testing.md)
+  documents the existing Jest/Vitest suites, type checks, builds, and CI gates.
 - Do not commit **debug code, unused imports, or unrelated changes**.

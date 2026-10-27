@@ -1,184 +1,213 @@
 # Local development
 
-The complete local environment uses the official Supabase CLI for Supabase's
-containers and Docker Compose for the application processes. This keeps the
-database/auth stack aligned with Supabase releases without copying its internal
-Compose file into this repository.
-
-No Docker available (locked-down laptop, Docker Desktop won't start, etc)?
-See [local-development-no-docker.md](./local-development-no-docker.md) instead —
-same migrations and app code, a hosted Supabase project instead of the local
-container, processes run directly with `npm run dev:*`.
+This is the reference for installing tools, starting the local Docker stack,
+providing data credentials, and managing local database state. For directly run
+Node processes with hosted Supabase, use [the no-Docker path](local-development-no-docker.md).
+For starting/stopping strategy runs and selecting a personal paper broker, use
+[paper trading](live-paper-trading.md).
 
 ## Prerequisites
 
-- Node.js 22+
-- Docker Desktop (or a Docker-compatible engine)
-- Optional Alpaca paper credentials for live market-data and order testing
+- [Git](https://git-scm.com/downloads) to clone the repository.
+- [Node.js](https://nodejs.org/en/download), an LTS release **22 or newer**, with npm.
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) or a compatible
+  engine with Docker Compose. Complete installation and start the engine.
+- Optional personal Alpaca paper credentials for market data or paper orders.
+
+After installation, open a new terminal and check `git --version`,
+`node --version`, `npm --version`, and `docker info`. On Windows, use PowerShell;
+if it blocks `npm.ps1`, use `npm.cmd` for the commands below.
 
 ## First start
 
-```bash
-npm install        # repo root (not backend/ or frontend/)
-npm run setup      # one-time and idempotent: deps, env files, prerequisite check
+```text
+git clone https://github.com/SHPE-Capital/trading-platform.git
+cd trading-platform
+npm install
+npm run setup
 npm run dev:stack
 ```
 
-Run all `npm run` commands below from the repo root. Docker Desktop must be
-running first.
+If you already have a checkout, start in its root instead of cloning again.
+All `npm run` commands in this guide run from the **repo root**, except the data
+pull explicitly marked below. Repository access requires the appropriate GitHub
+membership if GitHub asks you to authenticate.
 
-The command starts local Supabase, applies every migration, provisions a local
-active lead, and starts the frontend, API, paper runner, and one backtest worker.
-Source directories are bind-mounted, so the Next.js and Node processes reload
-as files change. Dependencies remain in Docker volumes instead of being copied
-between host and Linux installations.
+Root `npm install` provides the pinned Supabase CLI. `setup` installs package
+dependencies, creates missing environment files without overwriting existing
+ones, and checks prerequisites. Docker must be running. The launcher uses the
+official Supabase CLI for database/auth containers and
+`docker/docker-compose.dev.yml` for app services; it applies migrations and
+provisions an active local lead automatically.
 
-- App: http://localhost:3000
-- API: http://localhost:8082
-- Paper runner: http://localhost:8080
-- Supabase Studio: http://localhost:54323
-- Local login: `lead@local.test` / `local-development-only`
+| Service | Default address |
+|---|---|
+| App | http://localhost:3000 |
+| Paper/sim runner | http://localhost:8080 |
+| API/backtests | http://localhost:8082 |
+| Supabase API | http://localhost:54321 |
+| Supabase Studio | http://localhost:54323 |
 
-Local runners never trade the club's Alpaca account. The paper runner starts
-with `EXECUTION_TARGET=sim`: orders fill locally against market data and are
-recorded in your local Supabase, which acts as the sim broker's ledger.
+Sign in as `lead@local.test` / `local-development-only`. Use the Supabase addresses
+printed by the launcher when ports are remapped. Run `npm run doctor` from a
+second terminal for a read-only health report.
 
-| You have | Set in your shell before `npm run dev:stack` | What happens |
-|---|---|---|
-| Nothing | — | Sim book, replaying cached bars. Seed them with `npm run data:pull` (below). |
-| Free Alpaca account (data only) | your **own** `ALPACA_DATA_KEY`, `ALPACA_DATA_SECRET` in your shell **or** `backend/.env` | Backtests fetch bars with your key. Add `LOCAL_STREAM_DATA=1` to also run the live IEX stream in the paper runner; sim orders then fill against its quotes and trades ([details](../architecture/backtest-execution.md#the-sim-runtime)). |
-| Your own Alpaca paper account | `EXECUTION_TARGET=alpaca-paper`, `ALPACA_API_KEY`, `ALPACA_API_SECRET` | Orders go to **your** paper account and sync into your local Supabase. |
+Supabase's optional Logflare/Vector analytics services are disabled locally. This
+avoids the Windows Docker TCP-port `2375` dependency; database, authentication,
+storage, and app features still run normally. Read application logs in the stack
+terminal or with `docker compose -f docker/docker-compose.dev.yml logs --tail 100`.
+Supabase Studio's centralized log explorer is unavailable with analytics disabled.
+If upgrading an already-running stack, stop the old optional containers once:
+`docker stop supabase_vector_shpe-capital-trading-platform supabase_analytics_shpe-capital-trading-platform`.
 
-**Market data uses your own Alpaca keys, never the club's.** `dev:stack` reads
-`ALPACA_DATA_KEY`/`ALPACA_DATA_SECRET` (falling back to `ALPACA_API_KEY`/`ALPACA_API_SECRET`)
-from your shell or `backend/.env`, asks Alpaca which account they belong to, and
-**withholds them if they are the club's** (`protectedAccounts.ts`). They go to the API
-and backtest worker for REST bar downloads. The paper runner only gets them with
-`LOCAL_STREAM_DATA=1`, because Alpaca allows one live stream per account (a second
-connection fails with `406 connection limit exceeded`). `EXECUTION_TARGET` and trading
-keys are never forwarded from the file; shell variables take precedence.
+Repeated HTTP `304 Not Modified` entries are successful cache checks. Pages poll
+for updates, and the browser reuses its cached response when the data is unchanged.
+They do not require a fix; `401` before login is also expected.
 
-No keys of your own? Backtests and the paper runner use the local bar cache. Fill it
-with `npm run data:pull`; a backtest over a range that is not cached will fail with 401.
+Source directories are bind-mounted; dependencies live in Docker volumes. If
+backend edits do not trigger nodemon on Windows, restart the affected services:
 
-The club account is listed in `backend/src/config/protectedAccounts.ts`; a
-runner that resolves to it from any origin other than `aws-prod` exits at boot
-with the reason. Your own account registers itself in the local
-`broker_accounts` table the first time it boots.
+```text
+docker compose -f docker/docker-compose.dev.yml restart paper-trading api
+```
+
+The default stack omits real-money trading and sets
+`STRATEGY_POLICY_PROFILE=development`. Eligibility is defined in
+[strategy policy](../architecture/strategy-policy.md), not by `NODE_ENV`.
+
+## Market data and environment forwarding
+
+Local execution defaults to `sim`. Without data keys reaching the runner, it
+replays cached bars. With streaming keys, it simulates fills against live data.
+Detailed fill behavior belongs to [backtest/sim execution](../architecture/backtest-execution.md#the-sim-runtime).
+
+For live prices, sign in to your own [Alpaca paper account](https://app.alpaca.markets/),
+select Paper Trading, and generate its Key ID and Secret in the API Keys panel.
+Use personal paper credentials, not the club's account. Follow
+[Alpaca's paper account documentation](https://docs.alpaca.markets/us/docs/paper-trading)
+for account/key generation. Update `backend/.env`:
+
+```dotenv
+ALPACA_DATA_KEY=your-personal-paper-key
+ALPACA_DATA_SECRET=your-personal-paper-secret
+LOCAL_STREAM_DATA=1
+```
+
+Then restart `npm run dev:stack`. During market hours, startup should report
+your data account and `live stream ON`. One-minute strategies need completed
+bars; no movement outside market hours is not a setup failure.
+
+| Setting | How `dev:stack` handles it |
+|---|---|
+| Data keys | Reads shell or `backend/.env`; falls back to trading-key values for data use |
+| `LOCAL_STREAM_DATA=1` | Reads shell or `backend/.env`; opts the paper runner into the live stream |
+| Trading keys and `EXECUTION_TARGET` | Must come from the launching shell to opt into personal paper orders; file values are not forwarded |
+| Replay window/speed, latency probe flags | Pass through the launching shell where Compose exposes them |
+| Supabase URLs/keys and runtime ports | Generated/injected for the local containers by the launcher |
+| Other backend `.env` settings | Do not assume they reach Docker; inspect `docker-compose.dev.yml` |
+
+Non-empty shell values take precedence. REST data keys reach the API and worker
+even when streaming is off. The launcher checks account identity and withholds
+club market-data keys. Protected broker accounts are also checked inside the
+runtime. Personal paper execution commands live in
+[paper trading](live-paper-trading.md#use-your-personal-alpaca-paper-account-locally).
+Keep credentials out of code, frontend variables, screenshots and commits.
 
 ### Seeding replay data
 
-`npm run data:pull` copies bars from the club's hosted bar cache into your
-local one. It reads only what backtests have already cached there and never
-calls Alpaca:
+`data:pull` copies bars already cached by the hosted platform into your local
+Supabase cache. It never calls Alpaca. Obtain the hosted API base and a member
+session/access details from your lead; the requested range must exist there.
 
-```bash
+The command runs **from `backend/`**, not the repo root. Supply these variables
+to that process (shell values, or your gitignored `backend/.env`):
+
+| Variable | Value |
+|---|---|
+| `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` | Your local target project; use the launcher's actual ports/keys, not hosted production credentials |
+| `HOSTED_API_URL` | Hosted API base ending in `/api` |
+| `HOSTED_API_TOKEN` | Member access token; alternatively use the four login settings below |
+| `HOSTED_SUPABASE_URL`, `HOSTED_SUPABASE_ANON_KEY`, `HOSTED_EMAIL`, `HOSTED_PASSWORD` | Alternative way for the tool to sign in to the hosted source |
+
+The Docker launcher injects local Supabase credentials into containers; it does
+not automatically configure a separately launched host-side data-pull process.
+Find the local project's keys in Supabase Studio/CLI status for the running
+workdir (the remapped workdir, when used, is `.local/supabase-workdir`).
+
+```text
 cd backend
-HOSTED_API_URL=https://<hosted-api>/api \
-HOSTED_SUPABASE_URL=... HOSTED_SUPABASE_ANON_KEY=... \
-HOSTED_EMAIL=you@ufl.edu HOSTED_PASSWORD=... \
-SUPABASE_URL=http://127.0.0.1:54321 SUPABASE_SERVICE_ROLE_KEY=<local key> \
 npm run data:pull -- --symbols SPY,QQQ --from 2026-10-01 --to 2026-10-07
 ```
 
-Then start the stack with `REPLAY_FROM=2026-10-06 REPLAY_TO=2026-10-07` (and
-optionally `REPLAY_SPEED=10`).
+Back at the repo root, disable streaming and select a cached period in the shell:
+
+```powershell
+$env:EXECUTION_TARGET = "sim"
+$env:LOCAL_STREAM_DATA = "0"
+$env:REPLAY_FROM = "2026-10-06"
+$env:REPLAY_TO = "2026-10-07"
+$env:REPLAY_SPEED = "60"
+npm run dev:stack
+```
+
+In bash/zsh, use `export NAME=value` for those same assignments before running
+the command. Leave shell trading keys unset for cached-bar simulation: runtime
+data credentials can fall back to them. Choose dates/symbols actually seeded.
+For the difference between this feed and the incomplete recorded-session UI,
+see [replay workflows](replay.md).
 
 ## Ports, data safety, and troubleshooting
 
-`dev:stack` tries Supabase's default ports (54321...) first. If any are
-unavailable (Windows/Hyper-V reserves ranges there, or another project uses
-them) it picks the next free block (44321..., 34321..., 24321...). The repo's
-`supabase/config.toml` is never edited; a remapped copy is generated in the
-gitignored `.local/supabase-workdir/`, and the same ports are passed to the
-app containers.
+The launcher tries Supabase's default block (54321...) then alternative free
+blocks (44321..., 34321..., 24321...). It generates a remapped config under
+`.local/supabase-workdir/` rather than modifying `supabase/config.toml`.
+An already-running project retains its ports.
 
-**Your data does not depend on ports.** The database lives in the Docker volume
-`supabase_db_<project_id>`, so moving ports reuses it. `dev:stack` also:
+Database identity is the Docker volume `supabase_db_<project_id>`, not its port.
+Startup compares row counts with the prior run, refuses unexpected data loss or
+a missing volume, and writes a safety copy under `.local/backups/` (newest three
+retained). Follow the reported backup path for recovery; do not bypass a refusal
+without understanding the missing state.
 
-- never moves a Supabase that is already running (it reuses its ports);
-- applies pending migrations to an existing database;
-- compares row counts with the last run and **refuses to start** if users or
-  strategies went missing, or if the volume vanished (Docker reset or
-  `docker volume prune`), printing the newest safety copy;
-- writes a safety copy of the whole database to `.local/backups/` on every
-  start (newest three kept). Restore one with
-  `docker exec -i supabase_db_<project_id> psql -U postgres -d postgres < <file>`;
-- `npm run dev:stack -- --fresh` accepts an empty database on purpose.
+For restoration, stop app services and restore into the intended local database
+container with `psql`, following the backup format. Avoid shell redirection
+examples from another shell/OS. `npm run dev:stack -- --fresh` explicitly accepts
+an empty database; it is not a recovery command.
 
-`npm run doctor` is a read-only health report: Node, Docker, ports, volume,
-migrations, data counts, login, and the app containers.
-
-| Symptom | Fix |
+| Symptom | Check |
 |---|---|
-| `Docker is not running` | Start Docker Desktop, wait for "Engine running", check `docker info` |
-| `Missing script: "dev:stack"` | You are in `backend/` or `frontend/`; run from the repo root |
-| No free port block | See `netsh interface ipv4 show excludedportrange protocol=tcp`; `net stop winnat` then `net start winnat` (admin) |
-| Cannot sign in | `npm run dev:stack` re-creates `lead@local.test`; check `frontend/.env*` does not override the Supabase URL |
-| Backend edits not picked up (Windows) | Bind mounts do not trigger nodemon; `docker restart shpe-trading-dev-<service>-1` |
-| `npm audit` warnings | Dev-tooling only; do not run `npm audit fix --force` |
+| Docker cannot connect | Start Docker Desktop and wait for its engine; run `docker info` |
+| Missing `dev:stack` script | Terminal must be at repo root |
+| Cannot sign in | Run `doctor`; check launcher bootstrap and actual Supabase addresses |
+| Stream connection limit | Stop other clients using the same personal data account |
+| No bars available | Configure personal live data or seed the selected replay range |
+| Changed `.env` has no effect | Check forwarding table above; relaunch/recreate services after changing container environment |
 
 ## Database boundaries
 
-- Every engineer runs an isolated local Supabase database. Local data is
-  disposable and must never be used as a source for production state.
-- `supabase/migrations/` is the schema source of truth. Add an append-only
-  migration for every schema change, reset locally, and review it with the code.
-- Staging and production use separate Supabase projects and credentials. The
-  app containers receive only the project for their environment through secrets.
-- Backtest jobs and summarized results live in Postgres. If result payloads or
-  market datasets become large, put those blobs in object storage and retain
-  their immutable URI/checksum in Postgres rather than scaling the control
-  database as a file store.
-
-For this team size, managed Supabase is the default deployment recommendation.
-Self-hosting Supabase on one EC2 instance creates a database, backups, upgrades,
-TLS, email/auth, and incident-response burden on the engineering team. Only
-self-host it when there is a concrete compliance or network requirement and a
-named owner for those operations. The workers and API can still run on EC2/ECS
-while using managed Supabase.
+`supabase/migrations/` is the schema source of truth. Add append-only migrations;
+do not bootstrap by pasting old table DDL from a guide. Each engineer owns an
+isolated local database; it is not a source for production state. Shared
+deployment migrations and credentials are managed through
+[deployment](deployment.md).
 
 ## Membership
 
-Creating a Supabase login does not grant application access. New profiles start
-as `pending`; a lead activates known members in the `app_users` table. When the
-membership migration first reaches an existing environment, existing leads stay
-active and existing member accounts become pending for one-time verification.
-For local development the bootstrap script activates the built-in lead automatically.
-
-For a deployed environment, activate an invited member through Supabase Studio
-or a controlled admin migration/query:
-
-```sql
-update public.app_users
-set membership_status = 'active'
-where email = 'member@example.com';
-```
-
-Use `suspended` to revoke application access without deleting the member's
-authorship and audit history. Membership gates access; it does not add a second
-approval step to paper launches.
+Activation procedures live in [paper trading](live-paper-trading.md#membership).
+The local bootstrap account is an exception for this development stack, not a
+hosted-user provisioning method.
 
 ## Paper and live lifecycle
 
-- Any active member can start their own saved strategy version on paper.
-- Each paper run records its exact strategy version, build SHA, runtime origin,
-  owner, start time, and expiry. Capital, concurrent-run, and TTL limits bound
-  the shared paper environment.
-- Promotion to real money remains a separate proposal reviewed by a lead and is
-  accepted only by the live runtime. The frontend sends approval to the
-  separately configured `NEXT_PUBLIC_LIVE_API_BASE_URL`; the default local
-  stack deliberately does not launch a real-money runtime.
-- The club's Alpaca paper account is the shared book, traded only by the
-  `aws-prod` runtime. Everyone else tests in a sim book or on their own Alpaca
-  paper account, so a local experiment can never move the club's positions.
+Use [paper trading](live-paper-trading.md) for saved versions, starts/stops,
+sandbox limits, and the separately gated real-money workflow.
 
 ## Reset or stop
 
-```bash
-npm run dev:reset
+```text
 npm run dev:down
 ```
 
-Reset destroys only the local Supabase database, reapplies migrations and seed,
-and recreates the local lead. Never point these commands at a remote project.
+To deliberately destroy/rebuild the local database, use `npm run dev:reset`.
+It reapplies migrations and seed data and recreates the local lead. This is a
+destructive local-development action, not routine startup or a production tool.

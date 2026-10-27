@@ -1,7 +1,7 @@
 /**
  * hooks/useStrategyTypes.ts
  *
- * Loads the strategy types the backend says may be launched. A failed load
+ * Loads visible catalog entries and their operation eligibility. A failed load
  * returns an empty list, so the strategies page falls back to pairs trading.
  */
 

@@ -52,6 +52,25 @@ describe("Backtest HTTP API", () => {
     expect(mockEnqueue).toHaveBeenCalledTimes(1);
   });
 
+  test("backtests another catalog strategy and resolves its version server-side", async () => {
+    const response = await request(app).post("/api/backtests/run").set("Authorization", "Bearer valid").send({
+      ...payload, strategyVersion: 999,
+      strategyConfig: { type: "minute_reversal", symbols: ["SPY"] },
+    });
+    expect(response.status).toBe(202);
+    expect(mockEnqueue.mock.calls[0][0].config.strategyVersion).not.toBe(999);
+    expect(mockEnqueue.mock.calls[0][0].config.strategyConfig.type).toBe("minute_reversal");
+  });
+
+  test("rejects an invalid reversal config before queueing", async () => {
+    const response = await request(app).post("/api/backtests/run").set("Authorization", "Bearer valid").send({
+      ...payload, strategyConfig: { type: "beginner_reversal", symbols: ["SPY"], qtyPerTrade: 0 },
+    });
+    expect(response.status).toBe(400);
+    expect(response.body.error).toMatch(/qtyPerTrade/);
+    expect(mockEnqueue).not.toHaveBeenCalled();
+  });
+
   // ---------------------------------------------------------------------------
   // Process isolation. Trading runtimes mount this same API. Before the queue,
   // that meant a UI backtest could run the engine inside the live process; now

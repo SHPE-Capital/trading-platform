@@ -3,6 +3,7 @@ name: shpe-trading-dev
 x-backend-environment: &backend-environment
   NODE_ENV: development
   APP_RUNTIME_ORIGIN: local-docker
+  STRATEGY_POLICY_PROFILE: development
   APP_BUILD_SHA: ${LOCAL_BUILD_SHA:-local}
   APP_BUILD_DIRTY: ${LOCAL_BUILD_DIRTY:-true}
   SUPABASE_URL: http://host.docker.internal:${LOCAL_SUPABASE_API_PORT:-54321}

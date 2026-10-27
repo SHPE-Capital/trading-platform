@@ -1,148 +1,57 @@
-# OMS Layer — Implementation Guide
+# Order management and capital reservations
 
-## Overview
+Order management spans `core/engine/orchestrator.ts`, `core/state/orderState.ts`,
+`core/oms/capitalReservation.ts`, and the execution sinks under
+`backend/src/`. There is no separate active `OrderManager` drain loop.
 
-The Order Management System (OMS) sits between strategy signal emission and the risk/execution pipeline. Its job is to ensure **capital is committed before risk checks run**, **orders are prioritized fairly**, and **parent-child relationships are tracked** for algorithmic execution strategies like TWAP and VWAP.
+## Current submission path
 
-```
-Strategy Signal
-    ↓
-Orchestrator._onStrategySignal()   ← position sizer called here (future)
-    ↓
-ORDER_INTENT_CREATED event
-    ↓
-Orchestrator._onOrderIntent()
-    ↓
-[1] CapitalReservationManager.reserve()    ← reserves capital atomically
-    ↓ (if sufficient cash)
-[2] RiskEngine.check()                     ← existing 8 checks run here
-    ↓ (if passed)
-[3] OrderIntentQueue.enqueue()             ← priority queue (future dequeue loop)
-    ↓
-ExecutionEngine.submit()
-    ↓
-IExecutionAlgo.execute()          ← DirectExecutionAlgo, TwapExecutionAlgo, etc.
-    ↓
-IExecutionSink.submitOrder()      ← paper/live Alpaca or simulated
-```
+1. The orchestrator converts a strategy signal into one or more order intents.
+2. Multi-leg signals receive per-leg risk preflight and combined buy-capital
+   preflight before either leg is dispatched.
+3. Each intent passes ordinary risk checks and its strategy budget check.
+4. Buy orders reserve worst-case notional; sell orders receive a zero-dollar
+   reservation so pending-order bookkeeping still tracks them.
+5. Execution submits the intent. State updates arrive through order/fill events.
+6. Partial fills reduce the outstanding reservation proportionally. Terminal
+   fill, rejection, cancellation, expiration, or submission failure releases it.
 
----
+Preflight prevents a known risk/capital rejection from dispatching only one leg.
+It is **not an atomic broker transaction**: a broker can accept one leg and
+reject the other, or fill legs at different times.
 
-## Classes
+## Reservation manager
 
-### `CapitalReservationManager` — `core/oms/capitalReservation.ts`
+`CapitalReservationManager` tracks receipts by reservation ID and reports total
+reserved cash, per-strategy amounts, open-order counts, and available cash. It
+also exposes group-reservation helpers, but the orchestrator's actual multi-leg
+path performs combined preflight followed by individual reservations.
 
-Maintains a `Map<reservationId, CapitalReservation>` of committed but not-yet-filled capital. This ensures that when two strategies submit orders in the same event loop tick, the second cannot overdraft the cash that the first already claimed.
+The book is process-local. It prevents competing intents in that runner from
+spending the same cash; it does not coordinate arbitrary independent processes
+trading one account. Run leases and account ownership are additional boundaries;
+see [system architecture](design.md) and [broker ledger](broker-ledger.md).
 
-**Public API:**
+## Implemented helpers that are not active routing stages
 
-| Method | Signature | Description |
-|---|---|---|
-| `reserve` | `(intent, totalCash) → { reservationId, amount } \| null` | Atomically claims `intent.qty * intent.limitPrice` from available cash. Returns `null` if amount is zero or exceeds `getAvailableCash(totalCash)`. |
-| `release` | `(reservationId) → void` | Frees a reservation on fill, cancel, or rejection. |
-| `getReservedTotal` | `() → number` | Sum of all active reservation amounts. |
-| `getAvailableCash` | `(totalCash) → number` | `totalCash - getReservedTotal()`. |
-| `clear` | `() → void` | Drops all reservations (on engine stop or kill switch). |
-
-**Integration point:** `Orchestrator._onOrderIntent()` — call `reserve()` before `riskEngine.check()`. Store `reservationId` in `intent.meta.reservationId` so it can be released later.
-
-**Release triggers:**
-- `ORDER_FILLED` → release with `reason: "filled"`
-- `RISK_REJECTED` → release with `reason: "rejected"`
-- `ORDER_CANCELED` → release with `reason: "canceled"`
-
-**Key invariant:** `availableCash = portfolioState.cash - capitalReservation.getReservedTotal()`
-
----
-
-### `OrderIntentQueue` — `core/oms/orderQueue.ts`
-
-A sorted array acting as a priority queue. Higher `priority` values dequeue first; ties are broken FIFO by `enqueuedAt`.
-
-**Public API:**
-
-| Method | Signature | Description |
-|---|---|---|
-| `enqueue` | `(intent, priority) → void` | Adds intent to the queue and re-sorts. |
-| `dequeue` | `() → QueuedOrderIntent \| null` | Removes and returns the top-priority intent. |
-| `peek` | `() → QueuedOrderIntent \| null` | Inspects without removing. |
-| `size` | `() → number` | Current queue depth. |
-| `clear` | `() → void` | Empties the queue (on engine stop). |
-
-**Priority convention (suggested):**
-
-| Intent Type | Priority |
+| Helper | State |
 |---|---|
-| Close / stop-loss | 100 |
-| Reduce position | 75 |
-| New entry (high confidence) | 50 |
-| New entry (normal) | 25 |
-| Counterpart leg (pairs) | 20 |
+| `OrderIntentQueue` (`core/oms/orderQueue.ts`) | Implements priority/FIFO ordering and removal by intent/group; not instantiated by the orchestrator's submission path |
+| `ParentChildOrderTracker` (`core/oms/parentChildOrder.ts`) | Implements parent/child creation, accumulated fills, completion and pending-parent queries; not wired into direct execution |
+| `priorityConfig.ts` | Supplies strategy evaluation priority used by the orchestrator |
 
-**Dequeue loop (to implement):** A `setInterval` or event-driven drain in the orchestrator should call `queue.dequeue()` and pass the intent to `executionEngine.submit()`. This replaces the direct submit call in `_onOrderIntent()`.
+Parent/child fill accounting is implemented; earlier TODO labels in the docs
+were stale. Scheduled TWAP/VWAP execution that would use it remains incomplete.
+See [execution algorithms](execution-algos-layer.md).
 
----
+## Persistence and diagnostics
 
-### `ParentChildOrderTracker` — `core/oms/parentChildOrder.ts`
+The runtime's journaled execution sink records intent/run/signal attribution
+before a broker request. The broker ledger then reconciles durable broker
+history. Those database guarantees and drift reports are documented only in
+[broker ledger](broker-ledger.md).
 
-Tracks the relationship between a large "parent" order (the original strategy intent) and the individual "child" slices submitted to the market by TWAP or VWAP algorithms.
-
-**Public API:**
-
-| Method | Signature | Description |
-|---|---|---|
-| `createParent` | `(intent, algoType, algoParams) → ParentOrder` | Registers a new parent and returns it. |
-| `addChild` | `(parentId, childIntent) → ChildOrder` | Registers a slice for a parent. |
-| `onChildFill` | `(childOrderId, fill) → void` | **TODO** — accumulates fill qty into child and parent. |
-| `getParent` | `(parentId) → ParentOrder \| null` | Lookup by parent ID. |
-| `getChild` | `(childId) → ChildOrder \| null` | Lookup by child ID. |
-| `isComplete` | `(parentId) → boolean` | **TODO** — true when `filledQty >= totalQty`. |
-| `getPendingParents` | `() → ParentOrder[]` | **TODO** — all parents without `completedAt`. |
-
----
-
-## OMS Event Reference
-
-All events follow the `BaseEvent` shape (`id`, `type`, `ts`, `mode`).
-
-### `CAPITAL_RESERVED`
-```typescript
-{ reservationId: UUID; amount: number; intentId: UUID; strategyId: string }
-```
-Published by orchestrator after `CapitalReservationManager.reserve()` succeeds.
-
-### `CAPITAL_RELEASED`
-```typescript
-{ reservationId: UUID; reason: "filled" | "canceled" | "rejected" }
-```
-Published by orchestrator when releasing a reservation.
-
-### `CAPITAL_UNAVAILABLE`
-```typescript
-{ intentId: UUID; strategyId: string; required: number; available: number }
-```
-Published instead of `RISK_REJECTED` when the intent is blocked by insufficient cash (before risk checks even run).
-
-### `ORDER_QUEUED`
-```typescript
-{ intentId: UUID; strategyId: string; priority: number; queueDepth: number }
-```
-Published when an intent is added to `OrderIntentQueue` instead of submitted directly.
-
-### `CHILD_ORDER_CREATED`
-```typescript
-{ parentIntentId: UUID; childIntentId: UUID; sliceIndex: number; totalSlices: number }
-```
-Published by `TwapExecutionAlgo` or `VwapExecutionAlgo` when a slice is submitted.
-
----
-
-## Implementation Checklist
-
-- [ ] **Wire `CapitalReservationManager` into `Orchestrator._onOrderIntent()`** — call `reserve()` before `riskEngine.check()`, publish `CAPITAL_UNAVAILABLE` on failure, publish `CAPITAL_RESERVED` on success.
-- [ ] **Release reservations on fill/cancel/reject** — listen to `ORDER_FILLED`, `ORDER_CANCELED`, `RISK_REJECTED` events and call `release(intent.meta.reservationId)`.
-- [ ] **Wire `OrderIntentQueue` into `_onOrderIntent()`** — enqueue after risk passes, add dequeue loop.
-- [ ] **Implement `ParentChildOrderTracker.onChildFill()`** — accumulate fill qty, mark completion.
-- [ ] **Implement `ParentChildOrderTracker.isComplete()`** — check `filledQty >= totalQty`.
-- [ ] **Implement `ParentChildOrderTracker.getPendingParents()`** — filter by `completedAt === undefined`.
-- [ ] **Pass `CapitalReservationManager` and `ParentChildOrderTracker` to TWAP/VWAP algos** via `ExecutionEngine` constructor.
+`RISK_REJECTED` identifies a failed guard; `CAPITAL_UNAVAILABLE` identifies a
+reservation failure. Neither proves an order reached a broker. Use the run's
+signal funnel and logs as described in
+[strategy troubleshooting](../guides/troubleshooting-strategies.md).

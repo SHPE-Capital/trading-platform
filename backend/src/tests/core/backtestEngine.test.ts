@@ -39,6 +39,8 @@ import type { PortfolioSnapshot } from '../../types/portfolio';
 import type { Fill } from '../../types/orders';
 import { PairsStrategy } from '../../strategies/pairs/pairsStrategy';
 import { createPairsConfig } from '../../strategies/pairs/pairsConfig';
+import { STRATEGY_DEFINITIONS } from '../../config/strategyDefaults';
+import { buildBacktestStrategies } from '../../core/backtest/strategyFactory';
 
 const MockLoader = BacktestLoader as jest.MockedClass<typeof BacktestLoader>;
 
@@ -125,6 +127,26 @@ beforeEach(() => {
   // Default: no bars
   MockLoader.mockImplementation(() => ({ streamBars: jest.fn().mockImplementation(async function*() { yield []; }) } as unknown as BacktestLoader));
 });
+
+it('backtests the beginner reversal through the catalog and fills its orders', async () => {
+  const ts = Date.parse('2024-01-02T15:00:00Z');
+  const engine = makeEngineWithBars([100, 99, 98, 101, 102, 100].map((price, i) => makeBar('SPY', ts + i * 60_000, price)));
+  const config = makeConfig({
+    startDate: '2024-01-02T00:00:00Z', endDate: '2024-01-03T00:00:00Z',
+    strategyConfig: { ...makeConfig().strategyConfig, type: 'beginner_reversal', symbols: ['SPY'], cooldownMs: 0 },
+  });
+  const result = await engine.run(config, () => buildBacktestStrategies(config));
+  expect(result.status).toBe('completed');
+  expect(result.orders?.length).toBeGreaterThan(0);
+  expect(result.fills?.length).toBeGreaterThan(0);
+  expect(result.orders?.slice(0, 3).map((order) => ({ side: order.side, qty: order.qty }))).toEqual([
+    { side: 'buy', qty: 1 },
+    { side: 'sell', qty: 1 },
+    { side: 'sell', qty: 1 },
+  ]);
+  expect(result.config.strategyVersion).toBe(STRATEGY_DEFINITIONS.beginner_reversal.algorithmVersion);
+});
+
 
 describe('run(): refuses to execute in a trading process', () => {
   afterEach(() => {

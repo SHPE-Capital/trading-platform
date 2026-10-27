@@ -32,6 +32,13 @@ api_url = "http://127.0.0.1"
 enabled = true
 port = 54324
 
+# Optional Supabase log collection is unnecessary for local app development.
+# On Windows its Vector collector requires Docker's TCP logging endpoint.
+# Keep default-port and remapped stacks consistent; use docker logs instead.
+[analytics]
+enabled = false
+port = 54327
+
 [storage]
 enabled = true
 file_size_limit = "50MiB"

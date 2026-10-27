@@ -19,7 +19,7 @@
 import type { IStrategy } from "../strategies/base/strategy";
 import type { StrategyType } from "../types/strategy";
 
-export type StrategyStatus = "planned" | "ready" | "retired";
+export type StrategyStatus = "planned" | "experimental" | "ready" | "retired";
 
 /** One editable field in the generic strategy form. */
 export interface ParamSpec {
@@ -38,6 +38,10 @@ export interface ParamSpec {
 export interface StrategyManifest {
   type: StrategyType;
   status: StrategyStatus;
+  /** Hide teaching/reference implementations from every picker, independently of eligibility. */
+  hidden?: boolean;
+  /** All strategies use the common engine unless explicitly unsupported. */
+  backtestable?: boolean;
   label: string;
   description: string;
   /**

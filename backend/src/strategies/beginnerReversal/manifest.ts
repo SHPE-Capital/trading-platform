@@ -1,8 +1,8 @@
 /**
  * strategies/beginnerReversal/manifest.ts
  *
- * How the platform sees the beginner reversal strategy. Flip `status` to
- * "ready" to release it: it then appears in the frontend strategy picker.
+ * UI registration for the beginner reversal reference. Released for testing
+ * through the strategy and backtest forms.
  */
 
 import { asProblem, type StrategyManifest } from "../../config/strategyManifest";
@@ -17,7 +17,7 @@ import {
 
 export const beginnerReversalManifest: StrategyManifest = {
   type: "beginner_reversal",
-  status: "planned",
+  status: "ready",
   label: "Beginner Reversal (course)",
   description:
     "Course example: sells a symbol after its 1-minute bar closes up and buys after it closes down, " +

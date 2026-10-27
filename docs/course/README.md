@@ -3,10 +3,10 @@
 A 60–90 minute live-coding lesson for beginners. Learners write a very small
 strategy, release it on the platform, and watch it trade on a paper account.
 
+- First-time setup: [setup.md](setup.md) (Git, Node.js, Docker, and your own Alpaca paper keys)
 - Learner handout: [lesson-steps.md](lesson-steps.md) (six runnable steps + exercises)
 - Vocabulary: [glossary.md](glossary.md)
-- Answer key: `backend/src/strategies/beginnerReversal/` (status `planned`, so it never
-  shows up in the picker)
+- Answer key: `backend/src/strategies/beginnerReversal/` (temporarily `ready` and visible as **Beginner Reversal (course)** for UI verification)
 
 ## The one-diagram explanation (10 min)
 
@@ -32,15 +32,22 @@ market data → state (latest bar, position) → evaluate() → signal → risk 
 Pace by the checkpoints, not the clock: every step has a **Check it** line. If a
 learner's check fails, they fix it before moving on.
 
-## The teaching moment: `planned` → `ready`
+## The teaching moment: experimental to ready
 
-Each strategy carries a status in its manifest. In step 2, flipping `planned` to
-`ready` is what makes it appear on the page. Use it to explain how real teams ship:
-code can be merged and tested while hidden, then released with one deliberate change.
-Exercise 4 (`retired`) shows the other half: new launches stop, but strategies that
-are already running keep running.
+Register a strategy as `experimental` to backtest it and run it on a local simulated
+book or personal paper account. The local stack selects the development policy.
+The same strategy is available for backtesting in the cloud, but shared trading
+requires `ready`. Explain the distinction between technical capability, release
+status, and where orders go. Real money always requires readiness and lead approval.
+Exercise 4 (`retired`) stops new trading launches while preserving active runs and
+historical backtests. Beginner Reversal is currently visible and runnable as the
+reference implementation; learners still register their own named strategy.
 
 ## Before class (do this the day before)
+
+Start with the [beginner setup guide](setup.md) if this is your first time running
+the repo. It covers installation, local login, and the difference between local
+simulated orders and orders on your own Alpaca paper account.
 
 1. **Run it locally, in sim.** Each learner (or pair) runs their own stack: `npm run dev:stack`
    ([local development](../guides/local-development.md)), or the
@@ -86,6 +93,7 @@ blocked and by which check, and (in Steps 3–5) what the strategy decided and w
 
 ## What this lesson deliberately skips
 
-Backtesting, risk limits, order types, and the review/approval workflow for going
+The optional backtest checkpoint uses the same strategy; the core lesson skips
+backtest methodology, risk limits, order types, and the review/approval workflow for going
 live. Mention that they exist ("the risk layer is why you can't blow up the account
 from here") and point to the architecture docs for a second session.

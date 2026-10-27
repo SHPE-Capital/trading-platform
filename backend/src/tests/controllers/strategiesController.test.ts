@@ -43,6 +43,8 @@ import {
   stopStrategyRun,
 } from '../../app/controllers/strategiesController';
 import type { StrategyRun } from '../../types/strategy';
+import { env } from '../../config/env';
+import { STRATEGY_DEFINITIONS } from '../../config/strategyDefaults';
 
 const mockInsertRun = repos.insertStrategyRun as jest.Mock;
 const mockUpdateRun = repos.updateStrategyRun as jest.Mock;
@@ -179,6 +181,29 @@ describe('startStrategyRun', () => {
 });
 
 describe('startStrategyRun: with orchestrator', () => {
+  it.each(['development', 'shared'] as const)('enforces %s eligibility before activating an experimental run', async (profile) => {
+    const definition = STRATEGY_DEFINITIONS.minute_reversal;
+    const originalStatus = definition.status;
+    const originalProfile = env.strategyPolicyProfile;
+    const liveRuns = makeLiveRuns();
+    try {
+      definition.status = 'experimental';
+      Object.defineProperty(env, 'strategyPolicyProfile', { value: profile, writable: true, configurable: true });
+      mockGetStrategy.mockResolvedValue({ id: 'strat-1', strategy_type: 'minute_reversal', name: 'Prototype', owner_id: TEST_USER.id });
+      mockGetVersion.mockResolvedValue({ id: 'ver-1', strategyId: 'strat-1', config: { symbols: ['SPY'] } });
+      mockInsertRun.mockResolvedValue(undefined);
+      const res = mockRes();
+      await startStrategyRun(ctxReq({
+        orchestrator: { hasStrategyWithConfigId: jest.fn().mockReturnValue(false) },
+        liveRuns, executionMode: 'paper', executionTarget: 'sim',
+      }, { body: { strategyId: 'strat-1', versionId: 'ver-1' } }), res);
+      expect(res.status).toHaveBeenCalledWith(profile === 'development' ? 201 : 400);
+      expect(liveRuns.activate).toHaveBeenCalledTimes(profile === 'development' ? 1 : 0);
+    } finally {
+      definition.status = originalStatus;
+      Object.defineProperty(env, 'strategyPolicyProfile', { value: originalProfile, writable: true, configurable: true });
+    }
+  });
   it('returns 400 when strategy type is unknown', async () => {
     mockGetStrategy.mockResolvedValue({
       id: 'strat-1', strategy_type: 'no_such_strategy', name: 'x', config: {}, owner_id: TEST_USER.id,

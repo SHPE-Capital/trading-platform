@@ -10,7 +10,7 @@
  * would force a VERSION bump for no behaviour change.
  */
 
-import { DEFAULT_PAIRS_CONFIG } from "../strategies/pairs/pairsConfig";
+import { DEFAULT_PAIRS_CONFIG, createPairsConfig } from "../strategies/pairs/pairsConfig";
 import { PairsStrategy } from "../strategies/pairs/pairsStrategy";
 import type { PairsStrategyConfig } from "../strategies/pairs/pairsTypes";
 import { MinuteReversalStrategy } from "../strategies/minuteReversal/minuteReversalStrategy";
@@ -38,7 +38,14 @@ const pairsManifest: StrategyManifest = {
     symbols: ["SPY", "QQQ"],
     name: "Pairs: SPY/QQQ",
   },
-  create: (config) => new PairsStrategy(config as unknown as PairsStrategyConfig),
+  create: (config) => {
+    const symbols = config.symbols as string[] | undefined;
+    return new PairsStrategy(createPairsConfig(
+      (config.leg1Symbol as string) ?? symbols?.[0] ?? "SPY",
+      (config.leg2Symbol as string) ?? symbols?.[1] ?? "QQQ",
+      config as Partial<PairsStrategyConfig>,
+    ));
+  },
   // No `params`: pairs trading has its own form in the frontend.
 };
 

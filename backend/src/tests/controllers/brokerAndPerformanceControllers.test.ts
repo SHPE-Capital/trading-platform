@@ -159,11 +159,20 @@ describe("compareRunWithBacktest", () => {
     expect(jobs.enqueueBacktestJob).not.toHaveBeenCalled();
   });
 
-  it("says plainly when the strategy type cannot be backtested", async () => {
+  it("queues a comparison for a supported non-pairs strategy", async () => {
     (repos.getStrategyRunById as jest.Mock).mockResolvedValue({ ...pairsRun, strategyType: "minute_reversal" });
     const res = mockRes();
     await compareRunWithBacktest(postReq("run-p"), res);
+    expect(res.status).toHaveBeenCalledWith(202);
+    expect(jobs.enqueueBacktestJob).toHaveBeenCalled();
+  });
+
+  it("says plainly when the strategy type cannot be backtested", async () => {
+    (repos.getStrategyRunById as jest.Mock).mockResolvedValue({ ...pairsRun, strategyType: "unregistered_strategy" });
+    const res = mockRes();
+    await compareRunWithBacktest(postReq("run-p"), res);
     expect(res.status).toHaveBeenCalledWith(400);
-    expect(res.json.mock.calls[0][0].error).toMatch(/not supported for minute_reversal/);
+    expect(res.json.mock.calls[0][0].error).toMatch(/not supported for unregistered_strategy/);
+    expect(jobs.enqueueBacktestJob).not.toHaveBeenCalled();
   });
 });

@@ -76,7 +76,7 @@ export function validateBeginnerReversalConfig(config: BeginnerReversalConfig): 
 export class BeginnerReversalStrategy extends BaseStrategy {
   readonly type: StrategyType = "beginner_reversal";
   /** Bump when the signal logic changes (CI enforces it). */
-  static readonly VERSION = 1;
+  static readonly VERSION = 2;
   readonly version = BeginnerReversalStrategy.VERSION;
   /** Decide only when a bar arrives; quotes and trades never call evaluate(). */
   readonly triggers: readonly MarketEventKind[] = ["bar"];

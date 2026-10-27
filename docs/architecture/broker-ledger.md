@@ -2,7 +2,7 @@
 
 ## Overview
 
-The club trades one shared Alpaca account with many strategies. Alpaca knows
+A shared deployment can trade one Alpaca account with many strategies. Alpaca knows
 what executed, but it nets positions per symbol and cannot say which strategy
 an order belonged to. The ledger splits the job:
 
@@ -49,7 +49,7 @@ so it has no sync step. `SimBroker` reads the same tables back through `IBroker`
 - `orders.run_id`, `client_order_id`, `signal_id`, `decision_price`, `broker_account`, `source`.
 - `fills.run_id`, `broker_fill_id` (unique per account), `broker_account`, `source`.
 - `broker_fees` — account-level charges (Alpaca does not tie them to orders).
-- `signals` — every signal and its outcome (written from phase 3 on).
+- `signals` — strategy signals and their recorded outcomes.
 - `broker_sync_state` — sync cursors and the last error.
 - `broker_drift` — per symbol, only where something is wrong:
   `unattributed_qty` (no run accounts for it) or `stopped_qty` (a stopped run
@@ -67,6 +67,10 @@ Drift is an alert, never a block. After each pass the runtime publishes
   manages the position any more.
 
 ## Backfill
+
+Run the commands below from `backend/` with the intended database and personal
+broker credentials configured. This reads broker history but writes the target
+database unless `--dry-run` is selected.
 
 `npm run broker:backfill` copies an account's whole history into the ledger and
 attributes orders that predate run-tagged client ids, using the rules in
@@ -119,8 +123,9 @@ Closed trades use the same FIFO lot accounting as the backtest engine
 - **Backtest vs live** — `POST /api/runs/:runId/compare-backtest` queues a
   backtest of the run's exact window and config (tagged `sourceRunId`, linked
   from `strategy_runs.meta.compareBacktestId`). The run page overlays the two
-  PnL curves: live tracking its backtest but trailing it points at execution;
-  both losing points at the strategy. Pairs only, like the backtest engine.
+  PnL curves to investigate decision/execution differences. The endpoint accepts
+  types supported by the catalog-derived backtest factory; it is no longer
+  pairs-only. An overlay alone does not establish the cause of a difference.
 - **Benchmark** — buy-and-hold of `BENCHMARK_SYMBOL` (default SPY) over the
   same window, through the shared bar cache; shown as a return and a curve.
 - **Behaviour** — holding-time distribution of closed trades, exposure over

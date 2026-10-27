@@ -74,6 +74,15 @@ function executionTarget(): ExecutionTarget {
 const alpacaApiKey = optional("ALPACA_API_KEY", "");
 const alpacaApiSecret = optional("ALPACA_API_SECRET", "");
 
+function strategyPolicyProfile(): "development" | "shared" {
+  const value = optional("STRATEGY_POLICY_PROFILE", "shared");
+  if (value !== "development" && value !== "shared") throw new Error("STRATEGY_POLICY_PROFILE must be development or shared");
+  if (value === "development" && optional("APP_RUNTIME_ORIGIN", "local") === "aws-prod") {
+    throw new Error("aws-prod requires STRATEGY_POLICY_PROFILE=shared");
+  }
+  return value;
+}
+
 export const env = {
   // Server
   port: optionalNumber("PORT", 8080),
@@ -86,6 +95,7 @@ export const env = {
 
   // Execution
   executionTarget: executionTarget(),
+  strategyPolicyProfile: strategyPolicyProfile(),
   /**
    * Account number this runtime must be trading. Mandatory on the AWS origin;
    * optional for a member's own paper account.

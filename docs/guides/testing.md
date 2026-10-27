@@ -1,58 +1,80 @@
-# Testing Infrastructure Guide
+# Testing
 
-This repository uses a tiered testing architecture powered by **Jest** to ensure the integrity of the trading engine, accounting ledger, and persistence pipeline.
+Backend tests use Jest; frontend tests use Vitest and Testing Library. Run
+commands from the package directory shown below. Dependency setup belongs to
+[local development](local-development.md).
 
-## Test Layers
+## Backend checks
 
-1. **Unit Tests** (`test/unit/*.test.ts`)
-   - Hermetic tests for individual modules.
-   - **PortfolioState**: Validates ledger invariants (CHECK 7), long/short flips, and MTM accounting.
-   - **RiskEngine**: Verifies position limits, notional exposure, and short-selling gates.
-   - **Downsampling**: Ensures equity curve compression preserves critical data points.
+From `backend/`:
 
-2. **Integration Tests** (`test/int/*.test.ts`)
-   - End-to-end backtest runs using synthetic data streams.
-   - Verifies the full pipeline: Orchestrator → Strategy → Execution → Portfolio → Metrics.
-   - Ensures deterministic results and accounting reconciliation at the engine level.
-
-3. **HTTP Contract Tests** (`test/http/*.test.ts`)
-   - Verifies API endpoint behavior using `supertest`.
-   - Mocks the engine to test controller logic, request validation, and status codes (e.g., 202 Accepted for backtest runs).
-
-## Running Tests
-
-```bash
-# Run all tests
-npm test
-
-# Run unit tests only (fastest)
-npm run test:unit
-
-# Run integration tests only
-npm run test:int
-
-# Run HTTP tests only
-npm run test:http
-
-# Run full CI suite with coverage gate (80% threshold)
-npm run test:ci
+```text
+npm run typecheck
+npm run lint
+npm test -- --runInBand
+npm run build
 ```
 
-`test:unit` also runs the latency-benchmark suites (`src/tests/bench`, telemetry,
-recorder, normalizer validation). They need no credentials and send nothing.
-Benchmark runs themselves are separate commands; see
-[latency-benchmark.md](latency-benchmark.md).
+Jest transpiles tests without type-checking their import graphs, so a passing
+test run does not replace `npm run typecheck` (which includes tests).
 
-## Coverage Thresholds
+| Command | Scope under `backend/src/tests/` |
+|---|---|
+| `npm run test:unit` | Core, repositories, utilities, adapters, strategy, services, controllers and benchmark suites |
+| `npm run test:int` | Synthetic end-to-end engine tests under `int/` |
+| `npm run test:http` | Supertest HTTP contracts under `http/` |
+| `npm run test:ci` | Jest with coverage and its configured threshold |
+| `npm run test:live` | Explicit integration opt-in; inspect credentials/targets and individual tests before running |
 
-The CI suite enforces an **80% line coverage** threshold on the following critical directories:
-- `src/core/backtest` (Backtest Engine)
-- `src/core/state` (Portfolio/Symbol State)
-- `src/core/risk` (Risk Engine)
-- `src/adapters/supabase` (Persistence Repositories)
+For one strategy, for example:
 
-## Key Accounting Invariants (CHECK 7)
+```text
+npm test -- --runInBand src/tests/strategy/beginnerReversalStrategy.test.ts
+```
 
-All tests verify the following identity:
-`Equity = Cash + PositionsValue`
-`TotalReturn = TotalRealizedPnL + TotalUnrealizedPnL = FinalEquity - InitialCapital`
+Ordinary unit/HTTP/benchmark suites use mocks or local synthetic input.
+Executable benchmarks are separate commands: see
+[latency benchmark](latency-benchmark.md).
+
+## Frontend checks
+
+From `frontend/`:
+
+```text
+npm run lint
+npm test
+npm run build
+```
+
+Tests live under `frontend/__tests__/`. Supply the build's required public
+Supabase configuration as described in the environment template/CI workflow.
+
+## Coverage and CI
+
+`backend/jest.config.js` collects coverage from an explicit list of accounting,
+risk, backtest, orchestration, reservation/OMS, and repository files, with a
+**global 80% line threshold** for that list. It is not an independent 80% gate
+on every directory. `test:ci` enables it.
+
+The current `.github/workflows/ci.yml` runs backend typecheck, lint, tests, and
+build; frontend lint, tests, and build; and a backend Docker build. Its backend
+test command is ordinary `npm test -- --runInBand`, not `test:ci`, so the workflow
+does not currently enable that coverage gate. The separate `.github/workflows/strategy-version.yml` runs
+`scripts/check-strategy-versions.mjs` on pull requests, including label changes.
+It compares against the target branch and supports the documented
+`strategy-version-unchanged` override for behavior-neutral changes.
+
+## Accounting and behavioral checks
+
+Portfolio/engine suites check cash, marked position value, fills, fees and
+realized/unrealized PnL. The basic equity identity is:
+
+```text
+equity = cash + signed marked position value
+```
+
+When reconciling equity change to realized plus unrealized PnL, account for
+commissions/fees according to the metric's definition. These invariants belong
+to the relevant accounting suites; not every HTTP/UI test asserts them.
+For behavior changes, test decision timing, risk rejection, partial fills,
+reservation release, and algorithm-version changes where applicable.

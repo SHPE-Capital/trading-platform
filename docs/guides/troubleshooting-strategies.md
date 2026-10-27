@@ -6,12 +6,16 @@ When a launched strategy isn't behaving, there are three places to look, in this
 2. **The run's page** (click the run under *All Runs*): the *Runner events* timeline and the *Signal funnel*.
 3. **The run's status card**: the status badge, the algorithm version (`vN`), and any error streak.
 
-Set `LOG_LEVEL=debug` in `backend/.env` for the extra "why did it not trade?" lines some strategies print.
+For direct Node processes, set `LOG_LEVEL=debug` in `backend/.env` for extra
+decision lines in strategies that provide them. Docker does not forward every
+file setting: add an explicit service environment override for `LOG_LEVEL` and
+recreate the affected service. See [environment forwarding](local-development.md#market-data-and-environment-forwarding).
 
 ## Symptom, cause, where to look
 
 | Symptom | Likely cause | What you'll see |
 |---|---|---|
+| Type missing or launch disabled | Lifecycle/hidden metadata, runtime profile, or unsupported capability | Check server action reasons and [strategy policy](../architecture/strategy-policy.md) |
 | Can't save a configuration | A value the strategy can't trade with | The form shows `Invalid configuration: <reason>` (HTTP 400). Nothing is saved |
 | Save worked but **Start** fails | A version saved before checks existed, or by a strategy with no save-time check | `This version cannot run: <reason>` (HTTP 400). Save a corrected version and start that |
 | Started, but **never trades** | The symbol gets no data (typo, not on your feed), the feed is down, or the market is closed | Terminal: `LiveRunCoordinator: run activated` lists the symbols and what the strategy decides on. After `DIAGNOSTICS_NO_DATA_SECONDS` (default 300) of silence while the market is open: warning `No bar data for XYZ since the run started…`, plus a **NO DATA** event on the run page |

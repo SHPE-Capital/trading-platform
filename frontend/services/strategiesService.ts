@@ -61,7 +61,7 @@ export async function fetchStrategies(): Promise<StoredStrategy[]> {
 }
 
 /**
- * Fetches the strategy types that may be launched (status "ready").
+ * Fetches visible strategy types with server-derived operation eligibility.
  * @returns StrategyDefinition per type, with form params where the strategy has any
  */
 export async function fetchStrategyTypes(): Promise<StrategyDefinition[]> {

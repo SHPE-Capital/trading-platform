@@ -15,6 +15,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { fetchStrategyDefaults } from "../../services/strategiesService";
 import ComparisonChart, { type ChartSeries } from "../../components/charts/ComparisonChart";
 import PerformancePanel from "./PerformancePanel";
 import ExecutionSummary from "../backtest/ExecutionSummary";
@@ -26,7 +27,6 @@ import type { PerformanceReport } from "../../types/analytics";
 import type { BacktestResult, ExecutionSettings } from "../../types/api";
 
 /** Strategy types the backtest engine can simulate (backend core/backtest/strategyFactory.ts). */
-const BACKTESTABLE = new Set(["pairs_trading"]);
 const POLL_MS = 5_000;
 const QUOTE_FILLS: ExecutionSettings = { model: "quote" };
 
@@ -113,6 +113,16 @@ function pnlSeries(backtest: BacktestResult, label: string, color: string): Char
 }
 
 export default function CompareSection({ report, run }: Props) {
+  const [capability, setCapability] = useState<{ type: string; allowed: boolean } | null>(null);
+  const strategyType = run?.strategyType;
+  const canBacktest = capability?.type === strategyType && capability?.allowed;
+  useEffect(() => {
+    let cancelled = false;
+    if (strategyType) fetchStrategyDefaults(strategyType)
+      .then((def) => { if (!cancelled) setCapability({ type: strategyType, allowed: def.actions?.backtest.allowed === true }); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [strategyType]);
   const barFills = useComparison(run?.id, run?.compareBacktestId);
   const quoteFills = useComparison(run?.id, run?.compareQuoteBacktestId, QUOTE_FILLS);
   const backtest = barFills.backtest;
@@ -137,7 +147,6 @@ export default function CompareSection({ report, run }: Props) {
   }
 
   const benchmarkReturn = report.metrics.benchmarkReturn;
-  const canBacktest = !!run && BACKTESTABLE.has(run.strategyType);
 
   return (
     <Section

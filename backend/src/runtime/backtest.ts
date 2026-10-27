@@ -15,8 +15,8 @@ import { BacktestEngine } from "../core/backtest/backtestEngine";
 import { BacktestLoader } from "../core/backtest/backtestLoader";
 import { SupabaseBarCache } from "../adapters/supabase/barCacheRepository";
 import { createTickSource } from "../adapters/alpaca/historicalData";
-import { PairsStrategy } from "../strategies/pairs/pairsStrategy";
-import { createPairsConfig } from "../strategies/pairs/pairsConfig";
+import { buildBacktestStrategies } from "../core/backtest/strategyFactory";
+import { STRATEGY_DEFINITIONS } from "../config/strategyDefaults";
 import { insertBacktestResult, insertBacktestOrders, insertBacktestFills } from "../adapters/supabase/repositories";
 import { logger } from "../utils/logger";
 import { newId } from "../utils/ids";
@@ -25,14 +25,20 @@ import type { BacktestConfig } from "../types/backtest";
 async function main(): Promise<void> {
   logger.info("runtime/backtest: starting");
 
-  const pairsConfig = createPairsConfig("SPY", "QQQ");
+  const type = process.env.BACKTEST_STRATEGY_TYPE ?? "pairs_trading";
+  const definition = STRATEGY_DEFINITIONS[type];
+  if (!definition) throw new Error(`Unknown strategy type: ${type}`);
+  // JSON overrides let the same CLI exercise any registered strategy.
+  const overrides = JSON.parse(process.env.BACKTEST_STRATEGY_CONFIG ?? "{}");
+  const strategyConfig = { ...definition.defaultConfig, ...overrides, type } as BacktestConfig["strategyConfig"];
 
   const config: BacktestConfig = {
     id: newId(),
-    name: "SPY/QQQ Pairs Backtest",
-    strategyConfig: pairsConfig as never,
-    startDate: "2023-01-01T00:00:00Z",
-    endDate: "2023-12-31T23:59:59Z",
+    name: `${definition.label} Backtest`,
+    strategyConfig,
+    strategyVersion: definition.algorithmVersion,
+    startDate: process.env.BACKTEST_FROM ?? "2023-01-01T00:00:00Z",
+    endDate: process.env.BACKTEST_TO ?? "2023-12-31T23:59:59Z",
 
     initialCapital: 100_000,
     dataGranularity: "bar",
@@ -42,13 +48,7 @@ async function main(): Promise<void> {
   };
 
   const engine = new BacktestEngine(new BacktestLoader({ cache: new SupabaseBarCache() }), { tickSource: createTickSource });
-  const strategy = new PairsStrategy(pairsConfig);
-  const result = await engine.run(config, () => [strategy]);
-
-  // Print signal funnel debug counters when BACKTEST_DEBUG=1
-  if (process.env.BACKTEST_DEBUG === "1") {
-    strategy.printDebugCounters();
-  }
+  const result = await engine.run(config, () => buildBacktestStrategies(config));
 
   logger.info("runtime/backtest: completed", {
     id: result.id,
