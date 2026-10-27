@@ -63,13 +63,16 @@ simulated orders and orders on your own Alpaca paper account.
    instead; the navbar badge shows which situation a learner is in.
 3. **Restarts.** After you edit backend code you must restart the backend. With the Docker
    stack on Windows, edits on the host may not trigger nodemon in the container, so be ready
-   to restart the container yourself (`docker compose restart <service>`). Rehearse this; a
+   to restart the containers yourself (`docker compose -f docker/docker-compose.dev.yml restart
+   paper-trading api backtest-worker`). Backtests run in `backtest-worker`, so an after-hours
+   backtest of edited code needs that one restarted too. Rehearse this; a
    reload that doesn't fire in front of a class is the most common stumble. A run left
    running is adopted again automatically after the restart.
 4. **Sandbox limits.** Each member has a cap on active sandbox runs and a capital cap. Stop old
    runs before class.
 5. **Check Docker is up** (and the machine stays awake) before learners arrive.
-6. **Dry-run the steps** yourself once, on the replay settings you will teach with. Every code
+6. **Dry-run the steps** yourself once, at the time of day you will teach: live bars during
+   market hours, or backtests over a past week outside them. Every code
    block in `lesson-steps.md` was compiled step by step, but your environment is the one that
    matters.
 

@@ -65,10 +65,11 @@ for updates, and the browser reuses its cached response when the data is unchang
 They do not require a fix; `401` before login is also expected.
 
 Source directories are bind-mounted; dependencies live in Docker volumes. If
-backend edits do not trigger nodemon on Windows, restart the affected services:
+backend edits do not trigger nodemon on Windows, restart the affected services.
+Backtests run in `backtest-worker`, so include it after editing strategy code:
 
 ```text
-docker compose -f docker/docker-compose.dev.yml restart paper-trading api
+docker compose -f docker/docker-compose.dev.yml restart paper-trading api backtest-worker
 ```
 
 The default stack omits real-money trading and sets

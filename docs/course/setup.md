@@ -187,7 +187,7 @@ in that shell, and rerun `npm run dev:stack`.
 | Alpaca authentication fails | Check both halves of the key pair, that they belong to your paper account, and whether you regenerated them. Restart after changing keys. |
 | `406 connection limit exceeded` | Another process may be using your account's market-data stream. Stop it before reconnecting this runner. |
 | Strategy runs but does nothing | Check market hours, incoming bars, the configured symbols, and the runner logs. The first bar is only a baseline; risk checks or the position cap can also block an order. |
-| Backend edits do not appear on Windows | Restart the relevant service: `docker compose -f docker/docker-compose.dev.yml restart paper-trading api`. |
+| Backend edits do not appear on Windows | Restart the relevant service: `docker compose -f docker/docker-compose.dev.yml restart paper-trading api backtest-worker`. |
 
 For more details, see [local development](../guides/local-development.md) and
 [strategy troubleshooting](../guides/troubleshooting-strategies.md).
