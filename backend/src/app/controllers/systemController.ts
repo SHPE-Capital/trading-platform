@@ -11,9 +11,11 @@ import { getSupabaseClient } from "../../adapters/supabase/client";
 import { env } from "../../config/env";
 import { nowIso } from "../../utils/time";
 import type { AppContext } from "../context";
-import type { MarketDataStatus } from "../../core/live/marketDataMonitor";
+import type { MarketDataState, MarketDataStatus } from "../../core/live/marketDataMonitor";
 
 type SystemHealthStatus = "healthy" | "degraded" | "unhealthy";
+
+const DATA_PROBLEM_STATES: ReadonlySet<MarketDataState> = new Set(["no_data", "disconnected", "stale"]);
 type ExecutionMode = "paper" | "live" | "backtest" | "replay";
 
 interface ServiceHealth {
@@ -128,12 +130,18 @@ export async function getSystemStatus(req: Request, res: Response): Promise<void
   else if (healthyCount === 1) status = "degraded";
   else status = "unhealthy";
 
+  // A trading runtime that can't receive bars can't trade, so it is not "operational".
+  const marketDataStatus = marketData?.status() ?? null;
+  if (status === "healthy" && marketDataStatus && DATA_PROBLEM_STATES.has(marketDataStatus.state)) {
+    status = "degraded";
+  }
+
   const body: HealthResponse = {
     status,
     services: { supabase, alpaca },
     mode: env.alpacaTradingMode,
     execution: { target: executionTarget ?? null, brokerAccount: brokerAccount ?? null },
-    marketData: marketData?.status() ?? null,
+    marketData: marketDataStatus,
     build: { origin: env.runtimeOrigin, sha: env.buildSha, dirty: env.buildDirty },
     ts: nowIso(),
   };

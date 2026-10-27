@@ -156,6 +156,34 @@ describe('getSystemStatus: market data', () => {
     expect(body.marketData).toEqual({ source: 'alpaca-stream', feed: 'iex', state: 'live' });
   });
 
+  it.each(['no_data', 'disconnected', 'stale'])('degrades overall health when market data is %s', async (state) => {
+    mockSupabaseOk();
+    const marketData = { status: () => ({ source: 'alpaca-stream', feed: 'iex', state }) };
+    const res = mockRes();
+    const req = { app: { locals: { ctx: { executionTarget: 'sim', marketData } } } } as unknown as Request;
+    await getSystemStatus(req, res);
+    expect((res.json as jest.Mock).mock.calls[0][0].status).toBe('degraded');
+  });
+
+  it.each(['live', 'idle', 'market_closed'])('stays healthy when market data is %s', async (state) => {
+    mockSupabaseOk();
+    const marketData = { status: () => ({ source: 'alpaca-stream', feed: 'iex', state }) };
+    const res = mockRes();
+    const req = { app: { locals: { ctx: { executionTarget: 'sim', marketData } } } } as unknown as Request;
+    await getSystemStatus(req, res);
+    expect((res.json as jest.Mock).mock.calls[0][0].status).toBe('healthy');
+  });
+
+  it('keeps unhealthy when services are down and market data is missing', async () => {
+    mockSupabaseFail();
+    mockAlpacaFail(500);
+    const marketData = { status: () => ({ source: 'none', feed: null, state: 'no_data' }) };
+    const res = mockRes();
+    const req = { app: { locals: { ctx: { marketData } } } } as unknown as Request;
+    await getSystemStatus(req, res);
+    expect((res.json as jest.Mock).mock.calls[0][0].status).toBe('unhealthy');
+  });
+
   it('reports null on a process with no market data (the API-only server)', async () => {
     mockSupabaseOk();
     mockAlpacaOk();

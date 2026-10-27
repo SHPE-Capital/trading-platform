@@ -63,8 +63,12 @@ export default function SystemHealthCard({ status, isLoading }: Props) {
     );
   }
 
-  const banner = BANNER[status.status];
   const data = describeMarketData(status.marketData);
+  // The backend degrades an otherwise healthy status when the runner has no usable bars.
+  const servicesUp = status.services.supabase.health && status.services.alpaca.health;
+  const banner = status.status === "degraded" && servicesUp && data
+    ? { ...BANNER.degraded, label: `Market data problem: ${data.label}` }
+    : BANNER[status.status];
   const fills = describeFills(status.execution);
 
   return (
