@@ -16,6 +16,7 @@ import type {
 import { formatCurrency, formatPercent, pnlColorClass } from "../../utils/formatting";
 import { formatDuration, formatTimestamp } from "../../utils/dates";
 import { runDataLabel } from "../../utils/marketData";
+import { describeHoldingMs } from "../../utils/holdingTime";
 
 export function Section({ title, children, hint }: { title: string; children: React.ReactNode; hint?: string }) {
   return (
@@ -96,11 +97,15 @@ export function SlippageCard({ slippage }: { slippage: SlippageSummary }) {
   );
 }
 
-export function HoldingTimesCard({ buckets }: { buckets: PerformanceReport["holdingTimes"] }) {
+/** `maxHoldingMs` is the strategy's hard hold limit, shown only for strategies that have one. */
+export function HoldingTimesCard({ buckets, maxHoldingMs }: { buckets: PerformanceReport["holdingTimes"]; maxHoldingMs?: number }) {
   const max = Math.max(1, ...buckets.map((b) => b.trades));
   const any = buckets.some((b) => b.trades > 0);
   return (
-    <Section title="Holding time" hint="Closed trades by how long the position was held.">
+    <Section
+      title="Holding time"
+      hint={`Closed trades by how long the position was held.${maxHoldingMs === undefined ? "" : ` Hard limit: positions are force-closed after ${describeHoldingMs(maxHoldingMs)}.`}`}
+    >
       {!any ? <Empty>No closed trades yet.</Empty> : (
         <ul className="space-y-1.5 text-xs">
           {buckets.filter((b) => b.trades > 0).map((b) => (

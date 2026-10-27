@@ -165,7 +165,7 @@ The strategy takes one observation per minute, from both legs' completed 1-minut
 | `z > +entryZScore` | **Enter short spread** — sell leg1, buy leg2 (spread is unusually high, expect it to fall) |
 | `\|z\| < exitZScore` | **Exit position** — spread has reverted to the mean |
 | `\|z\| > stopLossZScore` | **Stop-loss exit** — spread has moved further against us |
-| Held longer than `maxHoldingTimeMs` | **Time-based exit** — forced close regardless of z-score |
+| Held longer than `maxHoldingTimeMs` | **Time-based exit** — forced close regardless of z-score. Checked on every bar of either leg, even when scoring is skipped (partner bar missing, too few observations, no z-score) |
 
 ### Default Parameters
 
@@ -174,7 +174,7 @@ The strategy takes one observation per minute, from both legs' completed 1-minut
 | `entryZScore` | `2.0` | Z-score magnitude required to enter a trade |
 | `exitZScore` | `0.5` | Z-score magnitude at which to take profit |
 | `stopLossZScore` | `4.0` | Emergency exit threshold |
-| `maxHoldingTimeMs` | `86_400_000` (24h) | Maximum time to hold a position open |
+| `maxHoldingTimeMs` | `86_400_000` (24h) | Hard limit on how long a position stays open. Validated: a whole number of milliseconds, 1 minute to 1 year. Pairs trading only; no other strategy has a default. If both legs stop printing bars (feed outage or halt) nothing runs to enforce it |
 | `rollingWindowMs` | `3_600_000` (1h) | Lookback window for spread statistics |
 | `minObservations` | `30` | Minimum data points before trading |
 | `tradeNotionalUsd` | `5_000` | Dollar value per leg |
