@@ -81,6 +81,9 @@ services:
   paper-trading:
     <<: *backend-service
     command: ["npm", "run", "dev:paper-trading"]
+    # The sim book's account is `sim:<hostname>`. Docker's default hostname is the
+    # container id, which changes on every recreate and strands that book's runs.
+    hostname: paper-trading-sim
     environment:
       <<: *backend-environment
       PORT: "8080"
