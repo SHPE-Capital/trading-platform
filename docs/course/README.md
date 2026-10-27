@@ -5,6 +5,8 @@ strategy, release it on the platform, and watch it trade on a paper account.
 
 - First-time setup: [setup.md](setup.md) (Git, Node.js, Docker, and your own Alpaca paper keys)
 - Learner handout: [lesson-steps.md](lesson-steps.md) (six runnable steps + exercises)
+- Learner prep (homework checklist, common errors, TypeScript cheat sheet, references): [learner-prep.md](learner-prep.md)
+- Instructor notes (meeting plan, sticking points, known doc gaps): [instructor-notes.md](instructor-notes.md)
 - Vocabulary: [glossary.md](glossary.md)
 - Answer key: `backend/src/strategies/beginnerReversal/` (temporarily `ready` and visible as **Beginner Reversal (course)** for UI verification)
 
