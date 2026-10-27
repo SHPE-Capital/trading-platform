@@ -71,6 +71,10 @@ and fences a runner when it can no longer safely hold its leases. Restoration
 uses saved configuration and the current algorithm implementation, persisted
 fills, and optional strategy warm-up hooks. It does not serialize arbitrary
 strategy-local objects. Retiring a type gates new launches, not restoration.
+A runner adopts only runs on its own broker account. A sim account is
+`sim:<hostname>`, so the compose files pin the paper-trading container's
+hostname; otherwise each recreate would strand the previous book's runs. Expired
+sandbox runs no runner holds a lease on are stopped whatever their account.
 
 Account truth and per-run attribution are described in [broker ledger](broker-ledger.md).
 

@@ -26,6 +26,27 @@ export interface ServiceHealth {
   accountStatus?: string;
 }
 
+/** What market data the trading runtime receives (backend core/live/marketDataMonitor.ts). */
+export type MarketDataState = "live" | "stale" | "idle" | "market_closed" | "disconnected" | "no_data";
+
+export interface MarketDataStatus {
+  source: "alpaca-stream" | "none";
+  /** Alpaca feed: "iex" on free keys, "sip" on a paid plan. */
+  feed: string | null;
+  state: MarketDataState;
+  connected: boolean;
+  subscribedSymbols: number;
+  lastBarAt: number | null;
+  staleAfterMs: number;
+  message: string;
+}
+
+/** Where the trading runtime sends orders, and the account it resolved at boot. */
+export interface ExecutionInfo {
+  target: string | null;
+  brokerAccount: string | null;
+}
+
 export interface SystemStatus {
   status: SystemHealthStatus;
   services: {
@@ -34,6 +55,9 @@ export interface SystemStatus {
     alpaca: ServiceHealth;
   };
   mode: ExecutionMode;
+  execution?: ExecutionInfo;
+  /** Null on a backend with no trading engine (API-only). */
+  marketData?: MarketDataStatus | null;
   build?: { origin: string; sha: string; dirty: boolean };
   ts: string;
 }

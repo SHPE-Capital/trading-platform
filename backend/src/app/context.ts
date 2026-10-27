@@ -6,6 +6,7 @@ import type { RiskEngine } from "../core/risk/riskEngine";
 import type { LiveRunCoordinator } from "../core/live/liveRunCoordinator";
 import type { IBroker } from "../core/broker/IBroker";
 import type { SupabaseLedgerStore } from "../adapters/supabase/ledgerRepository";
+import type { MarketDataMonitor } from "../core/live/marketDataMonitor";
 
 /** Minimal interface for subscribing to market data symbols at runtime. */
 export interface MarketDataSubscriber {
@@ -20,6 +21,8 @@ export interface AppContext {
   riskEngine?: RiskEngine;
   /** Used by startStrategyRun to subscribe new symbols when a strategy starts at runtime. */
   marketDataAdapter?: MarketDataSubscriber;
+  /** What market data a trading runtime receives; absent on the API-only process. */
+  marketData?: MarketDataMonitor;
   /** Execution mode of the current runtime — used to label strategy runs created via the API. */
   executionMode?: string;
   /** EXECUTION_TARGET of a trading runtime: "sim", "alpaca-paper" or "alpaca-live". */

@@ -15,6 +15,7 @@ import type {
 } from "../../types/analytics";
 import { formatCurrency, formatPercent, pnlColorClass } from "../../utils/formatting";
 import { formatDuration, formatTimestamp } from "../../utils/dates";
+import { runDataLabel } from "../../utils/marketData";
 
 export function Section({ title, children, hint }: { title: string; children: React.ReactNode; hint?: string }) {
   return (
@@ -213,12 +214,15 @@ export function RunsTable({ runs }: { runs: RunSummary[] }) {
               <th className={`${th} text-right`}>Trades</th><th className={`${th} text-right`}>PnL</th>
             </tr></thead>
             <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
-              {[...runs].sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0)).map((r) => (
+              {[...runs].sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0)).map((r) => {
+                const data = runDataLabel({ marketData: r.marketData });
+                return (
                 <tr key={r.runId}>
                   <td className={td}>
                     <Link href={`/runs/${r.runId}`} className="font-medium text-zinc-900 hover:underline dark:text-zinc-50">{r.name}</Link>
                     <div className="flex gap-1 text-[10px] uppercase tracking-wide text-zinc-400">
                       {r.sandbox && <span>sandbox</span>}{r.backfill && <span>backfilled</span>}<span>{r.runtimeOrigin}</span>
+                      {data && <span>{data}</span>}
                     </div>
                   </td>
                   <td className={`${td} text-zinc-500`}>{r.versionNumber != null ? `v${r.versionNumber}` : "—"}</td>
@@ -229,7 +233,8 @@ export function RunsTable({ runs }: { runs: RunSummary[] }) {
                   <td className={`${td} text-right`}>{r.trades}</td>
                   <td className={`${td} text-right font-semibold ${pnlColorClass(r.pnl)}`}>{formatCurrency(r.pnl)}</td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

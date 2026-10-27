@@ -84,7 +84,7 @@ describe("run stats and reports", () => {
     const b = ledger([fill("sell", 1, 120, 30), fill("buy", 1, 125, 40)], { runId: "b", startedAt: T + 30 * MIN, stoppedAt: T + 50 * MIN });
     const summaries = ["b", "a"].map((runId) => ({
       runId, name: runId, status: "stopped", executionMode: "paper", runtimeOrigin: "x", versionId: null,
-      versionNumber: null, sandbox: false, backfill: false, startedAt: null, stoppedAt: null,
+      versionNumber: null, sandbox: false, backfill: false, marketData: null, startedAt: null, stoppedAt: null,
     }));
     const report = buildStrategyReport("s1", "S", "pairs_trading", [b, a], summaries, { marks: new Map(), now: T + 60 * MIN });
     expect(report.metrics.totalReturn).toBe(10 - 5);

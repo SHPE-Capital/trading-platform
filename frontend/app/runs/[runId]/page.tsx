@@ -29,6 +29,7 @@ import { fetchOrders } from "../../../services/portfolioService";
 import { fetchRunFills } from "../../../services/performanceService";
 import { formatCurrency } from "../../../utils/formatting";
 import { formatTimestamp } from "../../../utils/dates";
+import { runDataLabel } from "../../../utils/marketData";
 import type { StrategyRun } from "../../../types/strategy";
 import type { Fill, Order } from "../../../types/portfolio";
 
@@ -79,6 +80,7 @@ export default function RunPage({ params }: Props) {
               run?.status && `Status: ${run.status}`,
               run?.executionMode,
               run?.runtimeOrigin,
+              runDataLabel(run?.meta),
               run?.strategyVersion != null && `algo v${run.strategyVersion}`,
               run?.startedAt && `started ${formatTimestamp(run.startedAt)}`,
               run?.stoppedAt && `stopped ${formatTimestamp(run.stoppedAt)}`,

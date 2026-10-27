@@ -1,41 +1,21 @@
 # Replay workflows
 
-There are three different replay paths. Choose by purpose; they are not
+There are two different replay paths. Choose by purpose; they are not
 interchangeable features of the Replay page.
 
 | Purpose | Current path | Availability |
 |---|---|---|
-| Run strategies locally outside market hours | Cached-bar feed in the paper/sim runner | Implemented |
 | Measure processing or delay on recorded market frames | Benchmark capture/replay commands | Implemented, separate CLI/artifact format |
 | Browse recorded trading sessions and control them in the Replay page | `ReplayEngine` and `/api/replay/*` | Playback core exists; persisted session integration is incomplete |
 
-## Cached-bar replay for local strategy runs
+## Testing strategies outside market hours
 
-With `EXECUTION_TARGET=sim` and no data credentials reaching the runner,
-`bootstrap.ts` chooses `ReplayBarFeed` instead of the Alpaca stream. The source
-reads the Supabase bar cache and emits market bars. Strategies run through the
-ordinary orchestrator and simulator; fills use the bar model.
-
-The feed re-stamps historical bars relative to publication time rather than
-installing a historical application clock. Higher replay speed compresses the
-time spacing seen by strategies, and overnight gaps are skipped. It is useful
-for exercising the running system, but is not equivalent to a dated backtest.
-
-Follow [local data seeding](local-development.md#seeding-replay-data), then set
-`REPLAY_FROM`, `REPLAY_TO`, and `REPLAY_SPEED` in the launcher's shell. Defaults
-are the last five days at 1x. For Docker, leave `LOCAL_STREAM_DATA` disabled and
-remove trading credentials if you want cached-bar simulation. A direct Node
-process uses data keys from its environment file without that Docker opt-in.
-
-Start saved strategies through the **Strategies** page, not the Replay page.
-The feed subscribes to their symbols. This is useful for inspecting decisions;
-use [backtesting](backtesting.md) for a queued, historical experiment with a
-result report.
-
-A fresh runner can start with no subscriptions: launching the first strategy
-loads its cached symbols and starts playback. Additional symbols join from the
-current replay position. The selected window plays once; restart the paper
-runner to replay that window again for an already-subscribed symbol.
+The paper runner always trades live data; it no longer replays cached bars. A
+cached-bar replay inside the runner could not use a simulated clock (trading
+processes lock the real clock), so strategies saw re-stamped timestamps and
+compressed time and behaved differently than in a backtest. Outside market
+hours, use [backtesting](backtesting.md): the same strategy code, historical
+bars, and a simulated clock.
 
 ## Benchmark recordings
 

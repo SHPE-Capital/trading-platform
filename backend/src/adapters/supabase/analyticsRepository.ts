@@ -258,6 +258,7 @@ export async function runSummariesFor(runs: StrategyRun[]): Promise<Omit<RunSumm
     versionNumber: r.versionId ? numbers.get(r.versionId) ?? null : null,
     sandbox: !!(r.meta as { sandbox?: boolean } | undefined)?.sandbox,
     backfill: !!(r.meta as { backfill?: boolean } | undefined)?.backfill,
+    marketData: (r.meta as { marketData?: RunSummary["marketData"] } | undefined)?.marketData ?? null,
     startedAt: r.startedAt ?? null,
     stoppedAt: r.stoppedAt ?? null,
   }));

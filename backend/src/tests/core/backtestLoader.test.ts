@@ -204,4 +204,17 @@ describe('loadBars: error handling', () => {
     const loader = new BacktestLoader();
     await expect(loader.loadBars(['SPY'], START, END)).rejects.toThrow('SPY');
   });
+
+  it('explains a rejected data key instead of relaying the HTML error page', async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: false,
+      status: 401,
+      statusText: 'Unauthorized',
+      text: async () => '<html><head><title>401 Authorization Required</title></head></html>',
+    });
+    const err: Error = await new BacktestLoader().loadBars(['AAPL'], START, END).catch((e) => e);
+    expect(err.message).toContain('AAPL');
+    expect(err.message).toContain('npm run data:pull');
+    expect(err.message).not.toContain('<html>');
+  });
 });

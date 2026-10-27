@@ -366,11 +366,14 @@ export class BacktestLoader {
       const response = await this._fetchWithRetry(url, { headers });
 
       if (!response.ok) {
-        if (response.status === 401) {
+        // Missing or rejected keys answer with an HTML page; say what to do instead.
+        if (response.status === 401 || response.status === 403) {
+          const reason = response.status === 401 ? "401 Unauthorized" : "403 Forbidden";
           throw new Error(
-            `BacktestLoader: Alpaca rejected the market-data credentials for ${symbol} (401 Unauthorized). ` +
-            "Check your personal ALPACA_DATA_KEY and ALPACA_DATA_SECRET, then restart npm run dev:stack. " +
-            "This is a market-data authentication failure, not an app login failure.",
+            `BacktestLoader: Alpaca rejected the market-data request for ${symbol} (${reason}), and ${symbol} ` +
+              `is not in the local bar cache for ${startDate}..${endDate}. Check your personal ALPACA_DATA_KEY ` +
+              `and ALPACA_DATA_SECRET, then restart npm run dev:stack, or seed the cache with \`npm run data:pull\`. ` +
+              "This is a market-data authentication failure, not an app login failure.",
           );
         }
         const text = await response.text();
