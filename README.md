@@ -330,7 +330,7 @@ Backend API: [http://localhost:8080/api](http://localhost:8080/api)
 # Run a backtest (configure parameters in runtime/backtest.ts)
 npm run dev:backtest
 
-# Run the replay engine
+# Replay a recorded session (record one with REPLAY_RECORD=1; see docs/guides/replay.md)
 npm run dev:replay
 ```
 
@@ -364,8 +364,10 @@ All routes are prefixed with `/api`.
 | `POST` | `/backtest/run` | Run a backtest, returns results |
 | `GET` | `/backtest/results` | List past backtest results |
 | `GET` | `/backtest/results/:id` | Single backtest result detail |
-| `POST` | `/replay/sessions` | Create a replay session |
-| `POST` | `/replay/sessions/:id/control` | Send play/pause/step/reset/set_speed |
-| `GET` | `/replay/sessions/:id` | Get session state |
+| `GET` | `/replay/sessions` | Recorded event logs (replay runtime) |
+| `POST` | `/replay/load` | Load an event log, optionally filtered |
+| `POST` | `/replay/control` | Send play/pause/step/seek/seek_ts/set_speed/reset |
+| `GET` | `/replay/status` | Loaded session state (without its events) |
+| `GET` | `/replay/attribution` | Attribution report once playback completes |
 | `GET` | `/market-data/quotes/:symbol` | Latest quote for a symbol |
 | `GET` | `/market-data/bars/:symbol` | Historical bars for a symbol |

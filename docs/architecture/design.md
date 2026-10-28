@@ -17,7 +17,7 @@ market data and optional paper/live broker execution.
 | Paper runner | `paper-trading.ts` via `bootstrap.ts` | Strategy lifecycle, market feed, risk and execution against a simulator or Alpaca paper account |
 | Backtest worker | `backtestWorker.ts` | Claims durable jobs and runs historical simulations, one job at a time per process |
 | Real-money runner | `real-trading.ts` via `bootstrap.ts` | Separate, explicitly gated Alpaca live runtime; absent from the default Docker stacks |
-| Recorded-event replay | `replay.ts` | Standalone playback engine and partial HTTP integration; not a complete recorded-session workflow |
+| Recorded-event replay | `replay.ts` | Plays back event logs recorded by a trading runtime (`REPLAY_RECORD=1`) over REST + `/ws/events`; does not re-run strategies |
 | Backtest CLI | `backtest.ts` | Runs and persists a simulation without starting an HTTP server |
 
 Default local ports and startup commands belong to
@@ -86,7 +86,7 @@ Account truth and per-run attribution are described in [broker ledger](broker-le
 | Cached-bar sim | Bars from Supabase cache | Replay-paced input and bar fills in the paper runner |
 | Alpaca paper/live | Live market events | Broker submission and asynchronous broker updates |
 | Backtest | Historical bars; optional sparse quote/trade windows for fills | Simulated clock, isolated worker, simulated execution |
-| Recorded-event replay | An explicitly loaded in-memory event array | Playback controls exist; persisted-session loading remains incomplete |
+| Recorded-event replay | A stored `event_logs` stream, optionally filtered | Playback at recorded time; attribution from the recorded signals and fills |
 
 Backtests reuse the orchestrator, strategy implementations, risk checks, and
 portfolio accounting. They install a process-global clock override, so workers
