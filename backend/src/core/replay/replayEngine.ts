@@ -53,6 +53,9 @@ export class ReplayEngine {
       case "seek":
         this._seek(command.targetIndex);
         break;
+      case "seek_ts":
+        this._seek(this._indexAtOrAfter(command.targetTs));
+        break;
       case "set_speed":
         this._setSpeed(command.speed);
         break;
@@ -110,6 +113,19 @@ export class ReplayEngine {
     if (this.session.status === "playing") {
       this._scheduleNext();
     }
+  }
+
+  /** Index of the first event with ts >= targetTs (events are in time order). */
+  private _indexAtOrAfter(targetTs: number): number {
+    const events = this.session!.events;
+    let lo = 0;
+    let hi = events.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (events[mid].ts < targetTs) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
   }
 
   private _setSpeed(speed: ReplaySpeed): void {

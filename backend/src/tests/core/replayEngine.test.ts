@@ -156,6 +156,26 @@ describe('seek command', () => {
   });
 });
 
+describe('seek_ts command', () => {
+  it('moves the cursor to the first event at or after the timestamp', () => {
+    const engine = new ReplayEngine(new EventBus());
+    engine.load(makeSession()); // events at ts=1000,2000,3000
+    engine.control({ action: 'seek_ts', targetTs: 1_500 });
+    expect(engine.getSession()!.cursor).toBe(1);
+    engine.control({ action: 'seek_ts', targetTs: 3_000 });
+    expect(engine.getSession()!.cursor).toBe(2);
+  });
+
+  it('clamps to the first and last events', () => {
+    const engine = new ReplayEngine(new EventBus());
+    engine.load(makeSession());
+    engine.control({ action: 'seek_ts', targetTs: 0 });
+    expect(engine.getSession()!.cursor).toBe(0);
+    engine.control({ action: 'seek_ts', targetTs: 99_000 });
+    expect(engine.getSession()!.cursor).toBe(2);
+  });
+});
+
 describe('set_speed command', () => {
   it('set_speed updates session.speed', () => {
     const engine = new ReplayEngine(new EventBus());
