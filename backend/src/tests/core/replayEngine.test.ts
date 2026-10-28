@@ -27,6 +27,7 @@ jest.mock('../../config/env', () => ({
 
 import { EventBus } from '../../core/engine/eventBus';
 import { ReplayEngine } from '../../core/replay/replayEngine';
+import { nowMs, lockClockForLive, unlockClockForLive } from '../../utils/time';
 import type { ReplaySession } from '../../types/replay';
 import type { TradingEvent as TE } from '../../types/events';
 
@@ -37,6 +38,15 @@ function makeEvents(count = 3): TE[] {
     ts: (i + 1) * 1_000,
     mode: 'replay' as const,
   }));
+}
+
+/** Recorded events the engine re-published, leaving out its REPLAY_TICKs. */
+function replayed(publish: jest.SpyInstance): TE[] {
+  return publish.mock.calls.map(([e]) => e as TE).filter((e) => e.type !== 'REPLAY_TICK');
+}
+
+function ticks(publish: jest.SpyInstance): TE[] {
+  return publish.mock.calls.map(([e]) => e as TE).filter((e) => e.type === 'REPLAY_TICK');
 }
 
 function makeSession(overrides: Partial<ReplaySession> = {}): ReplaySession {
@@ -87,12 +97,12 @@ describe('load / getSession', () => {
 describe('step command', () => {
   it('step emits one event and advances cursor', () => {
     const eventBus = new EventBus();
-    jest.spyOn(eventBus, 'publish');
+    const publish = jest.spyOn(eventBus, 'publish');
     const engine = new ReplayEngine(eventBus);
     engine.load(makeSession());
 
     engine.control({ action: 'step' });
-    expect(eventBus.publish).toHaveBeenCalledTimes(1);
+    expect(replayed(publish)).toHaveLength(1);
     expect(engine.getSession()!.cursor).toBe(1);
   });
 
@@ -220,17 +230,17 @@ describe('play command', () => {
 
   it('play with speed="step" sets status to playing but does not auto-emit events', () => {
     const eventBus = new EventBus();
-    jest.spyOn(eventBus, 'publish');
+    const publish = jest.spyOn(eventBus, 'publish');
     const engine = new ReplayEngine(eventBus);
     engine.load(makeSession({ speed: 'step' }));
     engine.control({ action: 'play' });
     jest.runAllTimers();
-    expect(eventBus.publish).not.toHaveBeenCalled();
+    expect(replayed(publish)).toHaveLength(0);
   });
 
   it('play emits all events after timer advances', () => {
     const eventBus = new EventBus();
-    jest.spyOn(eventBus, 'publish');
+    const publish = jest.spyOn(eventBus, 'publish');
     const engine = new ReplayEngine(eventBus);
     engine.load(makeSession({ speed: 1 })); // events at ts=1000,2000,3000
 
@@ -238,7 +248,7 @@ describe('play command', () => {
     jest.advanceTimersByTime(1_000); // first timer fires: emits event[0], schedules next
     jest.advanceTimersByTime(1_000); // second timer fires: emits event[1], immediately emits event[2]
 
-    expect(eventBus.publish).toHaveBeenCalledTimes(3);
+    expect(replayed(publish)).toHaveLength(3);
     expect(engine.getSession()!.status).toBe('completed');
   });
 });
@@ -259,5 +269,87 @@ describe('control without session', () => {
     expect(() => engine.control({ action: 'pause' })).not.toThrow();
     expect(() => engine.control({ action: 'play' })).not.toThrow();
     expect(() => engine.control({ action: 'reset' })).not.toThrow();
+  });
+});
+
+describe('simulated clock', () => {
+  afterEach(() => unlockClockForLive());
+
+  it('handlers see the recorded event ts as nowMs()', () => {
+    const eventBus = new EventBus();
+    const seen: Array<[number, number]> = [];
+    eventBus.on('HEARTBEAT', (e) => seen.push([e.ts, nowMs()]));
+    const engine = new ReplayEngine(eventBus);
+    engine.load(makeSession());
+    engine.control({ action: 'step' });
+    engine.control({ action: 'step' });
+    expect(seen).toEqual([[1_000, 1_000], [2_000, 2_000]]);
+  });
+
+  it('restores the wall clock after each publish', () => {
+    const engine = new ReplayEngine(new EventBus());
+    engine.load(makeSession());
+    engine.control({ action: 'step' });
+    expect(Math.abs(nowMs() - Date.now())).toBeLessThan(1_000);
+  });
+
+  it('keeps the wall clock in a process a trading engine has locked', () => {
+    lockClockForLive('paper');
+    const eventBus = new EventBus();
+    let seen = 0;
+    eventBus.on('HEARTBEAT', () => { seen = nowMs(); });
+    const engine = new ReplayEngine(eventBus);
+    engine.load(makeSession());
+    expect(() => engine.control({ action: 'step' })).not.toThrow();
+    expect(seen).toBeGreaterThan(1_000_000);
+  });
+});
+
+describe('REPLAY_TICK', () => {
+  it('publishes the session state after every command', () => {
+    const eventBus = new EventBus();
+    const publish = jest.spyOn(eventBus, 'publish');
+    const engine = new ReplayEngine(eventBus);
+    engine.load(makeSession());
+    engine.control({ action: 'step' });
+    engine.control({ action: 'set_speed', speed: 2 });
+    const t = ticks(publish) as unknown as Array<Record<string, unknown>>;
+    expect(t).toHaveLength(2);
+    expect(t[1]).toMatchObject({ sessionId: 'session-1', cursor: 1, totalEvents: 3, speed: 2, simulatedNow: 1_000, mode: 'replay' });
+  });
+
+  it('publishes a completed tick when the last event is emitted', () => {
+    const eventBus = new EventBus();
+    const publish = jest.spyOn(eventBus, 'publish');
+    const engine = new ReplayEngine(eventBus);
+    engine.load(makeSession());
+    for (let i = 0; i < 3; i++) engine.control({ action: 'step' });
+    const statuses = (ticks(publish) as unknown as Array<{ status: string }>).map((t) => t.status);
+    expect(statuses).toContain('completed');
+  });
+
+  it('is not published without a session', () => {
+    const eventBus = new EventBus();
+    const publish = jest.spyOn(eventBus, 'publish');
+    new ReplayEngine(eventBus).control({ action: 'play' });
+    expect(publish).not.toHaveBeenCalled();
+  });
+});
+
+describe('getStatus', () => {
+  it('returns the session without its events', () => {
+    const engine = new ReplayEngine(new EventBus());
+    engine.load(makeSession());
+    const status = engine.getStatus()!;
+    expect(status).not.toHaveProperty('events');
+    expect(status).toMatchObject({ id: 'session-1', totalEvents: 3, cursor: 0 });
+  });
+
+  it('seeking a completed session makes it playable again', () => {
+    const engine = new ReplayEngine(new EventBus());
+    engine.load(makeSession());
+    for (let i = 0; i < 3; i++) engine.control({ action: 'step' });
+    engine.control({ action: 'seek', targetIndex: 0 });
+    expect(engine.getStatus()!.status).toBe('paused');
   });
 });
