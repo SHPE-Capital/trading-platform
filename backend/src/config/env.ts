@@ -179,6 +179,12 @@ export const env = {
   latencyRecord: optionalBool("LATENCY_RECORD", false),
   latencyRecordMaxMb: optionalNumber("LATENCY_RECORD_MAX_MB", 2048),
 
+  // Records a trading runtime's event stream and saves it to event_logs on
+  // graceful shutdown, for the replay runtime (docs/guides/replay.md).
+  replayRecord: optionalBool("REPLAY_RECORD", false),
+  /** Events kept in memory; beyond this the oldest are dropped. */
+  replayRecordMaxEvents: optionalNumber("REPLAY_RECORD_MAX_EVENTS", 200_000),
+
   // Feature flags
   enableLiveTrading: optionalBool("ENABLE_LIVE_TRADING", false),
   enableWebSocketPush: optionalBool("ENABLE_WEBSOCKET_PUSH", true),

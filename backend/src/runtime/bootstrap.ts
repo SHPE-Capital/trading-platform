@@ -68,6 +68,8 @@ import {
 import type { IBroker } from "../core/broker/IBroker";
 import { RunBooks } from "../core/ledger/runBooks";
 import { SignalRecorder } from "../core/live/signalRecorder";
+import { EventRecorder, eventLogFor } from "../core/replay/eventRecorder";
+import { insertEventLog } from "../adapters/supabase/eventLogRepository";
 import { RunStatsService } from "../core/analytics/runStatsService";
 import { allocatedCapital } from "../core/analytics/runPerformance";
 import {
@@ -214,6 +216,13 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
   const portfolioState = new PortfolioStateManager(initialCapital);
   const orderState = new OrderStateManager();
   const riskEngine = new RiskEngine();
+
+  // Opt-in event recording (REPLAY_RECORD=1), saved to event_logs on shutdown.
+  const replayRecorder = env.replayRecord ? new EventRecorder(eventBus, env.replayRecordMaxEvents) : null;
+  replayRecorder?.start();
+  if (replayRecorder) {
+    logger.info("bootstrap: recording event stream for replay", { maxEvents: env.replayRecordMaxEvents });
+  }
 
   // Opt-in latency instrumentation (LATENCY_PROBE=1); observes only.
   const latency = env.latencyProbe ? new RuntimeLatency(mode, target) : null;
@@ -708,6 +717,7 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
     await rejections.stop();
     await signals.stop();
     await latency?.stop();
+    await saveReplayRecording(replayRecorder, mode);
     // Hand leases back so a successor adopts these runs now instead of after
     // they lapse. The rows stay "running" — they are paused, not stopped.
     await liveRuns.releaseAll();
@@ -717,6 +727,27 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
 
   process.on("SIGINT",  () => { shutdown().catch(() => process.exit(1)); });
   process.on("SIGTERM", () => { shutdown().catch(() => process.exit(1)); });
+}
+
+/**
+ * Saves the recorded event stream to event_logs. A failure is logged, never
+ * thrown, so it cannot stop shutdown from handing back the run leases.
+ */
+async function saveReplayRecording(recorder: EventRecorder | null, mode: string): Promise<void> {
+  if (!recorder) return;
+  const recording = recorder.stop();
+  if (recording.events.length === 0) return;
+  const log = eventLogFor(newId(), mode, recording);
+  try {
+    await insertEventLog(log, recording.events);
+    logger.info("bootstrap: event log persisted", {
+      id: log.id, eventCount: log.eventCount, dropped: recording.dropped,
+    });
+  } catch (err) {
+    logger.error("bootstrap: event log not saved", {
+      eventCount: log.eventCount, reason: err instanceof Error ? err.message : String(err),
+    });
+  }
 }
 
 /** A sim runtime's order book, and under the quote model what drives it from the live stream. */
