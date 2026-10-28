@@ -2,6 +2,7 @@ import type { Orchestrator } from "../core/engine/orchestrator";
 import type { SymbolStateManager } from "../core/state/symbolState";
 import type { PortfolioStateManager } from "../core/state/portfolioState";
 import type { ReplayEngine } from "../core/replay/replayEngine";
+import type { AttributionCollector } from "../core/replay/attributionCollector";
 import type { RiskEngine } from "../core/risk/riskEngine";
 import type { LiveRunCoordinator } from "../core/live/liveRunCoordinator";
 import type { IBroker } from "../core/broker/IBroker";
@@ -18,6 +19,8 @@ export interface AppContext {
   symbolState?: SymbolStateManager;
   portfolioState?: PortfolioStateManager;
   replayEngine?: ReplayEngine;
+  /** Attribution of the loaded replay session; replay runtime only. */
+  attributionCollector?: AttributionCollector;
   riskEngine?: RiskEngine;
   /** Used by startStrategyRun to subscribe new symbols when a strategy starts at runtime. */
   marketDataAdapter?: MarketDataSubscriber;

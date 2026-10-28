@@ -1,34 +1,88 @@
 import type { Request, Response } from "express";
 import { logger } from "../../utils/logger";
-import type { ReplayCommand } from "../../types/replay";
+import { newId } from "../../utils/ids";
+import { listEventLogs, getEventLog } from "../../adapters/supabase/eventLogRepository";
+import { applyFilter, isEmptyFilter } from "../../core/replay/replayFilter";
+import type { ReplayCommand, ReplayFilter, ReplaySession } from "../../types/replay";
 import type { AppContext } from "../context";
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * GET /api/replay/sessions
- * TODO: Query event_logs table via Supabase repository once that repo function exists.
+ * Metadata of every recorded event log, newest first.
  */
 export async function listReplaySessions(_req: Request, res: Response): Promise<void> {
-  res.json([]);
+  try {
+    res.json(await listEventLogs());
+  } catch (err) {
+    logger.error("listReplaySessions failed", { reason: err instanceof Error ? err.message : String(err) });
+    res.status(500).json({ error: "Failed to list replay sessions" });
+  }
 }
 
 /**
  * POST /api/replay/load
- * Body: { sessionId: string }
- * TODO: Load event log from DB and construct a ReplaySession once the repository function exists.
+ * Body: { sessionId: string; filter?: ReplayFilter }
+ * Loads an event log, optionally filtered, into the engine — paused at the
+ * first event — and starts attribution for it.
  */
 export async function loadReplaySession(req: Request, res: Response): Promise<void> {
-  const { sessionId } = req.body as { sessionId: string };
+  const { sessionId, filter } = (req.body ?? {}) as { sessionId?: string; filter?: ReplayFilter };
   if (!sessionId) {
     res.status(400).json({ error: "sessionId is required" });
     return;
   }
-  const { replayEngine } = req.app.locals.ctx as AppContext;
+  if (!UUID_RE.test(sessionId)) {
+    res.status(400).json({ error: "sessionId must be a UUID" });
+    return;
+  }
+  if (filter !== undefined && (typeof filter !== "object" || filter === null || isEmptyFilter(filter))) {
+    res.status(400).json({ error: "filter, when present, must set at least one field" });
+    return;
+  }
+  const { replayEngine, attributionCollector } = req.app.locals.ctx as AppContext;
   if (!replayEngine) {
     res.status(503).json({ error: "Replay engine not available in this runtime mode" });
     return;
   }
-  logger.info("loadReplaySession: received request", { sessionId });
-  res.status(501).json({ error: "event_logs repository not yet implemented" });
+
+  try {
+    const log = await getEventLog(sessionId);
+    if (!log) {
+      res.status(404).json({ error: `Event log ${sessionId} not found` });
+      return;
+    }
+    const events = filter ? applyFilter(log.events, filter) : log.events;
+    if (events.length === 0) {
+      res.status(422).json({ error: "No events match the filter" });
+      return;
+    }
+
+    const session: ReplaySession = {
+      id: newId(),
+      name: log.record.name,
+      sourceRunId: log.record.runId,
+      events,
+      totalEvents: events.length,
+      cursor: 0,
+      status: "paused",
+      speed: 1,
+      replayStrategies: false,
+      simulatedNow: events[0].ts,
+      createdAt: Date.now(),
+      description: log.record.description,
+    };
+    replayEngine.load(session);
+    attributionCollector?.start(session.id);
+    logger.info("loadReplaySession: session loaded", {
+      sessionId, replaySessionId: session.id, totalEvents: events.length, filtered: !!filter,
+    });
+    res.json({ message: "Session loaded", session: replayEngine.getStatus() });
+  } catch (err) {
+    logger.error("loadReplaySession failed", { sessionId, reason: err instanceof Error ? err.message : String(err) });
+    res.status(500).json({ error: "Failed to load replay session" });
+  }
 }
 
 /**
@@ -48,11 +102,12 @@ export async function controlReplay(req: Request, res: Response): Promise<void> 
   }
   replayEngine.control(command);
   logger.info("controlReplay: command applied", { action: command.action });
-  res.json({ message: `Command '${command.action}' applied` });
+  res.json({ message: `Command '${command.action}' applied`, session: replayEngine.getStatus() });
 }
 
 /**
  * GET /api/replay/status
+ * The loaded session without its events, or null.
  */
 export async function getReplayStatus(req: Request, res: Response): Promise<void> {
   const { replayEngine } = req.app.locals.ctx as AppContext;
@@ -60,5 +115,23 @@ export async function getReplayStatus(req: Request, res: Response): Promise<void
     res.json(null);
     return;
   }
-  res.json(replayEngine.getSession());
+  res.json(replayEngine.getStatus());
+}
+
+/**
+ * GET /api/replay/attribution
+ * Attribution report of the loaded session, once its playback has completed.
+ */
+export async function getReplayAttribution(req: Request, res: Response): Promise<void> {
+  const { replayEngine, attributionCollector } = req.app.locals.ctx as AppContext;
+  if (!replayEngine || !attributionCollector) {
+    res.status(503).json({ error: "Replay attribution not available in this runtime mode" });
+    return;
+  }
+  const session = replayEngine.getStatus();
+  if (!session || session.status !== "completed" || attributionCollector.activeSessionId !== session.id) {
+    res.status(409).json({ error: "Attribution is available once the loaded session completes" });
+    return;
+  }
+  res.json(attributionCollector.getAttribution());
 }

@@ -11,6 +11,7 @@ import {
   loadReplaySession,
   controlReplay,
   getReplayStatus,
+  getReplayAttribution,
 } from "../controllers/replayController";
 
 const router = Router();
@@ -20,6 +21,9 @@ router.get("/sessions", listReplaySessions);
 
 /** GET /api/replay/status — current replay session state */
 router.get("/status", getReplayStatus);
+
+/** GET /api/replay/attribution — attribution report of the completed session */
+router.get("/attribution", getReplayAttribution);
 
 /** POST /api/replay/load — load a session into the replay engine */
 router.post("/load", loadReplaySession);
