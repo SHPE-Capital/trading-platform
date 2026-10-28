@@ -85,9 +85,14 @@ export async function loadReplaySession(req: Request, res: Response): Promise<vo
   }
 }
 
+/** Commands after which already-collected attribution no longer matches what will play. */
+const RESTARTS_ATTRIBUTION = new Set<ReplayCommand["action"]>(["reset", "seek", "seek_ts"]);
+
 /**
  * POST /api/replay/control
  * Body: ReplayCommand
+ * Reset and seeks restart attribution, so replaying a stretch twice does not
+ * count its fills twice.
  */
 export async function controlReplay(req: Request, res: Response): Promise<void> {
   const command = req.body as ReplayCommand;
@@ -95,14 +100,18 @@ export async function controlReplay(req: Request, res: Response): Promise<void> 
     res.status(400).json({ error: "command.action is required" });
     return;
   }
-  const { replayEngine } = req.app.locals.ctx as AppContext;
+  const { replayEngine, attributionCollector } = req.app.locals.ctx as AppContext;
   if (!replayEngine) {
     res.status(503).json({ error: "Replay engine not available in this runtime mode" });
     return;
   }
   replayEngine.control(command);
+  const session = replayEngine.getStatus();
+  if (session && attributionCollector && RESTARTS_ATTRIBUTION.has(command.action)) {
+    attributionCollector.start(session.id);
+  }
   logger.info("controlReplay: command applied", { action: command.action });
-  res.json({ message: `Command '${command.action}' applied`, session: replayEngine.getStatus() });
+  res.json({ message: `Command '${command.action}' applied`, session });
 }
 
 /**

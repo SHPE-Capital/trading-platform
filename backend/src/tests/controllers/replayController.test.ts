@@ -188,6 +188,18 @@ describe('controlReplay', () => {
   });
 });
 
+describe('controlReplay attribution', () => {
+  it('restarts attribution on reset and seek, not on play', async () => {
+    const replayEngine = mockEngine({ id: 's', status: 'paused' });
+    const attributionCollector = { start: jest.fn() };
+    for (const action of ['play', 'reset', 'seek', 'seek_ts']) {
+      await controlReplay(ctxReq({ replayEngine, attributionCollector }, { action }), mockRes());
+    }
+    expect(attributionCollector.start).toHaveBeenCalledTimes(3);
+    expect(attributionCollector.start).toHaveBeenCalledWith('s');
+  });
+});
+
 describe('getReplayStatus', () => {
   it('returns null when no replayEngine in context', async () => {
     const res = mockRes();
