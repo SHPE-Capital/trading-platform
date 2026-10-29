@@ -606,7 +606,7 @@ export async function rejectProposal(req: Request, res: Response): Promise<void>
   const id = String(req.params.id);
   const { reason } = req.body as { reason?: string };
 
-  if (!reason || !reason.trim()) {
+  if (typeof reason !== "string" || !reason.trim()) {
     res.status(400).json({ error: "reason is required — the author needs to know what to change" });
     return;
   }
@@ -684,7 +684,7 @@ export async function addComment(req: Request, res: Response): Promise<void> {
   const id = String(req.params.id);
   const { body, kind } = req.body as { body?: string; kind?: CommentKind };
 
-  if (!body || !body.trim()) {
+  if (typeof body !== "string" || !body.trim()) {
     res.status(400).json({ error: "body is required" });
     return;
   }
