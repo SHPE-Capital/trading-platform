@@ -51,7 +51,7 @@ function tradingSession(): TradingEvent[] {
   ];
 }
 
-async function waitForStatus(app: Express.Application, status: string, timeoutMs = 3_000) {
+async function waitForStatus(app: ReturnType<typeof createApp>, status: string, timeoutMs = 3_000) {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const res = await request(app).get("/api/replay/status");

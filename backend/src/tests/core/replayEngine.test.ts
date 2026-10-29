@@ -164,6 +164,17 @@ describe('seek command', () => {
     engine.control({ action: 'seek', targetIndex: 999 });
     expect(engine.getSession()!.cursor).toBe(2); // totalEvents-1
   });
+
+  // Without the guard the clamp yields NaN, so the cursor points at no event
+  // and the next step throws on `event.ts`.
+  it.each([NaN, Infinity, -Infinity])('seek ignores the non-finite index %p', (targetIndex) => {
+    const engine = new ReplayEngine(new EventBus());
+    engine.load(makeSession());
+    engine.control({ action: 'seek', targetIndex: 1 });
+    engine.control({ action: 'seek', targetIndex });
+    expect(engine.getSession()!.cursor).toBe(1);
+    expect(() => engine.control({ action: 'step' })).not.toThrow();
+  });
 });
 
 describe('seek_ts command', () => {
@@ -278,7 +289,7 @@ describe('simulated clock', () => {
   it('handlers see the recorded event ts as nowMs()', () => {
     const eventBus = new EventBus();
     const seen: Array<[number, number]> = [];
-    eventBus.on('HEARTBEAT', (e) => seen.push([e.ts, nowMs()]));
+    eventBus.on('HEARTBEAT', (e) => { seen.push([e.ts, nowMs()]); });
     const engine = new ReplayEngine(eventBus);
     engine.load(makeSession());
     engine.control({ action: 'step' });
