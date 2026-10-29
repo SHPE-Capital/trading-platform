@@ -3,7 +3,7 @@ import { logger } from "../../utils/logger";
 import { newId } from "../../utils/ids";
 import { listEventLogs, getEventLog } from "../../adapters/supabase/eventLogRepository";
 import { applyFilter, isEmptyFilter } from "../../core/replay/replayFilter";
-import type { ReplayCommand, ReplayFilter, ReplaySession } from "../../types/replay";
+import type { ReplayCommand, ReplayFilter, ReplaySession, ReplaySpeed } from "../../types/replay";
 import type { AppContext } from "../context";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -88,6 +88,62 @@ export async function loadReplaySession(req: Request, res: Response): Promise<vo
 /** Commands after which already-collected attribution no longer matches what will play. */
 const RESTARTS_ATTRIBUTION = new Set<ReplayCommand["action"]>(["reset", "seek", "seek_ts"]);
 
+/** The only speeds the engine divides inter-event gaps by (see ReplaySpeed). */
+const REPLAY_SPEEDS: ReadonlySet<ReplaySpeed> = new Set<ReplaySpeed>([0.25, 0.5, 1, 2, 5, 10, "step"]);
+
+/**
+ * Validates an untrusted control payload into a ReplayCommand.
+ *
+ * The engine takes these fields at face value: a speed of 0 or a non-numeric
+ * one makes the playback delay Infinity or NaN, which setTimeout floors to 1ms
+ * so the replay runs flat out instead of slowing, and a non-integer
+ * targetIndex clamps to NaN, which wedges the session — the cursor serializes
+ * as null and the next step throws. So the check belongs here, at the edge,
+ * before any of it reaches the engine.
+ *
+ * @returns the typed command, or the reason it was rejected
+ */
+function parseCommand(body: unknown): { command: ReplayCommand } | { error: string } {
+  if (typeof body !== "object" || body === null) return { error: "command.action is required" };
+  const { action } = body as { action?: unknown };
+  if (typeof action !== "string" || action === "") return { error: "command.action is required" };
+
+  switch (action) {
+    case "play":
+    case "pause":
+    case "step":
+    case "reset":
+      return { command: { action } };
+
+    case "seek": {
+      const { targetIndex } = body as { targetIndex?: unknown };
+      if (typeof targetIndex !== "number" || !Number.isInteger(targetIndex) || targetIndex < 0) {
+        return { error: "seek requires targetIndex to be a non-negative integer" };
+      }
+      return { command: { action, targetIndex } };
+    }
+
+    case "seek_ts": {
+      const { targetTs } = body as { targetTs?: unknown };
+      if (typeof targetTs !== "number" || !Number.isFinite(targetTs)) {
+        return { error: "seek_ts requires targetTs to be a finite number" };
+      }
+      return { command: { action, targetTs } };
+    }
+
+    case "set_speed": {
+      const { speed } = body as { speed?: unknown };
+      if (!REPLAY_SPEEDS.has(speed as ReplaySpeed)) {
+        return { error: `set_speed requires speed to be one of ${[...REPLAY_SPEEDS].join(", ")}` };
+      }
+      return { command: { action, speed: speed as ReplaySpeed } };
+    }
+
+    default:
+      return { error: `Unknown action '${action}'` };
+  }
+}
+
 /**
  * POST /api/replay/control
  * Body: ReplayCommand
@@ -95,11 +151,12 @@ const RESTARTS_ATTRIBUTION = new Set<ReplayCommand["action"]>(["reset", "seek", 
  * count its fills twice.
  */
 export async function controlReplay(req: Request, res: Response): Promise<void> {
-  const command = req.body as ReplayCommand;
-  if (!command?.action) {
-    res.status(400).json({ error: "command.action is required" });
+  const parsed = parseCommand(req.body);
+  if ("error" in parsed) {
+    res.status(400).json({ error: parsed.error });
     return;
   }
+  const { command } = parsed;
   const { replayEngine, attributionCollector } = req.app.locals.ctx as AppContext;
   if (!replayEngine) {
     res.status(503).json({ error: "Replay engine not available in this runtime mode" });

@@ -186,14 +186,79 @@ describe('controlReplay', () => {
       expect.objectContaining({ message: expect.stringContaining('play'), session: { id: 's', status: 'playing' } }),
     );
   });
+
+  it('returns 400 for an action the engine does not implement', async () => {
+    const replayEngine = mockEngine({ id: 's', status: 'paused' });
+    const res = mockRes();
+    await controlReplay(ctxReq({ replayEngine }, { action: 'launch' }), res);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(replayEngine.control).not.toHaveBeenCalled();
+  });
+
+  // A speed outside the ReplaySpeed set reaches the engine as the divisor of the
+  // inter-event gap: 0 and non-numeric speeds make the delay Infinity/NaN, which
+  // setTimeout floors to 1ms, so the replay runs flat out instead of slowing.
+  it.each([0, -1, 3, 'fast', null, NaN])('returns 400 for set_speed %p', async (speed) => {
+    const replayEngine = mockEngine({ id: 's', status: 'paused' });
+    const res = mockRes();
+    await controlReplay(ctxReq({ replayEngine }, { action: 'set_speed', speed }), res);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(replayEngine.control).not.toHaveBeenCalled();
+  });
+
+  it.each([0.25, 0.5, 1, 2, 5, 10, 'step'])('accepts set_speed %p', async (speed) => {
+    const replayEngine = mockEngine({ id: 's', status: 'paused' });
+    const res = mockRes();
+    await controlReplay(ctxReq({ replayEngine }, { action: 'set_speed', speed }), res);
+    expect(replayEngine.control).toHaveBeenCalledWith({ action: 'set_speed', speed });
+    expect(res.status).not.toHaveBeenCalledWith(400);
+  });
+
+  // A non-integer targetIndex clamps to NaN inside the engine, which wedges the
+  // session: the cursor serializes as null and the next step throws.
+  it.each([undefined, 'abc', -1, 1.5, null, NaN, Infinity])('returns 400 for seek targetIndex %p', async (targetIndex) => {
+    const replayEngine = mockEngine({ id: 's', status: 'paused' });
+    const res = mockRes();
+    await controlReplay(ctxReq({ replayEngine }, { action: 'seek', targetIndex }), res);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(replayEngine.control).not.toHaveBeenCalled();
+  });
+
+  it('accepts seek with a non-negative integer targetIndex', async () => {
+    const replayEngine = mockEngine({ id: 's', status: 'paused' });
+    const res = mockRes();
+    await controlReplay(ctxReq({ replayEngine }, { action: 'seek', targetIndex: 0 }), res);
+    expect(replayEngine.control).toHaveBeenCalledWith({ action: 'seek', targetIndex: 0 });
+  });
+
+  it.each([undefined, 'abc', null, NaN, Infinity])('returns 400 for seek_ts targetTs %p', async (targetTs) => {
+    const replayEngine = mockEngine({ id: 's', status: 'paused' });
+    const res = mockRes();
+    await controlReplay(ctxReq({ replayEngine }, { action: 'seek_ts', targetTs }), res);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(replayEngine.control).not.toHaveBeenCalled();
+  });
+
+  it('accepts seek_ts with a finite targetTs', async () => {
+    const replayEngine = mockEngine({ id: 's', status: 'paused' });
+    const res = mockRes();
+    await controlReplay(ctxReq({ replayEngine }, { action: 'seek_ts', targetTs: 1_000 }), res);
+    expect(replayEngine.control).toHaveBeenCalledWith({ action: 'seek_ts', targetTs: 1_000 });
+  });
 });
 
 describe('controlReplay attribution', () => {
   it('restarts attribution on reset and seek, not on play', async () => {
     const replayEngine = mockEngine({ id: 's', status: 'paused' });
     const attributionCollector = { start: jest.fn() };
-    for (const action of ['play', 'reset', 'seek', 'seek_ts']) {
-      await controlReplay(ctxReq({ replayEngine, attributionCollector }, { action }), mockRes());
+    const commands = [
+      { action: 'play' },
+      { action: 'reset' },
+      { action: 'seek', targetIndex: 0 },
+      { action: 'seek_ts', targetTs: 1_000 },
+    ];
+    for (const command of commands) {
+      await controlReplay(ctxReq({ replayEngine, attributionCollector }, command), mockRes());
     }
     expect(attributionCollector.start).toHaveBeenCalledTimes(3);
     expect(attributionCollector.start).toHaveBeenCalledWith('s');

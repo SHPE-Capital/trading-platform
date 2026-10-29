@@ -139,6 +139,11 @@ export class ReplayEngine {
 
   private _seek(targetIndex: number): void {
     if (!this.session) return;
+    // A non-finite target would survive the clamp below as NaN and leave the
+    // cursor pointing at no event, so the next emit would throw. Callers over
+    // HTTP are validated in replayController; this keeps any other caller from
+    // wedging the session.
+    if (!Number.isFinite(targetIndex)) return;
     this._clearTimer();
     this.session.cursor = Math.max(0, Math.min(targetIndex, this.session.totalEvents - 1));
     if (this.session.status === "completed") this.session.status = "paused";
