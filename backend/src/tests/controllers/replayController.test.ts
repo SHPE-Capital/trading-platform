@@ -117,6 +117,20 @@ describe('loadReplaySession', () => {
     expect(res.status).toHaveBeenCalledWith(400);
   });
 
+  it.each([
+    ['symbols is a string', { symbols: 'SPY' }],
+    ['symbols holds a non-string', { symbols: ['SPY', 5] }],
+    ['eventTypes is a string', { eventTypes: 'HEARTBEAT' }],
+    ['eventTypes holds a non-string', { eventTypes: [1] }],
+    ['startTs is not a number', { startTs: 'abc' }],
+    ['endTs is not a number', { endTs: '3000' }],
+  ])('returns 400, not 500, when %s', async (_name, filter) => {
+    mockGet.mockResolvedValue({ record: loggedRecord, events: loggedEvents });
+    const res = mockRes();
+    await loadReplaySession(ctxReq({ replayEngine: mockEngine() }, { sessionId: LOG_ID, filter }), res);
+    expect(res.status).toHaveBeenCalledWith(400);
+  });
+
   it('returns 503 when replayEngine is not in context', async () => {
     const res = mockRes();
     await loadReplaySession(ctxReq({}, { sessionId: LOG_ID }), res);

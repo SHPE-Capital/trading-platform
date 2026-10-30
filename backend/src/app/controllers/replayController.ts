@@ -22,6 +22,28 @@ export async function listReplaySessions(_req: Request, res: Response): Promise<
 }
 
 /**
+ * Checks an untrusted filter's shape. Types do not validate at runtime: a
+ * string where `symbols` should be an array, or a non-string inside it, would
+ * throw in applyFilter and surface as a 500 for what is a client mistake.
+ *
+ * @returns the reason it was rejected, or null when it is usable
+ */
+function validateFilter(filter: unknown): string | null {
+  if (typeof filter !== "object" || filter === null || Array.isArray(filter)) {
+    return "filter, when present, must be an object";
+  }
+  const { eventTypes, symbols, startTs, endTs } = filter as Record<string, unknown>;
+  const isStringArray = (v: unknown) => Array.isArray(v) && v.every((x) => typeof x === "string");
+  if (eventTypes !== undefined && !isStringArray(eventTypes)) return "filter.eventTypes must be an array of strings";
+  if (symbols !== undefined && !isStringArray(symbols)) return "filter.symbols must be an array of strings";
+  for (const [name, v] of [["startTs", startTs], ["endTs", endTs]] as const) {
+    if (v !== undefined && (typeof v !== "number" || !Number.isFinite(v))) return `filter.${name} must be a finite number`;
+  }
+  if (isEmptyFilter(filter as ReplayFilter)) return "filter, when present, must set at least one field";
+  return null;
+}
+
+/**
  * POST /api/replay/load
  * Body: { sessionId: string; filter?: ReplayFilter }
  * Loads an event log, optionally filtered, into the engine — paused at the
@@ -37,9 +59,12 @@ export async function loadReplaySession(req: Request, res: Response): Promise<vo
     res.status(400).json({ error: "sessionId must be a UUID" });
     return;
   }
-  if (filter !== undefined && (typeof filter !== "object" || filter === null || isEmptyFilter(filter))) {
-    res.status(400).json({ error: "filter, when present, must set at least one field" });
-    return;
+  if (filter !== undefined) {
+    const filterError = validateFilter(filter);
+    if (filterError) {
+      res.status(400).json({ error: filterError });
+      return;
+    }
   }
   const { replayEngine, attributionCollector } = req.app.locals.ctx as AppContext;
   if (!replayEngine) {
