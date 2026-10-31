@@ -335,6 +335,14 @@ export class BacktestLoader {
     timeframe: string,
   ): AsyncGenerator<Bar[]> {
     const baseUrl = "https://data.alpaca.markets/v2";
+    if (!env.alpacaDataKey || !env.alpacaDataSecret) {
+      throw new Error(
+        `BacktestLoader: historical bars for ${symbol} (${startDate} to ${endDate}) are not fully cached, ` +
+        "and Alpaca market-data credentials are not configured. Set your personal ALPACA_DATA_KEY and " +
+        "ALPACA_DATA_SECRET in backend/.env, then restart npm run dev:stack; or seed the local bar cache " +
+        "with npm run data:pull for this symbol and date range.",
+      );
+    }
     const headers = {
       "APCA-API-KEY-ID": env.alpacaDataKey,
       "APCA-API-SECRET-KEY": env.alpacaDataSecret,
@@ -358,6 +366,16 @@ export class BacktestLoader {
       const response = await this._fetchWithRetry(url, { headers });
 
       if (!response.ok) {
+        // Missing or rejected keys answer with an HTML page; say what to do instead.
+        if (response.status === 401 || response.status === 403) {
+          const reason = response.status === 401 ? "401 Unauthorized" : "403 Forbidden";
+          throw new Error(
+            `BacktestLoader: Alpaca rejected the market-data request for ${symbol} (${reason}), and ${symbol} ` +
+              `is not in the local bar cache for ${startDate}..${endDate}. Check your personal ALPACA_DATA_KEY ` +
+              `and ALPACA_DATA_SECRET, then restart npm run dev:stack, or seed the cache with \`npm run data:pull\`. ` +
+              "This is a market-data authentication failure, not an app login failure.",
+          );
+        }
         const text = await response.text();
         throw new Error(
           `BacktestLoader: failed to fetch bars for ${symbol} | Status: ${response.status} ${response.statusText} | Body: ${text}`,

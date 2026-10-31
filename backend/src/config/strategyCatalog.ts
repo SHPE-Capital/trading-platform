@@ -11,7 +11,7 @@
  */
 
 import { mcarrascoReversalManifest } from "../strategies/mcarrasco_reversal/manifest";
-import { DEFAULT_PAIRS_CONFIG, createPairsConfig } from "../strategies/pairs/pairsConfig";
+import { DEFAULT_PAIRS_CONFIG, createPairsConfig, validatePairsConfig } from "../strategies/pairs/pairsConfig";
 import { PairsStrategy } from "../strategies/pairs/pairsStrategy";
 import type { PairsStrategyConfig } from "../strategies/pairs/pairsTypes";
 import { MinuteReversalStrategy } from "../strategies/minuteReversal/minuteReversalStrategy";
@@ -48,6 +48,14 @@ const pairsManifest: StrategyManifest = {
       config as Partial<PairsStrategyConfig>,
     ));
   },
+  // The max-hold limit is enforced by the strategy, so a value that would disable it is
+  // reported at save time instead of only when the run starts.
+  validate: (config) =>
+    asProblem(() => validatePairsConfig(createPairsConfig(
+      (config.leg1Symbol as string) ?? (config.symbols as string[] | undefined)?.[0] ?? "SPY",
+      (config.leg2Symbol as string) ?? (config.symbols as string[] | undefined)?.[1] ?? "QQQ",
+      config as Partial<PairsStrategyConfig>,
+    ))),
   // No `params`: pairs trading has its own form in the frontend.
 };
 

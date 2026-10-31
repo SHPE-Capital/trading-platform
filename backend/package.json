@@ -36,6 +36,7 @@
     "db:verify": "ts-node src/runtime/verify/dbVerify.ts",
     "verify:http": "ts-node src/runtime/verify/httpSmoke.ts",
     "verify:backtest": "ts-node src/runtime/verify/backtestVerify.ts",
+    "verify:network": "ts-node src/runtime/verify/networkVerify.ts",
     "bench": "tsc && node dist/runtime/bench.js",
     "bench:fixture": "tsc && node dist/runtime/bench.js fixture",
     "bench:capture": "tsc && node dist/runtime/bench.js capture",

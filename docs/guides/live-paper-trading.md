@@ -31,7 +31,6 @@ launches the stack. File-only trading settings in `backend/.env` are not forward
 $env:EXECUTION_TARGET = "alpaca-paper"
 $env:ALPACA_API_KEY = "your-personal-paper-key"
 $env:ALPACA_API_SECRET = "your-personal-paper-secret"
-$env:LOCAL_STREAM_DATA = "1"
 npm run dev:stack
 ```
 
@@ -41,7 +40,6 @@ npm run dev:stack
 export EXECUTION_TARGET=alpaca-paper
 export ALPACA_API_KEY="your-personal-paper-key"
 export ALPACA_API_SECRET="your-personal-paper-secret"
-export LOCAL_STREAM_DATA=1
 npm run dev:stack
 ```
 

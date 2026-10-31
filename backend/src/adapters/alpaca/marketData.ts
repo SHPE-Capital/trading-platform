@@ -97,6 +97,11 @@ export class AlpacaMarketDataAdapter {
     this.url = options.url;
   }
 
+  /** True while the socket is open and authenticated. */
+  get connected(): boolean {
+    return this.isConnected;
+  }
+
   /**
    * Opens the WebSocket connection to the Alpaca data stream and authenticates.
    * @returns Promise that resolves when the connection is authenticated
@@ -175,8 +180,9 @@ export class AlpacaMarketDataAdapter {
    * @param symbols - Array of ticker symbols to unsubscribe from
    */
   unsubscribe(symbols: Symbol[]): void {
-    if (!this.ws) return;
+    // Drop from the desired set first, so a reconnect does not restore them.
     symbols.forEach((s) => this.subscribed.delete(s));
+    if (!this.isConnected || !this.ws) return;
     this.ws.send(JSON.stringify({
       action: "unsubscribe",
       quotes: symbols,

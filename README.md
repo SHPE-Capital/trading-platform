@@ -165,7 +165,7 @@ The strategy takes one observation per minute, from both legs' completed 1-minut
 | `z > +entryZScore` | **Enter short spread** — sell leg1, buy leg2 (spread is unusually high, expect it to fall) |
 | `\|z\| < exitZScore` | **Exit position** — spread has reverted to the mean |
 | `\|z\| > stopLossZScore` | **Stop-loss exit** — spread has moved further against us |
-| Held longer than `maxHoldingTimeMs` | **Time-based exit** — forced close regardless of z-score |
+| Held longer than `maxHoldingTimeMs` | **Time-based exit** — forced close regardless of z-score. Checked on every bar of either leg, even when scoring is skipped (partner bar missing, too few observations, no z-score) |
 
 ### Default Parameters
 
@@ -174,7 +174,7 @@ The strategy takes one observation per minute, from both legs' completed 1-minut
 | `entryZScore` | `2.0` | Z-score magnitude required to enter a trade |
 | `exitZScore` | `0.5` | Z-score magnitude at which to take profit |
 | `stopLossZScore` | `4.0` | Emergency exit threshold |
-| `maxHoldingTimeMs` | `86_400_000` (24h) | Maximum time to hold a position open |
+| `maxHoldingTimeMs` | `86_400_000` (24h) | Hard limit on how long a position stays open. Validated: a whole number of milliseconds, 1 minute to 1 year. Pairs trading only; no other strategy has a default. If both legs stop printing bars (feed outage or halt) nothing runs to enforce it |
 | `rollingWindowMs` | `3_600_000` (1h) | Lookback window for spread statistics |
 | `minObservations` | `30` | Minimum data points before trading |
 | `tradeNotionalUsd` | `5_000` | Dollar value per leg |
@@ -330,7 +330,7 @@ Backend API: [http://localhost:8080/api](http://localhost:8080/api)
 # Run a backtest (configure parameters in runtime/backtest.ts)
 npm run dev:backtest
 
-# Run the replay engine
+# Replay a recorded session (record one with REPLAY_RECORD=1; see docs/guides/replay.md)
 npm run dev:replay
 ```
 
@@ -364,8 +364,10 @@ All routes are prefixed with `/api`.
 | `POST` | `/backtest/run` | Run a backtest, returns results |
 | `GET` | `/backtest/results` | List past backtest results |
 | `GET` | `/backtest/results/:id` | Single backtest result detail |
-| `POST` | `/replay/sessions` | Create a replay session |
-| `POST` | `/replay/sessions/:id/control` | Send play/pause/step/reset/set_speed |
-| `GET` | `/replay/sessions/:id` | Get session state |
+| `GET` | `/replay/sessions` | Recorded event logs (replay runtime) |
+| `POST` | `/replay/load` | Load an event log, optionally filtered |
+| `POST` | `/replay/control` | Send play/pause/step/seek/seek_ts/set_speed/reset |
+| `GET` | `/replay/status` | Loaded session state (without its events) |
+| `GET` | `/replay/attribution` | Attribution report once playback completes |
 | `GET` | `/market-data/quotes/:symbol` | Latest quote for a symbol |
 | `GET` | `/market-data/bars/:symbol` | Historical bars for a symbol |

@@ -24,7 +24,7 @@
     - externally defined ratio
   - z-score entry threshold
   - z-score exit threshold
-  - max holding time
+  - max holding time (pairs trading: a validated hard limit, 1 minute to 1 year, shown on the strategy and run pages)
   - stop-loss level
   - position sizing logic
   - cooldown period after exit

@@ -35,6 +35,8 @@ services:
   paper-trading:
     <<: *backend
     command: ["node", "dist/runtime/paper-trading.js"]
+    # The sim book's account is `sim:<hostname>`; keep it stable across recreates.
+    hostname: paper-trading-sim
     environment:
       STRATEGY_POLICY_PROFILE: shared
       PORT: "8080"

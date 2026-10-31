@@ -45,7 +45,7 @@ import { RiskRejectionRecorder } from "../core/live/riskRejectionRecorder";
 import { AlpacaMarketDataAdapter } from "../adapters/alpaca/marketData";
 import { AlpacaOrderExecutionAdapter } from "../adapters/alpaca/orderExecution";
 import { alpacaGet, alpacaTradingBaseUrl } from "../adapters/alpaca/rest";
-import { ReplayBarFeed } from "../adapters/replay/replayBarFeed";
+import { MarketDataMonitor, feedFromStreamUrl } from "../core/live/marketDataMonitor";
 import { SimulatedExecutionSink } from "../core/execution/simulatedExecution";
 import { LiveQuoteFills, simExecution } from "../core/execution/liveQuoteFills";
 import type { ExecutionConfig } from "../core/execution/quoteFillModel";
@@ -68,6 +68,8 @@ import {
 import type { IBroker } from "../core/broker/IBroker";
 import { RunBooks } from "../core/ledger/runBooks";
 import { SignalRecorder } from "../core/live/signalRecorder";
+import { EventRecorder, eventLogFor } from "../core/replay/eventRecorder";
+import { insertEventLog } from "../adapters/supabase/eventLogRepository";
 import { RunStatsService } from "../core/analytics/runStatsService";
 import { allocatedCapital } from "../core/analytics/runPerformance";
 import {
@@ -215,16 +217,33 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
   const orderState = new OrderStateManager();
   const riskEngine = new RiskEngine();
 
+  // Opt-in event recording (REPLAY_RECORD=1), saved to event_logs on shutdown.
+  const replayRecorder = env.replayRecord ? new EventRecorder(eventBus, env.replayRecordMaxEvents) : null;
+  replayRecorder?.start();
+  if (replayRecorder) {
+    logger.info("bootstrap: recording event stream for replay", { maxEvents: env.replayRecordMaxEvents });
+  }
+
   // Opt-in latency instrumentation (LATENCY_PROBE=1); observes only.
   const latency = env.latencyProbe ? new RuntimeLatency(mode, target) : null;
   await latency?.prepare();
 
-  // Market data: Alpaca's stream when data keys exist; otherwise (sim only) a
-  // replay of cached bars through the same events.
+  // Market data: Alpaca's stream when data keys exist. Without them this
+  // runtime receives nothing — it still serves the API, but reports "no_data"
+  // and refuses new sandbox runs rather than run strategies that never trade.
   const hasDataKeys = !!(env.alpacaDataKey && env.alpacaDataSecret);
-  const marketDataAdapter = hasDataKeys
+  const alpacaData = hasDataKeys
     ? new AlpacaMarketDataAdapter(eventBus, mode, { invalidData: env.marketDataInvalidPolicy, ...latency?.adapterOptions() })
-    : new ReplayBarFeed(eventBus, mode, new SupabaseBarCache(), replayWindow());
+    : null;
+  const marketDataAdapter = alpacaData ?? {
+    subscribe: (_symbols: string[]): void => {},
+    unsubscribe: (_symbols: string[]): void => {},
+    connect: async (): Promise<void> => {
+      logger.error("bootstrap: no Alpaca data keys — this runner receives no market data. " +
+        "Add your own Alpaca paper keys (ALPACA_DATA_KEY/ALPACA_DATA_SECRET) and restart.");
+    },
+    disconnect: (): void => {},
+  };
 
   // Orders: a sim book fills locally — on the live quotes and trades when this
   // runtime streams them, otherwise on the next bar; the alpaca targets send
@@ -298,7 +317,7 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
   });
 
   // Orders are only sent during the regular session. Alpaca's clock knows
-  // holidays; a replayed session is in-session by construction.
+  // holidays; without data keys there is no clock to ask, and no data to trade.
   let clockHours: AlpacaClockHours | null = null;
   if (hasDataKeys) {
     const clockCreds = target === "sim" ? { key: env.alpacaDataKey, secret: env.alpacaDataSecret } : tradingCreds;
@@ -312,6 +331,15 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
   }
   // The same hours the risk engine uses, so the data watchdog stays quiet when the market is closed.
   const sessionHours: MarketHours = clockHours ?? alwaysOpen;
+
+  // What data this runtime receives, for /api/system/status and each run's record.
+  const marketData = new MarketDataMonitor({
+    source: alpacaData ? "alpaca-stream" : "none",
+    feed: feedFromStreamUrl(env.alpacaDataStreamUrl),
+    isConnected: () => alpacaData?.connected ?? false,
+    marketHours: sessionHours,
+  });
+  marketData.attach(eventBus);
 
   const orchestrator = new Orchestrator(
     eventBus,
@@ -335,15 +363,21 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
 
   const liveRuns = new LiveRunCoordinator(owner, leaseSeconds, {
     registry: orchestrator,
-    subscribe: (symbols) => marketDataAdapter.subscribe(symbols),
+    subscribe: (symbols) => {
+      marketData.noteSubscribed(symbols);
+      marketDataAdapter.subscribe(symbols);
+    },
+    unsubscribe: (symbols) => {
+      marketData.noteUnsubscribed(symbols);
+      marketDataAdapter.unsubscribe(symbols);
+    },
     leases: {
       claimOrphans: () => claimOrphanedRuns(owner, mode, env.runtimeOrigin, leaseSeconds, brokerAccount),
       heartbeat: (runIds) => heartbeatRunLeases(owner, runIds, leaseSeconds),
       release: (runId) => releaseRunLease(runId, owner),
     },
     buildStrategy: buildRunStrategy,
-    // A keyless sim replays history through the strategy itself; there is no
-    // live "now" to warm up to and no keys to fetch history with.
+    // Without data keys there is no history to fetch and no live data to warm up to.
     warmUp: hasDataKeys
       ? (strategy) =>
         warmUpStrategy(strategy, (symbols, start, end) => historyLoader.loadBars(symbols, start, end, "1Min"))
@@ -408,7 +442,7 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
         buildSha: env.buildSha,
         buildDirty: env.buildDirty,
         startedAt: nowMs(),
-        meta: { startupKey },
+        meta: { startupKey, marketData: marketData.runStamp() },
         allocatedCapital: allocatedCapital(pairsConfig as { riskBudget?: { maxCapitalPct?: number } }, portfolioState.getSnapshot().equity),
         ...liveRuns.leaseFields(),
       };
@@ -644,6 +678,7 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
     portfolioState,
     riskEngine,
     marketDataAdapter,
+    marketData,
     executionMode: mode,
     executionTarget: target,
     brokerAccount,
@@ -682,6 +717,7 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
     await rejections.stop();
     await signals.stop();
     await latency?.stop();
+    await saveReplayRecording(replayRecorder, mode);
     // Hand leases back so a successor adopts these runs now instead of after
     // they lapse. The rows stay "running" — they are paused, not stopped.
     await liveRuns.releaseAll();
@@ -691,6 +727,27 @@ export async function bootstrapRuntime(config: RuntimeConfig): Promise<void> {
 
   process.on("SIGINT",  () => { shutdown().catch(() => process.exit(1)); });
   process.on("SIGTERM", () => { shutdown().catch(() => process.exit(1)); });
+}
+
+/**
+ * Saves the recorded event stream to event_logs. A failure is logged, never
+ * thrown, so it cannot stop shutdown from handing back the run leases.
+ */
+async function saveReplayRecording(recorder: EventRecorder | null, mode: string): Promise<void> {
+  if (!recorder) return;
+  const recording = recorder.stop();
+  if (recording.events.length === 0) return;
+  const log = eventLogFor(newId(), mode, recording);
+  try {
+    await insertEventLog(log, recording.events);
+    logger.info("bootstrap: event log persisted", {
+      id: log.id, eventCount: log.eventCount, dropped: recording.dropped,
+    });
+  } catch (err) {
+    logger.error("bootstrap: event log not saved", {
+      eventCount: log.eventCount, reason: err instanceof Error ? err.message : String(err),
+    });
+  }
 }
 
 /** A sim runtime's order book, and under the quote model what drives it from the live stream. */
@@ -706,17 +763,4 @@ function simOrderBook(
     model: execution.model, ...(quoteModel ? { latencyMs: execution.latencyMs, feed: execution.feed } : {}),
   });
   return { sink, liveFills: quoteModel ? new LiveQuoteFills(eventBus, sink, execution) : null };
-}
-
-/**
- * Window a keyless sim runtime replays: REPLAY_FROM..REPLAY_TO, defaulting to
- * whatever is cached for the last five days.
- */
-function replayWindow(): { fromMs: number; toMs: number; speed: number } {
-  const toMs = env.replayTo ? new Date(env.replayTo).getTime() : nowMs();
-  const fromMs = env.replayFrom ? new Date(env.replayFrom).getTime() : toMs - 5 * 86_400_000;
-  if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || fromMs >= toMs) {
-    throw new Error("REPLAY_FROM must be a date before REPLAY_TO");
-  }
-  return { fromMs, toMs, speed: env.replaySpeed };
 }
