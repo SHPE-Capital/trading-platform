@@ -97,6 +97,12 @@ export async function createVersion(req: Request, res: Response): Promise<void> 
     res.status(400).json({ error: "config is required" });
     return;
   }
+  // change_summary is a text column, so a non-string would fail in the insert
+  // and surface as a 500 for what is a client mistake.
+  if (changeSummary !== undefined && typeof changeSummary !== "string") {
+    res.status(400).json({ error: "changeSummary, when present, must be a string" });
+    return;
+  }
 
   const strategy = await getStrategyById(strategyId);
   if (!strategy) {
@@ -411,6 +417,11 @@ export async function approveProposal(req: Request, res: Response): Promise<void
     (typeof approvedCapitalPct !== "number" || approvedCapitalPct <= 0 || approvedCapitalPct > 1)
   ) {
     res.status(400).json({ error: "approvedCapitalPct must be between 0 (exclusive) and 1" });
+    return;
+  }
+
+  if (note !== undefined && typeof note !== "string") {
+    res.status(400).json({ error: "note, when present, must be a string" });
     return;
   }
 

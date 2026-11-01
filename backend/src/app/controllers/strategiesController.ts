@@ -336,6 +336,13 @@ export async function createStrategy(req: Request, res: Response): Promise<void>
     res.status(400).json({ error: "strategy_type, name, and config are required" });
     return;
   }
+  // Both are text columns. A non-string survives the lookup below when it
+  // stringifies to a known key (ask for ["pairs"]) and then fails in the
+  // insert, so the client gets a 500 for its own mistake.
+  if (typeof strategy_type !== "string" || typeof name !== "string") {
+    res.status(400).json({ error: "strategy_type and name must be strings" });
+    return;
+  }
   const def = STRATEGY_DEFINITIONS[strategy_type];
   if (!def) {
     res.status(400).json({ error: `Unknown strategy type: ${strategy_type}` });
@@ -388,6 +395,14 @@ export async function updateStrategyConfig(req: Request, res: Response): Promise
   };
   if (!name || !config) {
     res.status(400).json({ error: "name and config are required" });
+    return;
+  }
+  if (typeof name !== "string") {
+    res.status(400).json({ error: "name must be a string" });
+    return;
+  }
+  if (changeSummary !== undefined && typeof changeSummary !== "string") {
+    res.status(400).json({ error: "changeSummary, when present, must be a string" });
     return;
   }
   try {
