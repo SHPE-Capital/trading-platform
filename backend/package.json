@@ -29,7 +29,6 @@
     "test:int": "jest src/tests/int",
     "test:http": "jest src/tests/http",
     "test:ci": "jest --coverage --ci",
-    "test:live": "RUN_INTEGRATION=1 jest src/tests/live",
     "db:status": "ts-node src/runtime/migrate.ts status",
     "db:migrate": "ts-node src/runtime/migrate.ts migrate",
     "db:baseline": "ts-node src/runtime/migrate.ts baseline",
