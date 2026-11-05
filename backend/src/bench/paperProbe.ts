@@ -78,6 +78,7 @@ interface ProbeOrder {
   quoteAgeMs: number;
   submitStartNs: bigint | null;
   responseNs: bigint | null;
+  headersNs: bigint | null;
   ackNs: bigint | null;
   firstFillNs: bigint | null;
   fullFillNs: bigint | null;
@@ -184,7 +185,12 @@ export async function paperCommand(args: Args): Promise<string> {
     if (u.event === "fill") o.fullFillNs = u.rxMonoNs;
     if (["fill", "canceled", "expired", "rejected"].includes(u.event)) { o.terminalNs = u.rxMonoNs; o.status = u.event; }
   };
-  const adapter = new AlpacaOrderExecutionAdapter(bus, "paper", { onTradeUpdate });
+  const onResponseHeaders = (intentId: string, ns: bigint): void => {
+    const o = orders.get(intentId);
+    if (o && o.headersNs === null) o.headersNs = ns;
+    probe.responseHeaders(intentId, ns);
+  };
+  const adapter = new AlpacaOrderExecutionAdapter(bus, "paper", { onTradeUpdate, onResponseHeaders });
   const symbolState = new SymbolStateManager();
   const portfolio = new PortfolioStateManager(Number(account.cash));
   const orderState = new OrderStateManager();
@@ -254,7 +260,7 @@ export async function paperCommand(args: Args): Promise<string> {
     const intentId = newId();
     const o: ProbeOrder = {
       index, intentId, clientOrderId: intentId, side, qty: orderQty, decisionBid: q.bid, decisionAsk: q.ask,
-      quoteAgeMs: Date.now() - Date.parse(q.t), submitStartNs: null, responseNs: null, ackNs: null,
+      quoteAgeMs: Date.now() - Date.parse(q.t), submitStartNs: null, responseNs: null, headersNs: null, ackNs: null,
       firstFillNs: null, fullFillNs: null, terminalNs: null, updatesBeforeResponse: 0, filledQty: 0, fillNotional: 0,
       status: "pending", error: null,
     };
@@ -335,6 +341,7 @@ export async function paperCommand(args: Args): Promise<string> {
     return {
       index: o.index, client_order_id: o.clientOrderId, side: o.side, qty: o.qty, status: o.status, error: o.error,
       quote_age_ms: o.quoteAgeMs, spread_bps: ((o.decisionAsk - o.decisionBid) / mid) * 10_000,
+      submit_to_response_headers_ms: ms(o.submitStartNs, o.headersNs),
       submit_to_response_ms: ms(o.submitStartNs, o.responseNs), submit_to_ack_ms: ms(o.submitStartNs, o.ackNs),
       submit_to_first_fill_ms: ms(o.submitStartNs, o.firstFillNs), submit_to_full_fill_ms: ms(o.submitStartNs, o.fullFillNs),
       updates_before_response: o.updatesBeforeResponse, filled_qty: o.filledQty, avg_fill_price: avg,

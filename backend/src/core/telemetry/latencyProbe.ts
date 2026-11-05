@@ -23,7 +23,7 @@
  */
 
 import { Histogram, type HistogramJSON } from "./histogram";
-import { BOOT_ID, CLOCK_DOMAIN_ID, monoNs, parseRfc3339Parts, parseRfc3339ToEpochNs, wallMs } from "./clock";
+import { BOOT_ID, CLOCK_DOMAIN_ID, monoNs, parseRfc3339Parts, parseRfc3339ToEpochNs, rfc3339ToEpochMs, wallMs } from "./clock";
 import type { EventTrace } from "../../types/events";
 import type { MarketDataIssue } from "../../types/market";
 
@@ -98,6 +98,8 @@ export interface MarketDataProbe extends MarketDataObserver {
   /** All of a frame's events have been dispatched. */
   frameDone(frame: InboundFrame, endNs: bigint): void;
   unhandledMessage(type: string): void;
+  /** A correction of data already delivered (updated bar, trade correction/cancel). */
+  revision(kind: string): void;
 }
 
 export type EngineStage = "state" | "evaluate" | "risk";
@@ -127,6 +129,8 @@ export interface OrderPathProbe {
   journal(intentId: string, startNs: bigint, endNs: bigint, outcome: string): void;
   submitStart(intentId: string, ns: bigint): void;
   submitEnd(intentId: string, ns: bigint, outcome: string): void;
+  /** HTTP response headers for a submission arrived (body not yet read). */
+  responseHeaders(intentId: string, ns: bigint): void;
   orderUpdate(orderId: string, kind: OrderUpdateKind, ns: bigint): void;
   fillApplied(orderId: string, ns: bigint, terminal: boolean): void;
 }
@@ -511,7 +515,8 @@ export class LatencyProbe implements MarketDataProbe, EngineProbe, OrderPathProb
       this.count("frames.parse_failed");
       return;
     }
-    this.hFrameParse.add(Number(parseEndNs - frame.rxMonoNs));
+    // parseEndNs is 0n at frame detail: the adapter skips that clock read.
+    if (parseEndNs > 0n) this.hFrameParse.add(Number(parseEndNs - frame.rxMonoNs));
     this.hFrameMessages.add(messageCount);
   }
 
@@ -553,9 +558,20 @@ export class LatencyProbe implements MarketDataProbe, EngineProbe, OrderPathProb
     }
   }
 
+  /** Reused by _recordAge at frame detail to avoid an allocation per event. */
+  private readonly _msParts = { epochMs: 0, subMsNs: 0 };
+
   private _recordAge(h: KindHandles, kind: MarketEventKind, rxWallMs: number, providerTs: string): void {
-    // Exact as Numbers: whole-ms differences × 1e6, minus the sub-ms nanoseconds.
-    const p = parseRfc3339Parts(providerTs);
+    // Stage detail keeps the provider's sub-ms digits; frame detail uses the
+    // allocation-free ms parser (receipt is Date.now(), ms resolution, anyway).
+    let p: { epochMs: number; subMsNs: number } | null;
+    if (this.stageDetail) {
+      p = parseRfc3339Parts(providerTs);
+    } else {
+      const ms = rfc3339ToEpochMs(providerTs);
+      this._msParts.epochMs = ms;
+      p = Number.isNaN(ms) ? null : this._msParts;
+    }
     if (p === null) {
       h.unparseable.value++;
     } else if (kind === "bar") {
@@ -648,6 +664,10 @@ export class LatencyProbe implements MarketDataProbe, EngineProbe, OrderPathProb
     }
   }
 
+  revision(kind: string): void {
+    this.count(`revisions.${kind}`);
+  }
+
   unhandledMessage(type: string): void {
     this.count(`messages.unhandled.${type || "missing_T"}`);
   }
@@ -732,6 +752,13 @@ export class LatencyProbe implements MarketDataProbe, EngineProbe, OrderPathProb
     }
     it.submitStartNs = ns;
     if (it.rxMonoNs !== null) this.hReceiveToSubmit.add(Number(ns) - it.rxMonoNs);
+  }
+
+  responseHeaders(intentId: string, ns: bigint): void {
+    const it = this.openIntents.get(intentId);
+    if (!it || it.submitStartNs === null) return;
+    this.metric("order.submit_to_response_headers_ns").add(Number(ns - it.submitStartNs));
+    if (it.sampled) it.spans.push({ stage: "response_headers", startNs: ns, endNs: ns });
   }
 
   submitEnd(intentId: string, ns: bigint, outcome: string): void {

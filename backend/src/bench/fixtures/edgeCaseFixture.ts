@@ -188,7 +188,9 @@ export const EDGE_CASE_EXPECTATIONS = {
   },
   /** Dropped under invalidData="quarantine" ("reject"-severity issues only). */
   quarantined: { quote: 5, trade: 2 },
-  unhandled: { c: 1, x: 1, u: 1, s: 1, l: 1, zz: 1, missing_T: 1 },
+  unhandled: { s: 1, l: 1, zz: 1, missing_T: 1 },
+  /** Corrections of data already delivered: published, state-only. */
+  revisions: { bar_revised: 1, trade_corrected: 1, trade_canceled: 1 },
   subscriptionAcks: 2,
   /** Bar publication lag: received 50 ms after the interval end. */
   barPublicationLagMs: 50,

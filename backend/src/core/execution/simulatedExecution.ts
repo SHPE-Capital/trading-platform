@@ -38,7 +38,7 @@ import { EventBus } from "../engine/eventBus";
 import { SymbolStateManager } from "../state/symbolState";
 import { logger } from "../../utils/logger";
 import { barEndMs, msToIso, nowMs } from "../../utils/time";
-import { newId } from "../../utils/ids";
+import { newEventId, newId } from "../../utils/ids";
 import {
   DEFAULT_FILL_MODEL,
   evaluateBarFill,
@@ -268,7 +268,7 @@ export class SimulatedExecutionSink implements IExecutionSink {
     this.pending.set(intent.symbol, list);
 
     this.eventBus.publish({
-      id: newId(),
+      id: newEventId(),
       type: "ORDER_SUBMITTED",
       ts,
       mode: this.mode,
@@ -391,7 +391,7 @@ export class SimulatedExecutionSink implements IExecutionSink {
     this._dequeue(entry);
     if (decision.kind === "expire") {
       this.stats.expiredUnmarketable++;
-      this.eventBus.publish({ id: newId(), type: "ORDER_EXPIRED", ts: decision.ts, mode: this.mode, orderId: entry.order.id });
+      this.eventBus.publish({ id: newEventId(), type: "ORDER_EXPIRED", ts: decision.ts, mode: this.mode, orderId: entry.order.id });
       return;
     }
     const qty = entry.order.qty - entry.filledQty;
@@ -505,7 +505,7 @@ export class SimulatedExecutionSink implements IExecutionSink {
     if (!this._isQueued(entry)) return;
     this._dequeue(entry);
     this.stats.expiredAtClose++;
-    this.eventBus.publish({ id: newId(), type: "ORDER_EXPIRED", ts, mode: this.mode, orderId: entry.order.id });
+    this.eventBus.publish({ id: newEventId(), type: "ORDER_EXPIRED", ts, mode: this.mode, orderId: entry.order.id });
   }
 
   /**
@@ -598,10 +598,10 @@ export class SimulatedExecutionSink implements IExecutionSink {
       ...attribution,
     };
     if (complete) {
-      this.eventBus.publish({ id: newId(), type: "ORDER_FILLED", ts, mode: this.mode, orderId: entry.order.id, fill });
+      this.eventBus.publish({ id: newEventId(), type: "ORDER_FILLED", ts, mode: this.mode, orderId: entry.order.id, fill });
     } else {
       this.eventBus.publish({
-        id: newId(), type: "ORDER_PARTIAL_FILL", ts, mode: this.mode, orderId: entry.order.id,
+        id: newEventId(), type: "ORDER_PARTIAL_FILL", ts, mode: this.mode, orderId: entry.order.id,
         fill, remainingQty: entry.order.qty - entry.filledQty,
       });
     }
@@ -656,7 +656,7 @@ export class SimulatedExecutionSink implements IExecutionSink {
       const [{ order }] = queue.splice(idx, 1);
       this.pending.set(symbol, queue);
       this.eventBus.publish({
-        id: newId(),
+        id: newEventId(),
         type: "ORDER_CANCELED",
         ts: nowMs(),
         mode: this.mode,
@@ -682,7 +682,7 @@ export class SimulatedExecutionSink implements IExecutionSink {
       for (const { order } of queue) {
         const ts = order.updatedAt;
         this.eventBus.publish({
-          id: newId(),
+          id: newEventId(),
           type: "ORDER_EXPIRED",
           ts,
           mode: this.mode,
@@ -736,7 +736,7 @@ export class SimulatedExecutionSink implements IExecutionSink {
         reason: decision.reason,
       });
       this.eventBus.publish({
-        id: newId(),
+        id: newEventId(),
         type: "ORDER_REJECTED",
         ts,
         mode: this.mode,
@@ -763,7 +763,7 @@ export class SimulatedExecutionSink implements IExecutionSink {
 
     if (decision.outcome === "partial") {
       this.eventBus.publish({
-        id: newId(),
+        id: newEventId(),
         type: "ORDER_PARTIAL_FILL",
         ts,
         mode: this.mode,
@@ -775,7 +775,7 @@ export class SimulatedExecutionSink implements IExecutionSink {
       // expired (the orchestrator will transition it to a terminal state).
       if (intent.timeInForce === "ioc" || intent.timeInForce === "fok") {
         this.eventBus.publish({
-          id: newId(),
+          id: newEventId(),
           type: "ORDER_EXPIRED",
           ts,
           mode: this.mode,
@@ -786,7 +786,7 @@ export class SimulatedExecutionSink implements IExecutionSink {
     }
 
     this.eventBus.publish({
-      id: newId(),
+      id: newEventId(),
       type: "ORDER_FILLED",
       ts,
       mode: this.mode,
@@ -816,7 +816,7 @@ export class SimulatedExecutionSink implements IExecutionSink {
         qty: intent.qty,
       });
       this.eventBus.publish({
-        id: newId(),
+        id: newEventId(),
         type: "ORDER_REJECTED",
         ts,
         mode: this.mode,
@@ -843,7 +843,7 @@ export class SimulatedExecutionSink implements IExecutionSink {
       isoTs: msToIso(ts),
     };
     this.eventBus.publish({
-      id: newId(),
+      id: newEventId(),
       type: "ORDER_FILLED",
       ts,
       mode: this.mode,
