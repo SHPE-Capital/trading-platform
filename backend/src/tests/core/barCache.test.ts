@@ -1,8 +1,9 @@
 jest.mock('../../config/env', () => ({
-  env: { alpacaApiKey: 'k', alpacaApiSecret: 's', logLevel: 'error' },
+  env: { alpacaApiKey: 'k', alpacaApiSecret: 's', alpacaDataKey: 'k', alpacaDataSecret: 's', logLevel: 'error' },
 }));
 
 import { BacktestLoader } from '../../core/backtest/backtestLoader';
+import { env } from '../../config/env';
 import { splitIntoRuns, utcDaysInRange, type BarCache } from '../../core/backtest/barCache';
 import type { Bar } from '../../types/market';
 
@@ -39,6 +40,7 @@ const NOW = Date.parse('2024-06-01T12:00:00Z');
 
 beforeEach(() => {
   global.fetch = jest.fn();
+  Object.assign(env, { alpacaDataKey: 'k', alpacaDataSecret: 's' });
 });
 
 describe('day helpers', () => {
@@ -64,6 +66,7 @@ describe('BacktestLoader with a bar cache', () => {
   const END = '2024-01-17T00:00:00Z'; // days 15 and 16
 
   it('serves fully cached days with zero Alpaca requests', async () => {
+    Object.assign(env, { alpacaDataKey: '', alpacaDataSecret: '' });
     const cache = memoryCache(['2024-01-15', '2024-01-16'], [
       bar('SPY', '2024-01-15T14:30:00Z'),
       bar('SPY', '2024-01-16T14:30:00Z'),

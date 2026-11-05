@@ -97,6 +97,12 @@ export async function createVersion(req: Request, res: Response): Promise<void> 
     res.status(400).json({ error: "config is required" });
     return;
   }
+  // change_summary is a text column, so a non-string would fail in the insert
+  // and surface as a 500 for what is a client mistake.
+  if (changeSummary !== undefined && typeof changeSummary !== "string") {
+    res.status(400).json({ error: "changeSummary, when present, must be a string" });
+    return;
+  }
 
   const strategy = await getStrategyById(strategyId);
   if (!strategy) {
@@ -414,7 +420,12 @@ export async function approveProposal(req: Request, res: Response): Promise<void
     return;
   }
 
-  const { orchestrator, liveRuns, executionMode, portfolioState } = req.app.locals.ctx as AppContext;
+  if (note !== undefined && typeof note !== "string") {
+    res.status(400).json({ error: "note, when present, must be a string" });
+    return;
+  }
+
+  const { orchestrator, liveRuns, executionMode, portfolioState, marketData } = req.app.locals.ctx as AppContext;
   if (!orchestrator || !liveRuns) {
     res.status(503).json({
       error: "Orchestrator not available in this runtime mode",
@@ -553,6 +564,7 @@ export async function approveProposal(req: Request, res: Response): Promise<void
       versionId: version.id,
       proposalId: proposal.id,
       ownerId: proposal.requestedBy,
+      ...(marketData && { meta: { marketData: marketData.runStamp() } }),
       allocatedCapital: allocatedCapital(config as { riskBudget?: { maxCapitalPct?: number } }, portfolioState?.getSnapshot().equity),
       ...liveRuns.leaseFields(),
     };
@@ -605,7 +617,7 @@ export async function rejectProposal(req: Request, res: Response): Promise<void>
   const id = String(req.params.id);
   const { reason } = req.body as { reason?: string };
 
-  if (!reason || !reason.trim()) {
+  if (typeof reason !== "string" || !reason.trim()) {
     res.status(400).json({ error: "reason is required — the author needs to know what to change" });
     return;
   }
@@ -683,7 +695,7 @@ export async function addComment(req: Request, res: Response): Promise<void> {
   const id = String(req.params.id);
   const { body, kind } = req.body as { body?: string; kind?: CommentKind };
 
-  if (!body || !body.trim()) {
+  if (typeof body !== "string" || !body.trim()) {
     res.status(400).json({ error: "body is required" });
     return;
   }

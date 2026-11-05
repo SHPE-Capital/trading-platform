@@ -49,7 +49,8 @@ The run page's timeline records only the first occurrence per run and check, so 
 | `LOG_LEVEL` | `info` | `debug` adds per-bar decision lines in strategies that provide them |
 
 The data check uses the same session hours as the risk engine, so it stays quiet when the market is closed and
-starts its clock again at the open. A keyless replay counts as always open.
+starts its clock again at the open. The navbar badge shows the runner's data state
+(live, stale, market closed, no data) and `/api/system/status` reports it as `marketData`.
 
 ## For strategy authors
 

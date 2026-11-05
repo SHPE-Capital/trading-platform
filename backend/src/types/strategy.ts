@@ -28,6 +28,7 @@ export type StrategyType =
   | "neural_network"
   | "minute_reversal"
   | "beginner_reversal"
+  | "tutorial"
   | "mcarrasco_reversal";
 
 /** Strategy lifecycle status */

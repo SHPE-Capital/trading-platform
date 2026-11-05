@@ -134,7 +134,7 @@ describe("receipt time and spans", () => {
     expect(probe.counter("frames.parse_failed")).toBe(2);
     expect(probe.counter("issues.quote.CROSSED_QUOTE")).toBe(1);
     expect(probe.counter("quarantined.quote")).toBe(1);
-    expect(probe.counter("messages.unhandled.x")).toBe(1);
+    expect(probe.counter("revisions.trade_canceled_rejected")).toBe(1); // a cancel without its trade id
     expect(published).toHaveLength(1); // only the valid quote reaches the bus
   });
 });

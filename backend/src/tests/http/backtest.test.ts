@@ -128,4 +128,35 @@ describe("Backtest HTTP API", () => {
 
     expect(response.status).toBe(400);
   });
+
+  // None of these fail in the engine: it "completes" them with corrupt metrics
+  // (a string capital concatenates into equity "abc0", zero capital divides to
+  // NaN, an unparseable start date gives a NaN period), and that result is then
+  // saved and reused as if it were real. They have to be stopped before the queue.
+  const badRuns: Array<[string, object]> = [
+    ["zero initialCapital", { initialCapital: 0 }],
+    ["negative initialCapital", { initialCapital: -100 }],
+    ["string initialCapital", { initialCapital: "100000" }],
+    ["object initialCapital", { initialCapital: {} }],
+    ["unparseable startDate", { startDate: "garbage" }],
+    ["numeric startDate", { startDate: 12345 }],
+    ["endDate before startDate", { startDate: "2023-02-01", endDate: "2023-01-01" }],
+    ["negative slippageBps", { slippageBps: -5 }],
+    ["string slippageBps", { slippageBps: "5" }],
+    ["negative commissionPerShare", { commissionPerShare: -0.01 }],
+    ["unknown dataGranularity", { dataGranularity: "tick" }],
+    ["non-object riskConfig", { riskConfig: "tight" }],
+    ["string riskConfig field", { riskConfig: { maxIntradayDrawdownPct: "abc" } }],
+    ["object name", { name: {} }],
+  ];
+
+  test.each(badRuns)("POST /api/backtests/run — %s is a 400 and queues nothing", async (_label, override) => {
+    const response = await request(app)
+      .post("/api/backtests/run")
+      .set("Authorization", "Bearer valid")
+      .send({ ...payload, ...override });
+
+    expect(response.status).toBe(400);
+    expect(mockEnqueue).not.toHaveBeenCalled();
+  });
 });

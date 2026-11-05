@@ -90,7 +90,7 @@ export async function startStrategyRun(req: Request, res: Response): Promise<voi
   }
   const configId = strategyId;
 
-  const { orchestrator, liveRuns, executionMode, portfolioState } = req.app.locals.ctx as AppContext;
+  const { orchestrator, liveRuns, executionMode, portfolioState, marketData } = req.app.locals.ctx as AppContext;
   if (!orchestrator || !liveRuns) {
     res.status(503).json({ error: "Orchestrator not available in this runtime mode" });
     return;
@@ -99,6 +99,15 @@ export async function startStrategyRun(req: Request, res: Response): Promise<voi
     res.status(403).json({
       error: "Self-service starts are paper-only",
       detail: "Real-money runs must be started through lead approval.",
+    });
+    return;
+  }
+  // A run on a runner with no data would sit silently and never trade.
+  const dataStatus = marketData?.status();
+  if (dataStatus?.source === "none") {
+    res.status(503).json({
+      error: "No market data on this runner, so the run would never trade. Add your own Alpaca paper keys and restart the stack.",
+      detail: dataStatus.message,
     });
     return;
   }
@@ -192,7 +201,7 @@ export async function startStrategyRun(req: Request, res: Response): Promise<voi
     expiresAt,
     versionId: version.id,
     ownerId: req.user!.id,
-    meta: { sandbox: true },
+    meta: { sandbox: true, ...(marketData && { marketData: marketData.runStamp() }) },
     allocatedCapital: allocatedCapital(effectiveConfig, portfolioState?.getSnapshot().equity),
     ...liveRuns.leaseFields(),
   };
@@ -327,6 +336,13 @@ export async function createStrategy(req: Request, res: Response): Promise<void>
     res.status(400).json({ error: "strategy_type, name, and config are required" });
     return;
   }
+  // Both are text columns. A non-string survives the lookup below when it
+  // stringifies to a known key (ask for ["pairs"]) and then fails in the
+  // insert, so the client gets a 500 for its own mistake.
+  if (typeof strategy_type !== "string" || typeof name !== "string") {
+    res.status(400).json({ error: "strategy_type and name must be strings" });
+    return;
+  }
   const def = STRATEGY_DEFINITIONS[strategy_type];
   if (!def) {
     res.status(400).json({ error: `Unknown strategy type: ${strategy_type}` });
@@ -379,6 +395,14 @@ export async function updateStrategyConfig(req: Request, res: Response): Promise
   };
   if (!name || !config) {
     res.status(400).json({ error: "name and config are required" });
+    return;
+  }
+  if (typeof name !== "string") {
+    res.status(400).json({ error: "name must be a string" });
+    return;
+  }
+  if (changeSummary !== undefined && typeof changeSummary !== "string") {
+    res.status(400).json({ error: "changeSummary, when present, must be a string" });
     return;
   }
   try {

@@ -110,9 +110,9 @@ export interface SignalAttribution {
   signalMidPrice: number | null;
   fillPrice: number | null;
   fillTs: EpochMs | null;
-  /** (fillPrice - signalMidPrice) / signalMidPrice × 10,000 */
+  /** (fillPrice - signalMidPrice) / signalMidPrice × 10,000, negated on sells: positive = paid away from the mid */
   slippageBps: number | null;
-  /** Realized PnL on round-trip close (null if position still open) */
+  /** Realized PnL, gross of commission, of the lots this signal opened (null until one closes) */
   realizedPnl: number | null;
   holdingTimeMs: number | null;
   outcome: SignalOutcome;

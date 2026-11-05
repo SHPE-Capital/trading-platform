@@ -199,3 +199,35 @@ function parseRfc3339General(iso: string): bigint | null {
   const fracNs = frac ? BigInt((frac + "00000000").slice(0, 9)) : 0n;
   return BigInt(baseMs) * 1_000_000n + fracNs;
 }
+
+// Separate one-entry cache for rfc3339ToEpochMs, computed with Date itself so
+// the result matches Date semantics exactly.
+let msPrefix = "";
+let msPrefixBase = Number.NaN;
+
+/**
+ * Exactly `new Date(iso).getTime()`, without Date parsing on the hot path.
+ * Consecutive provider timestamps share their "YYYY-MM-DDTHH:MM:SS" second;
+ * that prefix is parsed once with Date and cached, and the fraction is added
+ * as Date does (truncated to milliseconds). Any other form falls back to Date.
+ */
+export function rfc3339ToEpochMs(iso: string): number {
+  const n = iso.length;
+  if (n < 20 || iso.charCodeAt(n - 1) !== 90 /* Z */ || iso.charCodeAt(10) !== 84 /* T */) return new Date(iso).getTime();
+  if (msPrefix.length !== 19 || !iso.startsWith(msPrefix)) {
+    msPrefix = iso.slice(0, 19);
+    msPrefixBase = new Date(`${msPrefix}Z`).getTime();
+  }
+  if (Number.isNaN(msPrefixBase)) return new Date(iso).getTime();
+  if (n === 20) return msPrefixBase;
+  // More than 9 fractional digits: V8 reads them inconsistently, so defer to it.
+  if (iso.charCodeAt(19) !== 46 /* . */ || n < 22 || n > 30) return new Date(iso).getTime();
+  let ms = 0;
+  for (let i = 20; i < n - 1; i++) {
+    const d = iso.charCodeAt(i) - 48;
+    if (d < 0 || d > 9) return new Date(iso).getTime();
+    if (i < 23) ms = ms * 10 + d;
+  }
+  const digits = Math.min(3, n - 21);
+  return msPrefixBase + (digits === 3 ? ms : digits === 2 ? ms * 10 : ms * 100);
+}

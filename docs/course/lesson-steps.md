@@ -305,8 +305,8 @@ export class JcavallinReversalStrategy extends BaseStrategy {
 **Check it:** restart the backend (see *Before class* in the README). A run left
 running is adopted again automatically, now using your new code; if you stopped it,
 start it again. Watch the backend terminal: you will see one line per symbol per
-bar (replayed bars arrive fast when `REPLAY_SPEED` is raised; live bars arrive once a
-minute during market hours).
+bar (live bars arrive once a minute during market hours; outside them, check the
+strategy with a backtest instead).
 
 ---
 

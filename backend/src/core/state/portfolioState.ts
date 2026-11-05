@@ -111,7 +111,7 @@ export class PortfolioStateManager {
   getRiskView(): PortfolioRiskView {
     const positions = this.getAllPositions();
     const positionsValue = positions.reduce((s, p) => s + p.marketValue, 0);
-    return { equity: this.cash + positionsValue, positions };
+    return { equity: this.cash + positionsValue, positions, cash: this.cash, initialCapital: this.initialCapital };
   }
 
   /**

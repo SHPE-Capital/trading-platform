@@ -6,3 +6,4 @@
 
 export { getSupabaseClient } from "./client";
 export * from "./repositories";
+export * from "./eventLogRepository";

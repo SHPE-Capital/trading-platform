@@ -32,6 +32,7 @@ function setup(overrides: Partial<Record<'buildStrategy' | 'warmUp', jest.Mock>>
       deregisterStrategy: jest.fn((id: string) => registered.delete(id)),
     },
     subscribe: jest.fn(),
+    unsubscribe: jest.fn(),
     leases: {
       claimOrphans: jest.fn(async (): Promise<StrategyRun[]> => []),
       heartbeat: jest.fn(async (ids: string[]): Promise<string[]> => ids),
@@ -46,6 +47,59 @@ function setup(overrides: Partial<Record<'buildStrategy' | 'warmUp', jest.Mock>>
   const coordinator = new LiveRunCoordinator('paper:host:1:abc', 90, deps as unknown as LiveRunCoordinatorDeps);
   return { coordinator, deps, registered, now };
 }
+
+function strategyOn(symbols: string[]): IStrategy {
+  return { id: `s-${symbols.join('-')}`, config: { symbols } } as unknown as IStrategy;
+}
+
+describe('LiveRunCoordinator: market data subscriptions', () => {
+  it("unsubscribes a stopped run's symbols that no other held run needs", async () => {
+    const { coordinator, deps } = setup();
+    coordinator.activate('r1', strategyOn(['XOM', 'CVX']));
+    coordinator.activate('r2', strategyOn(['CVX', 'SPY']));
+
+    await coordinator.deactivate('r1');
+
+    expect(deps.unsubscribe).toHaveBeenCalledTimes(1);
+    expect(deps.unsubscribe).toHaveBeenCalledWith(['XOM']);
+  });
+
+  it('unsubscribes everything once the last run on those symbols stops', async () => {
+    const { coordinator, deps } = setup();
+    coordinator.activate('r1', strategyOn(['XOM', 'CVX']));
+    coordinator.activate('r2', strategyOn(['CVX']));
+
+    await coordinator.deactivate('r1');
+    await coordinator.deactivate('r2');
+
+    expect(deps.unsubscribe).toHaveBeenNthCalledWith(1, ['XOM']);
+    expect(deps.unsubscribe).toHaveBeenNthCalledWith(2, ['CVX']);
+  });
+
+  it('does not unsubscribe when deactivating a run it never held', async () => {
+    const { coordinator, deps } = setup();
+    await coordinator.deactivate('nope');
+    expect(deps.unsubscribe).not.toHaveBeenCalled();
+  });
+
+  it('unsubscribes a run whose lease was lost to another runner', async () => {
+    const { coordinator, deps } = setup();
+    deps.leases.claimOrphans.mockResolvedValueOnce([run('r1')]);
+    await coordinator.adoptOrphans();
+
+    deps.leases.heartbeat.mockResolvedValue([]);
+    await coordinator.tick();
+
+    expect(deps.unsubscribe).toHaveBeenCalledWith(['XOM', 'CVX']);
+  });
+
+  it('lists each symbol once even if a run repeats it', async () => {
+    const { coordinator, deps } = setup();
+    coordinator.activate('r1', strategyOn(['XOM', 'XOM']));
+    await coordinator.deactivate('r1');
+    expect(deps.unsubscribe).toHaveBeenCalledWith(['XOM']);
+  });
+});
 
 describe('LiveRunCoordinator: position restore on adoption', () => {
   it("re-applies an adopted run's fills before it trades", async () => {
