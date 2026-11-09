@@ -300,18 +300,24 @@ export async function getLatestPortfolioSnapshot(): Promise<PortfolioSnapshot | 
 }
 
 /** Retrieves the portfolio equity curve (all snapshots) for charting. */
+/**
+ * The most recent `limit` snapshots, returned oldest first for charting.
+ * The query orders newest first so the limit keeps the latest rows; ordering
+ * ascending before limiting would return the first `limit` snapshots ever
+ * written and freeze the curve once the table outgrows the limit.
+ */
 export async function getPortfolioEquityCurve(limit = 500): Promise<PortfolioSnapshot[]> {
   const supabase = getSupabaseClient();
   const { data, error } = await supabase
     .from("portfolio_snapshots")
     .select("*")
-    .order("ts", { ascending: true })
+    .order("ts", { ascending: false })
     .limit(limit);
   if (error) {
     logger.error("getPortfolioEquityCurve failed", { error: error.message });
     return [];
   }
-  return (data ?? []).map((row) => mapPortfolioSnapshot(row as Record<string, unknown>));
+  return (data ?? []).map((row) => mapPortfolioSnapshot(row as Record<string, unknown>)).reverse();
 }
 
 // ------------------------------------------------------------------

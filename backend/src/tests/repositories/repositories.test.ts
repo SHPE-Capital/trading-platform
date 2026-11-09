@@ -355,6 +355,20 @@ describe('getPortfolioEquityCurve', () => {
     await getPortfolioEquityCurve(200);
     expect(limitFn).toHaveBeenCalledWith(200);
   });
+
+  it('keeps the NEWEST snapshots when there are more than the limit, returned oldest first', async () => {
+    // A runner writes one snapshot a minute, so 500 is ~8h. Ordering ascending
+    // before the limit froze the dashboard curve on the first 8h ever recorded.
+    const row = (ts: string) => ({ id: ts, ts, cash: 0, positions_value: 0, total_equity: 0, total_pnl: 0, return_pct: 0 });
+    const limitFn = jest.fn().mockResolvedValue({ data: [row('2026-10-22T07:15:00Z'), row('2026-10-22T07:14:00Z')], error: null });
+    const chain = buildChain({ limit: limitFn });
+    chain.select.mockReturnValue(chain);
+    chain.order.mockReturnValue(chain);
+    mockFrom.mockReturnValue(chain);
+    const result = await getPortfolioEquityCurve(2);
+    expect(chain.order).toHaveBeenCalledWith('ts', { ascending: false });
+    expect(result.map((s) => s.ts)).toEqual([Date.parse('2026-10-22T07:14:00Z'), Date.parse('2026-10-22T07:15:00Z')]);
+  });
 });
 
 // ---------------------------------------------------------------------------
