@@ -10,6 +10,7 @@ export type StrategyType =
   | "pairs_trading"
   | "minute_reversal"
   | "beginner_reversal"
+  | "team3_reversal"
   | "momentum"
   | "arbitrage"
   | "market_making"
