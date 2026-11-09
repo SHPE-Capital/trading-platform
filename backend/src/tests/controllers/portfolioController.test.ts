@@ -105,6 +105,20 @@ describe('getEquityCurve', () => {
     await getEquityCurve(mockReq(), res);
     expect(mockGetCurve).toHaveBeenCalledWith(500);
   });
+
+  it.each([
+    // .limit(NaN) is dropped by supabase-js, so "abc" read the whole table.
+    ['abc', 500],
+    // A negative limit is a PostgREST range error, which the repo turns into [].
+    ['-5', 1],
+    ['0', 1],
+    ['99999999', 5000],
+  ])('clamps limit=%s to %d', async (limit, expected) => {
+    mockGetCurve.mockResolvedValue([]);
+    const res = mockRes();
+    await getEquityCurve(mockReq({ query: { limit } as never }), res);
+    expect(mockGetCurve).toHaveBeenCalledWith(expected);
+  });
 });
 
 describe('getOrders', () => {
