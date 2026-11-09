@@ -84,6 +84,13 @@ describe("market data revisions", () => {
     expect(symbolState.get("SPY")!.latestTrade).toMatchObject({ price: 501, id: "9999" });
   });
 
+  it("rejects a correction to a negative size, as a trade with one would be", () => {
+    const { symbolState, send } = setup();
+    send(trade(7, 500));
+    send({ ...correction(7, 501), cs: -10 });
+    expect(symbolState.get("SPY")!.latestTrade).toMatchObject({ price: 500, size: 10, id: "7" });
+  });
+
   it("a cancel clears the latest trade only when it is the cancelled print", () => {
     const { symbolState, send } = setup();
     send(trade(7, 500));

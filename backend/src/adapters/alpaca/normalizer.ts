@@ -201,6 +201,8 @@ export function validateRawTradeAdjustment(raw: Record<string, unknown>): Market
   if (raw["T"] === "c") {
     if (raw["oi"] === undefined || !isFiniteNumber(raw["cp"]) || !isFiniteNumber(raw["cs"])) return reject("MISSING_FIELD");
     if ((raw["cp"] as number) <= 0) return reject("NON_POSITIVE_PRICE");
+    // The corrected print replaces latestTrade, so hold it to the same bar as a trade.
+    if ((raw["cs"] as number) < 0) return reject("NEGATIVE_SIZE");
     return null;
   }
   return raw["i"] === undefined ? reject("MISSING_FIELD") : null;
