@@ -223,11 +223,16 @@ export function rfc3339ToEpochMs(iso: string): number {
   // More than 9 fractional digits: V8 reads them inconsistently, so defer to it.
   if (iso.charCodeAt(19) !== 46 /* . */ || n < 22 || n > 30) return new Date(iso).getTime();
   let ms = 0;
+  let nonZero = false;
   for (let i = 20; i < n - 1; i++) {
     const d = iso.charCodeAt(i) - 48;
     if (d < 0 || d > 9) return new Date(iso).getTime();
+    if (d !== 0) nonZero = true;
     if (i < 23) ms = ms * 10 + d;
   }
+  // "T24:00:00" is valid only as exactly midnight: Date rejects any nonzero
+  // fraction after it, so adding one to the cached prefix would invent a time.
+  if (nonZero && iso.charCodeAt(11) === 50 /* 2 */ && iso.charCodeAt(12) === 52 /* 4 */) return new Date(iso).getTime();
   const digits = Math.min(3, n - 21);
   return msPrefixBase + (digits === 3 ? ms : digits === 2 ? ms * 10 : ms * 100);
 }
