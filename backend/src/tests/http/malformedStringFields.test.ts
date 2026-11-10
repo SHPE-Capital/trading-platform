@@ -21,6 +21,14 @@ describe("wrong-typed string fields", () => {
     (review.getAppUserById as jest.Mock).mockResolvedValue({
       id: "lead-1", email: "lead@shpe.test", displayName: "Lead", role: "lead", membershipStatus: "active",
     });
+    // The proposal lookups resolve as they would for a real strategy, so a
+    // wrong-typed field is only stopped by validation, never by a lookup
+    // miss. The insert succeeds: PostgREST coerces a JSON object or number
+    // into a text column as its JSON text, so the bad value is stored.
+    (review.getOpenProposalForStrategy as jest.Mock).mockResolvedValue(null);
+    (review.getLatestStrategyVersion as jest.Mock).mockResolvedValue({ id: "v1", strategyId: "s1" });
+    (review.getStrategyVersionById as jest.Mock).mockResolvedValue({ id: "v1", strategyId: "s1" });
+    (review.insertProposal as jest.Mock).mockImplementation(async (row) => ({ id: "p1", status: "open", ...row }));
   });
 
   const cases: Array<["post" | "put", string, object, string]> = [
@@ -31,6 +39,14 @@ describe("wrong-typed string fields", () => {
     ["put", "/api/strategies/configs/x", { name: "n", config: {}, changeSummary: 5 }, "changeSummary is a number"],
     ["post", "/api/strategies/x/versions", { config: {}, changeSummary: [] }, "changeSummary is an array"],
     ["post", "/api/proposals/x/approve", { expectedHeadVersionId: "h", note: {} }, "note is an object"],
+    // title and description are text columns on strategy_proposals. A
+    // non-string is stored as its JSON text ("{}", "[\"t\"]") rather than
+    // rejected, and that junk proposal then holds the strategy's single open
+    // slot, so the real one gets a 409.
+    ["post", "/api/proposals", { strategyId: "s1", title: {} }, "title is an object"],
+    ["post", "/api/proposals", { strategyId: "s1", title: ["t"] }, "title is an array"],
+    ["post", "/api/proposals", { strategyId: "s1", title: "t", description: { a: 1 } }, "description is an object"],
+    ["post", "/api/proposals", { strategyId: "s1", title: "t", description: 7 }, "description is a number"],
   ];
 
   test.each(cases)("%s %s with %p (%s) is a 400", async (method, path, body) => {

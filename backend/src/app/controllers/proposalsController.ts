@@ -300,6 +300,18 @@ export async function createProposal(req: Request, res: Response): Promise<void>
     res.status(400).json({ error: "strategyId and title are required" });
     return;
   }
+  // title and description are text columns, and PostgREST stores a JSON
+  // object or number there as its JSON text rather than rejecting it — so a
+  // truthiness check alone would open a proposal titled "{}" that then holds
+  // the strategy's one open slot.
+  if (typeof title !== "string" || !title.trim()) {
+    res.status(400).json({ error: "title must be a non-empty string" });
+    return;
+  }
+  if (description !== undefined && description !== null && typeof description !== "string") {
+    res.status(400).json({ error: "description, when present, must be a string" });
+    return;
+  }
 
   const existing = await getOpenProposalForStrategy(strategyId);
   if (existing) {
