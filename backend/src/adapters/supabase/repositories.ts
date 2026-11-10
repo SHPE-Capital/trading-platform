@@ -299,7 +299,6 @@ export async function getLatestPortfolioSnapshot(): Promise<PortfolioSnapshot | 
   return mapPortfolioSnapshot(data as Record<string, unknown>);
 }
 
-/** Retrieves the portfolio equity curve (all snapshots) for charting. */
 /**
  * The most recent `limit` snapshots, returned oldest first for charting.
  * The query orders newest first so the limit keeps the latest rows; ordering
