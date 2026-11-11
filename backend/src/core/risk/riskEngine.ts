@@ -32,6 +32,15 @@ import type { OrderIntent } from "../../types/orders";
 import type { PortfolioRiskView } from "../../types/portfolio";
 import type { MarketHours } from "../market/marketHours";
 
+/**
+ * A qty the checks below can reason about. They compare with `>`, and every
+ * comparison with NaN is false, so a NaN qty would pass all of them — reject
+ * it here, along with ±Infinity, so the engine fails closed.
+ */
+function isValidQty(qty: number): boolean {
+  return Number.isFinite(qty) && qty > 0;
+}
+
 export class RiskEngine {
   private config: RiskConfig;
   /**
@@ -75,8 +84,8 @@ export class RiskEngine {
   check(intent: OrderIntent, portfolio: PortfolioRiskView, referencePrice?: number, referenceTs?: number): RiskCheckResult {
     const ts = nowMs();
 
-    if (intent.qty <= 0) {
-      return { passed: false, intent, failedCheck: "INVALID_QTY", reason: `Order qty must be > 0 (got ${intent.qty})`, ts };
+    if (!isValidQty(intent.qty)) {
+      return { passed: false, intent, failedCheck: "INVALID_QTY", reason: `Order qty must be a finite number > 0 (got ${intent.qty})`, ts };
     }
 
     this._initSessionEquity(portfolio);
@@ -101,8 +110,8 @@ export class RiskEngine {
   preflightCheck(intent: OrderIntent, portfolio: PortfolioRiskView, referencePrice?: number, referenceTs?: number): RiskCheckResult {
     const ts = nowMs();
 
-    if (intent.qty <= 0) {
-      return { passed: false, intent, failedCheck: "INVALID_QTY", reason: `Order qty must be > 0 (got ${intent.qty})`, ts };
+    if (!isValidQty(intent.qty)) {
+      return { passed: false, intent, failedCheck: "INVALID_QTY", reason: `Order qty must be a finite number > 0 (got ${intent.qty})`, ts };
     }
 
     this._initSessionEquity(portfolio);
