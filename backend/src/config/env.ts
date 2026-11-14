@@ -185,6 +185,12 @@ export const env = {
   /** Events kept in memory; beyond this the oldest are dropped. */
   replayRecordMaxEvents: optionalNumber("REPLAY_RECORD_MAX_EVENTS", 200_000),
 
+  // Momentum dashboard API (P3-1). Weekly artifacts and research summaries are
+  // uploaded by backend jobs with this shared token; unset means uploads are refused.
+  momentumIngestToken: optional("MOMENTUM_INGEST_TOKEN", ""),
+  /** A weekly artifact whose decision cutoff is older than this is stale (entries disabled). */
+  momentumArtifactMaxAgeHours: optionalNumber("MOMENTUM_ARTIFACT_MAX_AGE_HOURS", 216),
+
   // Feature flags
   enableLiveTrading: optionalBool("ENABLE_LIVE_TRADING", false),
   enableWebSocketPush: optionalBool("ENABLE_WEBSOCKET_PUSH", true),

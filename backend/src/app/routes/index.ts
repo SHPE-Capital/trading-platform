@@ -20,6 +20,7 @@ import replayRoutes from "./replayRoutes";
 import marketDataRoutes from "./marketDataRoutes";
 import runsRoutes from "./runsRoutes";
 import brokerRoutes from "./brokerRoutes";
+import momentumRoutes from "./momentum";
 
 const router = Router();
 
@@ -34,5 +35,6 @@ router.use("/replay", replayRoutes);
 router.use("/market-data", marketDataRoutes);
 router.use("/runs", runsRoutes);
 router.use("/broker", brokerRoutes);
+router.use("/momentum", momentumRoutes);
 
 export default router;
