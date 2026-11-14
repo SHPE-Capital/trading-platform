@@ -367,12 +367,15 @@ export function entriesBlockReason(config: WeeklyConfig, sessionDate: string): E
  */
 export class WeeklyConfigManager {
   private latest: ParseResult | null = null;
+  private latestKey: string | null = null;
   private active: WeeklyConfig | null = null;
   private activeKey: string | null = null;
 
   /** `raw` null or undefined records a missing artifact. Returns the parse result. */
   submit(raw: unknown): ParseResult | null {
     this.latest = raw === null || raw === undefined ? null : parseWeeklyConfig(raw);
+    // Fingerprint once here: resolve() runs on every bar of every symbol.
+    this.latestKey = this.latest !== null && this.latest.ok ? JSON.stringify(this.latest.config) : null;
     return this.latest;
   }
 
@@ -388,7 +391,7 @@ export class WeeklyConfigManager {
 
     if (flat) {
       this.active = latestConfig;
-      this.activeKey = latestConfig === null ? null : JSON.stringify(latestConfig);
+      this.activeKey = this.latestKey;
     }
     const protectionConfig = this.active;
     const deny = (reason: EntriesDisabledReason): ConfigResolution => ({
@@ -397,7 +400,7 @@ export class WeeklyConfigManager {
 
     if (latest === null) return deny("missing");
     if (!latest.ok) return deny(latest.reason);
-    if (this.active === null || this.activeKey !== JSON.stringify(latest.config)) return deny("switch_pending_not_flat");
+    if (this.active === null || this.activeKey !== this.latestKey) return deny("switch_pending_not_flat");
     const blocked = entriesBlockReason(latest.config, sessionDate);
     if (blocked !== null) return deny(blocked);
     return { entriesAllowed: true, reason: null, entryConfig: this.active, protectionConfig, errors };

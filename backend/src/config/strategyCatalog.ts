@@ -23,6 +23,7 @@ import {
 } from "../strategies/minuteReversal/minuteReversalConfig";
 import type { MinuteReversalConfig } from "../strategies/minuteReversal/minuteReversalTypes";
 import { beginnerReversalManifest } from "../strategies/beginnerReversal/manifest";
+import { breakoutMomentumManifest } from "../strategies/momentum/manifest";
 import { asProblem, type StrategyManifest } from "./strategyManifest";
 
 
@@ -86,6 +87,7 @@ export const STRATEGY_CATALOG: readonly StrategyManifest[] = [
   minuteReversalManifest,
   beginnerReversalManifest,
   mcarrascoReversalManifest,
+  breakoutMomentumManifest,
 ];
 
 const seen = new Set<string>();
