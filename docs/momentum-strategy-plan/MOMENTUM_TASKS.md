@@ -72,7 +72,15 @@ Checked on 2026-11-13 (`main`):
 5. **Store scaling.** `data/store.py` rewrites one JSON manifest every 20 units.
    That does not scale to 1,000+ symbols over years. Shard it or move it to
    SQLite before the big pull (A1).
-6. **Universe builder is config-driven already.** `data/universe.py` reads bins and
+6. **Where code runs.** Decision logic is TypeScript in the platform (P1);
+   calibration and account replay stay in research-python (about 1,000 times
+   faster than the platform engine); the platform engine is only an independent
+   cross-check of finalists (**E8**). The two repos do not share bar stores; the
+   weekly config JSON and golden fixtures are the interface. Details, plus the
+   widened grid (grid v2, exits and account as parameters) and running several
+   strategies at once (**P2-8** shadow policies, the **P2-7** live-symbol-limit
+   check), are in [momentum-config-reference.md](momentum-config-reference.md).
+7. **Universe builder is config-driven already.** `data/universe.py` reads bins and
    cell sizes from YAML, so A5 should extend it rather than rewrite it.
 
 ## Workstreams

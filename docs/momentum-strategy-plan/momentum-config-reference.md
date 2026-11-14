@@ -144,6 +144,76 @@ N = 1000 by the proxy. Keep the 2,048 search budget as the protocol, because it
 mirrors what a team could run weekly. Use the exhaustive result as ground truth
 for E3: does the search find the true top configs, and is the surrogate helping?
 
+## Widening the search space (grid v2, exits and account as parameters)
+
+Today only the five signal components are searched (about 3 to 4 values each,
+69,732 configs). Everything below is **fixed** in the guide, so it is where the
+largest unexplored range is.
+
+| Dimension | Now | Proposed to test | Key |
+|---|---|---|---|
+| Breakout length n | {10, 20, 40, 60} | add 5, 15, 30, 90, 120 | `grid.breakout.n` |
+| Breakout buffer b (ATR) | {0, 0.10, 0.25} | add 0.05, 0.15, 0.35, 0.50 | `grid.breakout.b` |
+| ADX period, threshold | {7, 14, 21}, {15, 20, 25, 30} | add periods 10, 28; thresholds 10, 35, 40 | `grid.adx.*` |
+| EMA fast, slow, d | {5, 8, 12}, {20, 35, 60}, {0, 0.10, 0.25} | add fast 3, 21; slow 90, 120; d 0.5 | `grid.ema.*` |
+| Relative volume window, v | {3, 5, 10}, {1, 1.5, 2} | add windows 15, 30; v 2.5, 3 | `grid.rvol.*` |
+| VWAP band e | {1, 2, 3} | add 0.5, 1.5, 4 | `grid.vwap.e` |
+| **Initial stop (ATR)** | 1.5 fixed | {1.0, 1.5, 2.0, 3.0} | `exit.initial_stop_atr` |
+| **Trail activation (ATR)** | 1.0 fixed | {0.5, 1.0, 1.5, 2.0} | `exit.trail_activation_atr` |
+| **Trail distance (ATR)** | 1.5 fixed | {1.0, 1.5, 2.0, 3.0} | `exit.trail_distance_atr` |
+| **Max hold (minutes)** | 60 fixed | {30, 60, 90, 120} | `exit.max_hold_minutes` |
+| Max positions | 10 fixed | {5, 10, 15, 20} | `account.max_positions` |
+| Entry window | not constrained | earliest and latest entry minute | `signals.entry_window` |
+| Limit markup | 0.20% fixed | {0.10%, 0.20%, 0.30%} | `fill.limit_markup` |
+
+How to do it safely:
+
+1. **Versioned, never edited in place.** A wider domain is a new `grid.version`
+   (v2); the config ID includes the version. v1 stays the protocol; v2 runs as a
+   development comparison and only enters the freeze if it holds up on the
+   validation weeks.
+2. **Exits and account first as a small outer grid**, not inside the evolutionary
+   search: for each outer cell (for example 4 stops × 4 holds × 3 position caps =
+   48) run the normal search. This mirrors the ORB team's RM3 and RM5 and keeps the
+   trial count countable. Only add exit parameters to the searched vector if the
+   outer grid shows they matter.
+3. **The space gets too big to enumerate.** Five-component v2 alone is in the tens
+   of millions of configs; with exits it is far larger. The exhaustive precompute
+   (stream F, F4a) stops being possible, so the surrogate (D4) carries more of the
+   load and E3 must show it is helping (rank correlation, convergence versus
+   budget). Raise `search.budget` with the space (development comparison 8,192 or
+   more), and keep the neighbor-stability check (E3).
+4. **Overfitting grows with the space.** More dimensions and finer steps make a
+   lucky config more likely. Keep validation floors, report logical evaluations
+   per finalist, and prefer the center of a plateau (the RM2 rule) over the single
+   best cell. Finer steps are worthwhile mainly where the score surface is already
+   smooth.
+5. **Cache cost.** Exits and account parameters change the replay, so each new
+   value multiplies the number of cached chunks (D6). Plan disk for the cache
+   (per config per week) and prune by LRU.
+
+## Where the code runs (decision)
+
+| Piece | Where | Why |
+|---|---|---|
+| Indicators, signal rule, ranking, sizing, exits (decision logic) | **TypeScript in the platform** (P1), matching Python on golden fixtures | Strategies may not call external services |
+| Account replay, weekly search, surrogate, weights, bootstrap | **research-python (Numba)** | About 1,000 times faster than the platform backtest engine (rough: 118k frames/s synthetic against a 29.5M-bar year) |
+| Platform backtest engine | Independent **cross-check** of finalists only (E8) | Catches port bugs; too slow and too job-oriented for search |
+| Bars | **Two separate stores, no sharing** (research Parquet, platform Supabase bar cache) | Different access patterns; the only interface is the weekly config JSON (0-A) plus the golden fixtures |
+
+## Running several algorithms at once
+
+- **Platform:** the orchestrator registers many strategy instances and the risk
+  engine has per-strategy budgets. CPU is not the limit for minute bars. The limit
+  is the **single paper account** (shared cash) and the data-stream limits. The
+  plan runs **one** policy live and the other two as signal-only shadow instances
+  (P2-8). Verify the free-plan symbol cap first (P2-7); if it is about 30, the live
+  universe is a top-K subset of the weekly universe, or bars are polled by REST,
+  or a paid plan is used.
+- **Research:** `compute.workers` and `threads_per_worker` are config. Proxy
+  scaling flattened beyond about 8 threads (memory bound), so prefer more
+  processes sharing a memory-mapped panel over more threads, and measure in E1.
+
 ### Risks that grow with scale
 
 - **Alpaca manifest.** `data/store.py` keeps one JSON manifest and rewrites all of

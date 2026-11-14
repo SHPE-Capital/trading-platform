@@ -132,6 +132,28 @@ Existing code to build on: `evaluation/stats.py` (`paired_block_bootstrap`,
   separate host for the always-on paper service.
 - **Done when:** the lead has what they need for 0-F.
 
+## E8 Platform-engine cross-check of finalists
+
+- **Owns:** `scripts/momentum/platform_crosscheck.py` (or a platform-side
+  script), `studies/momentum/rm9-weekly-calibration/crosscheck/` (results)
+- **Depends on:** P1-3 (platform strategy), B6 golden parity, D8 (finalists),
+  A6 (a small panel export)
+- **Spec:** §12 and §15 (research and platform must agree)
+- **Why:** the Python account engine is the reference and is about 1,000 times
+  faster than the platform's backtest engine (platform synthetic replay is about
+  118k frames/s, so a 300-stock, one-year minute replay would take minutes per
+  candidate, against a fraction of a second in the proxy; rough comparison, not a
+  benchmark). So **calibration stays in research-python** and the platform engine
+  is used only as an independent check, never for search.
+- **Work:** pick a few finalists and a few weeks (include an early close, a
+  gap-through-stop, a halt and a rejection day). Replay them through the
+  platform backtest engine with the same bars and weekly artifact. Compare
+  signals, ordered entries, fills, exits and daily returns with the Python
+  result. Differences are classified as expected (different fill models,
+  documented), a bug, or an unresolved ambiguity.
+- **Done when:** a table of per-week agreement exists, every difference is
+  explained, and any bug is fixed in the side that was wrong before the freeze.
+
 ## E7 Presentation package
 
 - **Owns:** `studies/momentum/rm9-weekly-calibration/presentation/`

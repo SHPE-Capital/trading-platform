@@ -142,6 +142,44 @@ trading). Broker experiments in P2-1 are done in that paper account only.
   at least two sessions. Record the arrival latency distribution after the
   minute end, the fraction later than 1s, missing bars, and how often bars are
   corrected.
+- **First, check the symbol limit (added 2026-11-13):** this repo does not
+  document how many symbols a stream may subscribe to. Alpaca's free (IEX)
+  websocket is believed to cap symbols at about 30 per connection, and the free
+  plan allows one data stream per account (already known). **Verify both on our
+  keys before anything else.** If the cap is real, a live universe of 500 to
+  1,000 symbols is impossible on free data, and the options are: (1) the live
+  universe is the top K (about 30) of the weekly universe by the C4 ranking,
+  with research replayed on the same K to keep parity; (2) poll minute bars by
+  REST once a minute for the full universe (the bars endpoint takes many symbols
+  per call; measure latency and rate limits); (3) a paid data plan. Report the
+  chosen option to the lead for 0-F, because it changes what the paper run can
+  say about the research N.
 - **Done when:** the doc gives percentiles and a recommendation to keep or
-  change the 1s batch deadline. The result goes to the lead **before the Nov 21
+  change the 1s batch deadline, plus the measured symbol limit and the chosen
+  live-universe option. The result goes to the lead **before the Nov 21
   freeze** because it can change the research replay.
+
+## P2-8 Shadow policies alongside the live policy
+
+- **Owns:** `backend/src/strategies/momentum/shadowRun.ts` (or the recorder
+  config), tests
+- **Depends on:** P1-3, P1-2; **Coordinate** with `core/live/signalRecorder.ts`
+  and `core/live/liveRunCoordinator.ts` owners
+- **Spec:** §9 "The three selected policies then each maintain their own forward
+  account"
+- **Why:** the orchestrator can register several strategy instances, and CPU is
+  not the limit (the audit's 20-instance test cut synthetic throughput from about
+  40k to 15k frames/s, while 500 stocks of minute bars is about 8 bars/s). The
+  limit is **one paper account**: instances share cash and capital reservations,
+  so three policies trading live would distort each other.
+- **Work:** run **one** policy live (the lead picks it at 0-F). Run the other two
+  policies' weekly configs as **signal-only shadow instances** that record their
+  signals, ranked candidates and hypothetical sizes, but send no orders. Confirm
+  first that the signal recorder keeps enough to reconstruct a forward account
+  in research. Each instance has its own risk budget and its own weekly
+  artifact. Do not give shadow instances capital reservation.
+- **Done when:** one paper session records signals for all three policies with
+  the live policy's orders unaffected (compare with a live-only run), and the
+  records are exportable for the research forward accounts. If three separate
+  Alpaca paper accounts are used instead, first verify the data-stream limit per
+  account on our keys.
