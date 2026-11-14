@@ -24,6 +24,7 @@ Read your person file first, then the agent briefs for the slices you delegate.
 | [person-1-platform-benchmark.md](person-1-platform-benchmark.md) | Person 1 |
 | [person-2-strategy-research.md](person-2-strategy-research.md) | Person 2 |
 | [agents/](agents/) | One brief per agent slice (copy into the agent prompt) |
+| [multi-strategy-and-benchmark-changes.md](multi-strategy-and-benchmark-changes.md) | Benchmark findings, final scope (1,000 x 10), plan changes and running several strategies (read after your person file; not yet merged into HANDOFF_ALL.md) |
 | [HANDOFF_ALL.md](HANDOFF_ALL.md) | Everything in one file (generated from the files above) |
 
 Agent briefs: `agents/p1-*` to `agents/p4-*` are Person 1's slices,
