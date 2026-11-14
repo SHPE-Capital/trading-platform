@@ -70,7 +70,7 @@ describe('AlpacaMarketDataAdapter resilience', () => {
     const second = latestSocket();
     second.emit('message', Buffer.from(JSON.stringify([{ T: 'success', msg: 'authenticated' }])));
     expect(second.ws.send).toHaveBeenCalledWith(
-      JSON.stringify({ action: 'subscribe', quotes: ['NVDA', 'SPCX'], trades: ['NVDA', 'SPCX'], bars: ['NVDA', 'SPCX'] }),
+      JSON.stringify({ action: 'subscribe', quotes: ['NVDA', 'SPCX'], trades: ['NVDA', 'SPCX'], bars: ['NVDA', 'SPCX'], updatedBars: ['NVDA', 'SPCX'] }),
     );
   });
 
