@@ -8,8 +8,8 @@
  *
  * A bar that does not follow its predecessor by exactly one minute inside a
  * session is a gap. Research resets its recursive indicators on a missing bar;
- * the bank does the same and, to stay safe, then waits for the full warm-up
- * again (a deliberate, conservative difference from research on gap days).
+ * the bank does the same. Readiness (B4) counts bars from the first bar supplied,
+ * not from the last reset, exactly as research does (golden parity, P1-6).
  *
  * Inputs:  completed 1-minute bars with their session id and minute of day.
  * Outputs: IndicatorSnapshot and per-component readiness/pass flags.
@@ -71,7 +71,7 @@ export interface BankStep {
 export class MomentumIndicatorBank {
   private lastTs: number | null = null;
   private lastSession: string | null = null;
-  /** Bars since the last reset: research's absolute bar index t is count - 1. */
+  /** Bars seen: research's absolute bar index t is count - 1. Not reset on a gap (golden parity: B4 readiness uses the absolute index). */
   private count = 0;
 
   private atr!: WilderAtr;
@@ -99,7 +99,6 @@ export class MomentumIndicatorBank {
   }
 
   private resetRecursive(): void {
-    this.count = 0;
     this.atr = new WilderAtr(this.s.atrLength);
     this.high = new RollingHigh(this.params.breakout.n);
     this.adx = this.params.adx ? new WilderAdx(this.params.adx.period) : null;
