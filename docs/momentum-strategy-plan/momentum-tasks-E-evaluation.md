@@ -15,7 +15,7 @@ Existing code to build on: `evaluation/stats.py` (`paired_block_bootstrap`,
 
 ## E1 Benchmark harness and compute projection
 
-- **Owns:** `scripts/momentum/bench.py`, `studies/momentum/rm1-weekly-calibration/bench/` (results)
+- **Owns:** `scripts/momentum/bench.py`, `studies/momentum/rm9-weekly-calibration/bench/` (results)
 - **Depends on:** C4 (first version), B5, A6; C5 for the final numbers
 - **Spec:** §13, §14 "The benchmark sequence"
 - **Work:** run the guide's sequence:
@@ -30,6 +30,16 @@ Existing code to build on: `evaluation/stats.py` (`paired_block_bootstrap`,
   rate, peak RAM and I/O throughput. Project total wall time for the full run
   (weeks × policies × seeds × budget) at the measured rate with a **2× rerun
   reserve**, plus the weekend job time against the 24-hour target.
+
+  **Scale matrix (added 2026-11-13):** repeat step 3 for N ∈ {300, 500, 1,000} and
+  history ∈ {2, 5, 10} years as far as RAM and data allow. Record per cell:
+  seconds per candidate-window at 1, 8 and 16 threads, **peak RAM per worker and
+  total**, panel bytes, disk bytes and pull time. Project the full run **twice**:
+  with the D6 week-chunk cache (expected) and without it, so the lead sees why
+  the cache is required. Test the cache by running several consecutive weeks (step
+  4) and report new chunks computed per week. A first proxy (synthetic data, this
+  machine) is in [momentum-config-reference.md](momentum-config-reference.md);
+  replace it with measured numbers.
 - **Done when:** a one-page table with measured numbers and the projection
   exists; it goes to the lead for 0-F by **Nov 17**.
 
@@ -77,12 +87,13 @@ Existing code to build on: `evaluation/stats.py` (`paired_block_bootstrap`,
 - **Work:** tamper with a bar after a cutoff and assert that the signals,
   universe and artifact before the cutoff are unchanged. Run the same
   config and seed twice and require identical artifacts. Check that the
-  search and validation cutoffs appear in every artifact.
+  search and validation cutoffs appear in every artifact. Also assert that
+  selection at a cutoff never reads a D6 cache chunk at or after the cutoff.
 - **Done when:** both tests pass in CI on fixture data.
 
 ## E5 Study folder, protocol and assumption register
 
-- **Owns:** `studies/momentum/rm1-weekly-calibration/` (`README.md`,
+- **Owns:** `studies/momentum/rm9-weekly-calibration/` (`README.md`,
   `protocol.md`, `assumptions.md`, `notes.md`), new rows in `docs/teams/momentum.md`
 - **Depends on:** nothing to start; finalized at the **Nov 21 freeze**
 - **Spec:** §17 "Keep an assumption register", §7 "Before opening the reserved
@@ -93,7 +104,11 @@ Existing code to build on: `evaluation/stats.py` (`paired_block_bootstrap`,
     components, unanimous agreement, 63-session validation, the exit package,
     sizing, search budget, cost scenarios, acceptance floors, ESS target).
   - Frozen protocol: the exact values plus a content hash. D8 checks that hash
-    before touching the reserved period.
+    before touching the reserved period. The frozen file is the 0-G
+    `MomentumProtocol` YAML (resolved, with the grid domain), so nothing is
+    frozen that is not also configurable. Add the new **RM9** row to
+    `docs/teams/momentum.md` (the study ID was renamed from RM1 to avoid the ORB
+    program's RM1–RM8).
   - Changelog: any change after the freeze gets a date and a statement of
     whether the final evaluation remains untouched.
 - **Done when:** the protocol is frozen, hashed and referenced by the reserved
@@ -105,6 +120,11 @@ Existing code to build on: `evaluation/stats.py` (`paired_block_bootstrap`,
 - **Depends on:** nothing
 - **Spec:** §13 "Initial machines to benchmark", "No allocation has been
   confirmed"
+- **Reference machine (measured 2026-11-13):** Ryzen 7 3700X (8 cores, 16
+  threads), 15.9 GB RAM (only about 2.4 GB free with the usual apps open), 2 TB
+  NVMe with about 86 GB free, RTX 3070 Ti (unused by this plan). Fits N = 500
+  over 5 years (about 5 GB panel); N = 1,000 over 10 years (about 20 GB) needs
+  chunked memory-mapping or a larger-RAM host.
 - **Work:** for each candidate host (AWS account, university HPC, team
   laptops), record usable cores, RAM, local scratch, wall-time limits, queue
   delay, credit limits, whether market data may be stored there, and how to
@@ -114,7 +134,7 @@ Existing code to build on: `evaluation/stats.py` (`paired_block_bootstrap`,
 
 ## E7 Presentation package
 
-- **Owns:** `studies/momentum/rm1-weekly-calibration/presentation/`
+- **Owns:** `studies/momentum/rm9-weekly-calibration/presentation/`
 - **Depends on:** E2, D8; walkthroughs from P1/P2
 - **Spec:** §16 "Practice explaining one trade, one weekend update, and one
   policy comparison", §15 "What a final evidence package contains"

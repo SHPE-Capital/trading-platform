@@ -61,6 +61,10 @@ returns for a config. D7 and D8 integrate everything.
   - Stop at a budget of 2,048 **logical** evaluations; a cache hit still
     counts. Three fixed seeds.
   - Keep up to 12 top feasible configs per seed and hand them to D5.
+  - **Every number here is configuration** (budget, seed list, initial samples,
+    population, proposals per round, mutation share, evaluations per round and
+    their split, surrogate start threshold, finalists per seed). The development
+    comparison budget of 8,192 and 5 seeds must run by changing the YAML only.
   - Writing a small implementation is fine; pymoo is optional (needs approval
     as a new dependency).
 - **Done when:** the search is deterministic for a given seed, the audit trail
@@ -96,8 +100,14 @@ returns for a config. D7 and D8 integrate everything.
   - Deduplicate finalists across seeds (at most 36) and pick the highest
     validation J. Ties go to fewer filters, then the stable config ID.
   - If nothing qualifies, the result is `no_deployment` with reasons.
-- **Done when:** every rule has a pass and a fail test, and every rejection
-  reason is carried into the artifact.
+- **Configurable:** all floors (trades and sessions for search and validation,
+  drawdown, single-stock share, selection cost in bps, maximum finalists) come
+  from the protocol config. Larger N produces more trades per week, so the floors
+  are expected to rise with N (see the config reference); also report every
+  finalist at the 20 bps scenario.
+- **Done when:** every rule has a pass and a fail test, every rejection
+  reason is carried into the artifact, and changing a floor in config changes the
+  outcome with no code edit.
 
 ## D6 Evaluation cache
 
@@ -110,8 +120,18 @@ returns for a config. D7 and D8 integrate everything.
   execution model, portfolio settings and code version. A weight change reuses
   the path; any other change invalidates it. Store on local scratch (Parquet or
   SQLite), safe to read from several processes.
+- **Granularity (changed 2026-11-13):** key the cache **per config and per week
+  chunk**, not per whole date range, and assemble a window by concatenating
+  chunks. An expanding window then computes only the new week for configs
+  already seen, and the three policies share entries because weights apply to
+  cached returns. The key still includes data version, universe schedule
+  version, execution model, account settings and code version. A chunk at or
+  after the cutoff must never be read when selecting at that cutoff (add to E4).
+  Without this, the proxy projects about 190 hours for the full walk-forward at
+  N = 1,000 and 5 years.
 - **Done when:** tests show a hit for a weight-only change and a miss for each
-  key component, and hit-rate counters exist for E1.
+  key component, a window extended by one week computes exactly one new chunk per
+  config, and hit-rate counters exist for E1.
 
 ## D7 Weekend calibrator (one cutoff → one artifact)
 

@@ -43,8 +43,12 @@ by different people; the lead reviews all of them.
   hash independent of dict ordering; `enumerate_configs()`; `is_valid(config)`;
   a `feature_vector(config)` encoding with explicit inactive-component markers
   (used by D4).
-- **Done when:** `len(list(enumerate_configs())) == 69_732`; 14 subsets; IDs are
-  stable across Python sessions and platforms; the encoding round-trips.
+- **Configurable:** the domain is loaded from the protocol config (0-G) with a
+  `grid.version`; the Appendix A domain is the default. Widening the grid is a new
+  grid version, never an edit in place, and the config ID includes the version.
+- **Done when:** `len(list(enumerate_configs())) == 69_732` for the default grid;
+  14 subsets; IDs are stable across Python sessions and platforms; the encoding
+  round-trips; a different domain from config enumerates correctly.
 
 ## 0-C Account simulator I/O contract and the `calibration/` layer
 
@@ -61,7 +65,10 @@ by different people; the lead reviews all of them.
     IDs. The format is designed so A6 can memory-map it.
   - `AccountConfig`: starting cash, max positions, per-stock percentage, total
     percentage, risk percentage, liquidity cap, exit package, cost scenario,
-    fill model, daily halt.
+    fill model, daily halt, **ranking function name, optional entry-score
+    threshold, optional size multiplier input and a search-replay reference
+    equity** (the defaults reproduce the guide exactly; they are the seams for
+    [stream F](momentum-tasks-F-later-ideas.md)). Built from the 0-G config.
   - `SignalMask`: boolean (symbol × minute) plus the ATR array at each minute.
   - `AccountResult`: daily net returns (every session, including zero-trade
     days), ledger, rejection log with reasons, flags (ambiguous bars,
@@ -101,14 +108,43 @@ by different people; the lead reviews all of them.
 
 ## 0-F Scope decision and owner assignment
 
-- **Repo:** docs (record the outcome in `studies/momentum/rm1-weekly-calibration/README.md`, created by E5)
+- **Repo:** docs (record the outcome in `studies/momentum/rm9-weekly-calibration/README.md`, created by E5)
 - **Owner:** project lead
 - **Depends on:** draft now, finalize after the first E1 benchmark (Nov 17)
 - **Spec:** §13, §14 "If the forecast does not fit", §16
-- **Decide and record:** N (300 or reduced through the same stratified
-  procedure); analysis history (5 years or shorter, declared before
-  evaluation); search budget per weekend (2,048 or less) and number of seeds;
-  whether quote replay is in scope; the reserved-period boundary date; owner
-  and reviewer per stream; compute host (AWS or HPC) with confirmed limits
-  (from E6).
-- **Done when:** the decision is written, dated, and linked from the index.
+- **Decide and record:** N (**recommended 500, stretch 1,000**; 300 or reduced
+  through the same stratified procedure is the fallback); analysis history
+  (**recommended 5 to 10 years**, declared before evaluation; shorter is the
+  fallback); the stage plan from [momentum-config-reference.md](momentum-config-reference.md)
+  (pilot, 300 × 2, 500 × 5, 1,000 × 10) and the gate for each; search budget per
+  weekend (2,048 protocol; the guide allows less) and number of seeds;
+  finalists per seed; whether quote replay is in scope; the reserved-period
+  boundary date; whether this program shares the ORB exit, cost and sizing
+  studies (RM3, RM5, RM7) or replaces them; owner and reviewer per stream; compute
+  host (AWS or HPC) with confirmed limits (from E6).
+- **Inputs:** E1 numbers (time, RAM and disk per N and years), A1 coverage
+  (including delisted names and the feed), E6.
+- **Done when:** the decision is written, dated, and linked from the index, and
+  each chosen value is entered in the protocol config (0-G).
+
+## 0-G Protocol configuration
+
+- **Repo:** research-python
+- **Owns:** `src/shpe_research/config/momentum.py` (pydantic `MomentumProtocol`),
+  `configs/momentum/protocol.default.yaml`, `tests/unit/config/test_momentum_config.py`
+- **Depends on:** nothing (fields are added as each stream defines them; 0-C
+  `AccountConfig` and 0-A artifact fields reference it)
+- **Spec:** the parameter table in [momentum-config-reference.md](momentum-config-reference.md),
+  guide §7 and §11 (freeze), ADR 0008 (typed configs)
+- **Work:** one typed model with a section per area (universe, data, eligibility,
+  grid, signals, fill, costs, exit, account, weights, score, search, surrogate,
+  validation, acceptance, bootstrap, quote replay, compute). `extra="forbid"`,
+  defaults equal to the guide's provisional values, a resolved-config content
+  hash (used by E5), CLI `--set key=value` overrides that are recorded in the
+  artifact and refused when `frozen=true`. Other streams read their numbers from
+  this model; they do not define their own constants.
+- **Done when:** the default YAML round-trips; a misspelled key fails; changing any
+  single field changes the hash; N, years, budget, seeds, finalists per seed,
+  validation sessions, cost scenarios and every account cap can be changed from
+  the YAML with no code edit (tests for each); the artifact (0-A) stores the
+  resolved config.
