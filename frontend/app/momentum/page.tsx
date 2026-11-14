@@ -7,6 +7,7 @@
 
 "use client";
 
+import Link from "next/link";
 import { MomentumLiveView } from "../../features/momentum/MomentumLiveView";
 import { useMomentumLive } from "../../features/momentum/useMomentumLive";
 
@@ -22,6 +23,9 @@ export default function MomentumPage() {
             Intraday momentum strategy: active weekly configuration, risk state and positions (mock data).
           </p>
         </div>
+        <Link href="/momentum/results" className="text-xs font-medium text-zinc-600 underline dark:text-zinc-400">
+          Research results
+        </Link>
         <button
           onClick={refetch}
           className="rounded-md border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
