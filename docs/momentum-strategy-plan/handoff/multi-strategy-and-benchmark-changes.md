@@ -30,14 +30,19 @@ per worker at one thread. The final run needs a **compute host with at least 200
 | Numba account replay (63 sessions, 1 thread) | 0.025 s (N=300), 0.041 s (500), 0.049 s (1,000); 30 to 35 times the Python oracle; exact parity | C5 is done; keep the oracle for tests |
 | Kernel thread scaling | about 10 times on 16 threads | parallelize across candidates |
 | End-to-end thread scaling | 8 and 16 threads were slower than 1 (indicator work holds the GIL) | parallelize across week chunks with processes sharing memory-mapped arrays |
-| Cold indicator build, one config, 300 stocks, 25 sessions | 20.8 s before, 1.65 s after the Numba pass | the indicator build, not replay, is the cost floor and is shared by all candidates in a chunk |
+| Cold indicator build, one config, 300 stocks, 25 sessions | 20.8 s before, 1.65 s after the Numba pass | a real speedup, but **not** shown to be the dominant cost (next row) |
+| Panel preparation redone per call in the harness | N=300: 89.5 ms vs 8.9 ms per 25-session config-chunk (raw vs prepared panel); N=1,000: 274.7 vs 18.4 ms; prepare once costs 88 ms and 285 ms | **harness bug: it inflated per-candidate cost 10 to 15 times in both first runs. Fix: prepare once per chunk** |
 | Week-chunk cache | one new chunk per config per week; about 92% reuse over consecutive weeks | D6 works as designed |
 | Panel size | 2.05 MB per stock-year; one 1,000-stock week is 41 MB | 1,000 x 10 is about 20.5 GB, chunk and map it |
 | Pilot pull (77 symbols, 2.25 years) | 19.25M bars, 789 MB, 881 s, no 429s, 6,901 bars per request, 41 bytes per row | the plan assumed 10,000 bars per request and about 22 bytes per row, so pull time and disk are about 2.5 and 2 times worse |
 | Delisted coverage | minute bars back to 2016 for TWTR, SIVB, ATVI and others; renamed tickers stop at the rename | A3 stable asset IDs are required |
-| First full matrix (64 candidates) | projected 20 to 247 h per weekend with the cache | **do not cite**: the shared indicator cost was charged per candidate on a small sample |
+| Both first runs (64 and 256 candidates) | 84 to 116 ms per config-chunk; weekend projections of 20 to 247 h; steps 1 to 4 took about 65 min | **do not cite**: they include the preparation bug; rerun after the fix |
 
 ## 3. Plan changes (each is a task edit; the packets already carry the status notes)
+
+**Correction (2026-11-14):** the first version of this note called the indicator build the cost
+floor. Measurement showed a harness bug instead (section 2). Item 1 below, B7, is therefore
+**unproven** until the corrected rerun; the new first step is to prepare the panel once per chunk.
 
 1. **B7 persisted indicator cache (new).** Persist indicator and signal arrays per week
    chunk, memory-mapped. The indicator build becomes a once-per-chunk cost shared by every
@@ -95,21 +100,27 @@ Assume 10 strategies, each with its own signal grid and search budget (2,048 eva
 
 ### Cost model (estimate, 16 threads, per weekly calibration)
 
-Replay is about 15 to 30 min per strategy at 5 years (N = 300 to 1,000) and about double at
-10 years; the indicator build is about 5 to 30 min and is shared.
+Corrected 2026-11-14 from the measured prepared-panel cost: about 11 ms per config-chunk at
+N = 300 and about 23 ms at N = 1,000 (a 5-session chunk plus its 20-session history prefix,
+mask included), a 10 times thread speedup on the kernel, and 18,432 distinct evaluations per
+strategy per weekend. Replay dominates, so sharing the panel and indicators saves little;
+reuse of cached return paths saves the most. The history prefix is simulated for every chunk;
+if only 5 sessions need simulating, divide the replay figures by up to 5 (being measured).
 
-| Setting | Ten strategies separately | Ten strategies sharing indicators and panel | With about 50% config reuse from last week |
+| Setting | One strategy, cold | Ten strategies, cold | Ten strategies, about 50% config reuse |
 |---|---|---|---|
-| N = 300, 5 years | about 3.5 h | about 2.5 h | about 1.5 h |
-| N = 1,000, 5 years | about 7.5 to 10 h | about 3.5 to 5.5 h | about 2 to 3 h |
-| **N = 1,000, 10 years (final)** | about 12 to 16 h | about 8 to 12 h | about 4 to 6 h |
+| N = 300, 5 years | about 1.5 h | about 15 h | about 8 h |
+| N = 1,000, 5 years | about 3 h | about 31 h | about 15 h |
+| **N = 1,000, 10 years (final)** | about 6 h | about 61 h | about 30 h |
 
-The first weekend is always cold. A one-year walk-forward is 52 weekends, so 10 strategies at
-1,000 x 10 do not fit in one weekend; they need the levers below, or a larger host.
+The first weekend is always cold. A one-year walk-forward is 52 weekends, so even one strategy
+at 1,000 x 10 needs 150 to 300 h cold; ten strategies do not fit in a weekend without the levers
+below or a larger host. These replace the earlier, optimistic figures (which ignored the history
+prefix).
 
 ### Levers, in order of value
 
-1. **B7 persisted indicators and mask-hash dedupe** (build first; they help every run).
+1. **Prepare once per chunk (done in the harness fix), then the return-path cache and mask-hash dedupe.** B7 persisted indicators help only if the corrected rerun shows the indicator build matters.
 2. **Return-path cache across weeks** (D6, built on the stand-in branch).
 3. **Staged evaluation:** screen all candidates on a short recent window, replay only the top
    fraction over the full window.

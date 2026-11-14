@@ -91,7 +91,7 @@ big pull:
 | Pull, Parquet on disk | about 44 h and about 126 GB at 190 requests/min, 41 bytes/row (paid plan; free plan unverified) | **Does not fit on disk.** |
 | Panel, float32 week chunks | about 20.5 GB (2.05 MB per stock-year), must be chunked and memory-mapped | Exceeds RAM; fits disk if Parquet is converted and deleted per stage |
 | Replay RAM, one worker, N = 1,000 | about 4.6 GB per worker at 1 thread, 12.6 GB total at 16 threads (projected) | Limits workers to 2 to 3 unless indicators are memory-mapped (B7) |
-| Weekly calibration at 1,000 stocks, 5 years | about 45 to 60 min cold, 30 to 45 min with reuse (estimate, not yet measured) | 52 weekends do not fit in one weekend |
+| Weekly calibration at 1,000 stocks, 5 years, one strategy | about 3 h cold, about 1.5 h with 50% reuse (estimate from 18 ms per 25-session config-chunk; the 20-session history prefix is re-simulated per chunk and is a likely 5x saving, to be measured) | 52 weekends do not fit in one weekend |
 
 So the final run needs a **compute host with at least 200 GB disk and 32 GB RAM** (AWS
 within the credit budget, or HPC), or a reduced fallback from the stage plan below. Keep
@@ -172,12 +172,19 @@ synthetic minute bars unless noted; trade density on real data will differ.
   Python oracle, with exactly matching ledgers. 16 threads give about 10 times
   (the proxy predicted 2.5 times). Timings were taken while other jobs ran, so they are
   noisy upward.
-- **Indicators:** the cold indicator and mask build, not the account replay, is the cost
-  floor. After the Numba pass one config's cold build on 300 stocks and 25 sessions fell from about 20.8 s to
-  1.65 s. This cost is shared by every candidate in a chunk, so it must not be charged
-  per candidate in projections. The first E1 matrix run did charge it per candidate on a
-  sample of 64, which makes its 20 to 247 h weekend projections far too pessimistic; rerun
-  with at least 256 candidates and the D6 cache (branch `p1/MO-D6-bench`).
+- **Harness bug found and measured (2026-11-14):** both first E1 runs called the Numba kernel
+  with the raw panel, so its per-panel preparation (`prepare_panel`: session starts, id ranks,
+  20-session dollar-volume ranking) ran again for every config and every chunk. One 25-session
+  config-chunk takes **89.5 ms with the raw panel and 8.9 ms with a prepared panel at N = 300,
+  and 274.7 ms against 18.4 ms at N = 1,000** (preparing once costs 88 ms and 285 ms). Every
+  per-candidate cost and weekend projection from those runs is inflated 10 to 15 times; do not
+  cite them (they showed 20 to 247 h per weekend, and about 65 min for steps 1 to 4 at 256
+  candidates). The fix is to prepare once per chunk; the harness is being corrected and rerun.
+- **Indicators:** after the Numba pass one config's cold indicator build on 300 stocks and 25
+  sessions fell from about 20.8 s to 1.65 s. The earlier claim that the indicator build is the
+  cost floor was **not supported**: the preparation bug explains the measured costs.
+  Persisting indicators (B7) is a possible saving, but its value is unproven until the corrected
+  rerun.
 - **Threads:** the kernel scales about 10 times on 16 threads, but the end-to-end path
   was slower with 8 and 16 threads than with 1 (NumPy indicator work holds the GIL).
   Parallelize across week chunks with processes sharing memory-mapped arrays.

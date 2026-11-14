@@ -51,12 +51,15 @@ Existing code to build on: `evaluation/stats.py` (`paired_block_bootstrap`,
   (1) a first full matrix with 64 candidates and 13-week windows (steps 1-2 deterministic, 19
   trades; step 4 cache reuse 92%; 9 matrix cells measured, 1,000 x 10 needs 16 GB of panel and
   4.6 GB RAM at one thread). **Its time projections (20 to 247 h per weekend with the cache) are
-  not trustworthy:** the shared indicator build was charged to every candidate of a small sample,
-  and its "warm" pass was not warm. (2) A rerun on `p1/MO-D6-bench` with the real D6 cache,
-  at least 256 candidates and per-stage timings (replay, weights and score, validation, cache
-  IO) is the one to cite; add its table here and in `bench/e1_table.md` when it finishes.
-  Required E1 changes: report the indicator build as a per-chunk shared cost, measure the
-  Parquet to panel conversion, run steps 3-4 on the real pilot panel (`--panel-dir`) for real
+  not trustworthy:** the harness passed the raw panel to the kernel, so `prepare_panel` ran for
+  every config and chunk (measured 89.5 ms vs 8.9 ms per config-chunk at N = 300, 274.7 vs 18.4 ms
+  at N = 1,000). (2) A rerun on `p1/MO-D6-bench` with the stand-in D6 cache and 256 candidates
+  (N = 300, 52-week windows) has the same bug: cold replay 1,549 s (13,312 config-chunks, 116 ms
+  each), validation 46 to 64 s per cutoff, 96.2% reuse and 17.8 s per new chunk across consecutive
+  weeks. Step 1 there had 0 trades, so its determinism check is weak. **Do not use either run's
+  times.** The harness is being fixed (prepare once per chunk, a separate `prepare s` stage); cite
+  the rerun after that. Also required: measure the Parquet to panel conversion, measure the
+  20-session history prefix cost per chunk, run steps 3-4 on the real pilot panel (`--panel-dir`) for real
   signal density, and add a `search_replay_fraction` scenario for a surrogate. Label every
   table "compute cost with stand-in selection" until D1-D5 exist. Pull numbers are paid-plan.
 

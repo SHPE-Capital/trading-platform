@@ -14,9 +14,11 @@ never claim a check passed without seeing it run. End with: what changed (files)
 and results, unresolved risks.
 
 ## Goal
-Compute each expensive thing once. Benchmarks showed the cold indicator build, not account replay,
-is the cost floor, and that it is rebuilt per chunk, per run and per worker. At N = 1,000 over 10
-years with several strategies, reuse is what makes the calibration fit the calendar.
+Compute each expensive thing once. The first benchmarks suggested the cold indicator build was the
+cost floor, but a harness bug (the kernel's per-panel preparation redone for every config and chunk,
+10 to 15 times too slow) explained the measured cost, so **B7's value is unproven until the corrected
+rerun**. Start with whatever the corrected benchmark shows is largest. At N = 1,000 over 10 years with
+several strategies, reuse is what makes the calibration fit the calendar.
 
 ## The cache-key spec (all three tasks use this; keep it in `calibration/keys.py`)
 

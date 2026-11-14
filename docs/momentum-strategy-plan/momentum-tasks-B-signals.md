@@ -139,7 +139,7 @@ ADR 0013.
 
 - **Owns:** `strategies/momentum/breakout/indicator_store.py`, tests
 - **Depends on:** B5, A6
-- **Why:** the indicator build is the cost floor and it is rebuilt for every week chunk in
+- **Why (unproven, see the 2026-11-14 correction in the E1 status):** the indicator build is rebuilt for every week chunk in
   every run and every worker. Persisting it makes it a once-per-chunk cost and, memory-mapped,
   cuts RAM per worker (4.6 GB at N = 1,000, one thread).
 - **Work:** save each distinct indicator array and signal array per week chunk as `.npy` next
