@@ -13,4 +13,4 @@ export { BreakoutMomentumStrategy } from "./breakoutMomentumStrategy";
 export { MomentumIndicatorBank, type BankBar, type BankStep } from "./breakoutMomentumIndicators";
 export { breakoutMomentumManifest } from "./manifest";
 export * from "./batchAllocator";
-export * from "./batchAllocator";
+export * from "./shadowRun";
