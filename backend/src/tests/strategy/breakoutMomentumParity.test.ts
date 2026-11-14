@@ -11,6 +11,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { MomentumIndicatorBank } from '../../strategies/momentum/breakoutMomentumIndicators';
 import { createBreakoutMomentumConfig, resolveBreakoutParams } from '../../strategies/momentum/breakoutMomentumConfig';
+import { allocateBatch, median, type BatchCandidate } from '../../strategies/momentum/batchAllocator';
+import type { EntryIntent } from '../../strategies/momentum/breakoutMomentumTypes';
 import { parseWeeklyConfig } from '../../strategies/momentum/weeklyConfigLoader';
 import type { BreakoutParams } from '../../strategies/momentum/breakoutMomentumTypes';
 
@@ -85,6 +87,7 @@ function replay(scenario: string) {
 
   const mismatches: string[] = [];
   const actualSignals = new Set<string>();
+  const signalInfo = new Map<string, { atr: number; close: number }>();
   let compared = 0;
   const cols: Record<string, ColumnSpec> = manifest.indicator_columns;
   for (const row of expectedRows) {
@@ -120,10 +123,13 @@ function replay(scenario: string) {
       if (!ok) mismatches.push(`${key} (s${b.session} m${b.minute}) col=${col}: actual ${a} expected ${e}`);
     }
     if (actual.signal !== row.signal) mismatches.push(`${key} col=signal: actual ${actual.signal} expected ${row.signal}`);
-    if (step.signal) actualSignals.add(key);
+    if (step.signal) {
+      actualSignals.add(key);
+      signalInfo.set(key, { atr: step.indicators.atr, close: b.c });
+    }
     compared += 1;
   }
-  return { manifest, mismatches, actualSignals, compared };
+  return { manifest, mismatches, actualSignals, compared, signalInfo, account: parsed.config.account, bars, assets };
 }
 
 function summarize(mismatches: string[]): string {
@@ -158,6 +164,96 @@ describe('breakout momentum golden parity (indicators and signals)', () => {
   }
 });
 
+function near(actual: number, expected: number): boolean {
+  return Math.abs(actual - expected) <= 1e-9 + 1e-9 * Math.abs(expected);
+}
+
+/** Replays orders.jsonl through allocateBatch; liquidity inputs are derived from bars per momentum_golden.md. */
+function replayOrders(scenario: string): string[] {
+  const r = replay(scenario);
+  const { manifest, account, bars } = r;
+  const sessions: { start_i: number; n_minutes: number }[] = manifest.sessions;
+  const symbolOf = new Map<string, string>(manifest.symbols.map((x: any) => [x.asset_id, x.symbol]));
+  const barAt = new Map<string, Row>(bars.map((b) => [`${b.asset_id}:${b.i}`, b]));
+  const dollarVolume = (asset: string, sess: number): number => {
+    let sum = 0;
+    for (let m = 0; m < sessions[sess].n_minutes; m += 1) {
+      const b = barAt.get(`${asset}:${sessions[sess].start_i + m}`);
+      if (b) sum += b.c * b.v;
+    }
+    return sum;
+  };
+  const lookback = account.liquidity_lookback;
+  const problems: string[] = [];
+
+  for (const d of readJsonl(scenario, 'orders.jsonl')) {
+    const tag = `decision ${d.decision} (i=${d.i})`;
+    const prev: number[] = [];
+    for (let k = Math.max(0, d.session - lookback); k < d.session; k += 1) prev.push(k);
+    const mine = [...r.signalInfo.keys()].filter((k) => k.endsWith(`:${d.i}`)).map((k) => k.split(':')[0]).sort();
+    if (JSON.stringify(mine) !== JSON.stringify([...d.signals].sort())) {
+      problems.push(`${tag} signals: actual ${mine} expected ${d.signals}`);
+      continue;
+    }
+    const candidates: BatchCandidate[] = d.signals.map((asset: string) => {
+      const info = r.signalInfo.get(`${asset}:${d.i}`)!;
+      const volumes: number[] = [];
+      for (const k of prev) {
+        if (sessions[k].n_minutes < d.minute + 1) continue;
+        const b = barAt.get(`${asset}:${sessions[k].start_i + d.minute}`);
+        if (b) volumes.push(b.v);
+      }
+      const intent = {
+        symbol: symbolOf.get(asset), assetId: asset, referenceClose: info.close, atr: info.atr,
+      } as EntryIntent;
+      return {
+        intent,
+        dollarVolumeMedian: d.session === 0 ? 0 : median(prev.map((k) => dollarVolume(asset, k))),
+        sameMinuteVolumes: volumes,
+      };
+    });
+    for (const c of candidates) {
+      const e = d.dollar_volume_median[c.intent.assetId];
+      // Golden scores only the candidates left after the entered-today filter.
+      if (e === undefined && d.state.entered_today.includes(c.intent.assetId)) continue;
+      if (e === undefined || !near(c.dollarVolumeMedian, e)) problems.push(`${tag} dollar_volume_median ${c.intent.assetId}: actual ${c.dollarVolumeMedian} expected ${e}`);
+    }
+    const st = d.state;
+    const out = allocateBatch(candidates, {
+      equity: st.equity, cashFree: st.cash_free, exposureUsed: st.exposure_used, openPositions: st.open_positions,
+      pendingOrders: st.pending_orders, enteredToday: new Set<string>(st.entered_today),
+    }, account);
+    if (JSON.stringify(out.candidates) !== JSON.stringify(d.candidates)) problems.push(`${tag} candidates: actual ${out.candidates} expected ${d.candidates}`);
+    const actRej = out.rejections.map((x) => `${x.assetId}:${x.reason}`);
+    const expRej = d.rejections.map((x: any) => `${x.asset_id}:${x.reason}`);
+    if (JSON.stringify(actRej) !== JSON.stringify(expRej)) problems.push(`${tag} rejections: actual ${actRej} expected ${expRej}`);
+    if (out.orders.length !== d.orders.length) {
+      problems.push(`${tag} order count: actual ${out.orders.length} expected ${d.orders.length}`);
+      continue;
+    }
+    out.orders.forEach((o, n) => {
+      const e = d.orders[n];
+      if (o.assetId !== e.asset_id || o.rank !== e.rank || o.qty !== e.qty || o.bindingCap !== e.binding_cap) {
+        problems.push(`${tag} order ${n}: actual ${o.assetId}/${o.rank}/${o.qty}/${o.bindingCap} expected ${e.asset_id}/${e.rank}/${e.qty}/${e.binding_cap}`);
+      }
+      const pairs: [string, number, number][] = [
+        ['signal_close', o.signalClose, e.signal_close], ['atr', o.atr, e.atr], ['stop_distance', o.stopDistance, e.stop_distance],
+        ['limit_price', o.limitPrice, e.limit_price], ['unit_cost', o.unitCost, e.unit_cost], // Golden `reserved` is this order's own qty*unit_cost; the allocator reports the batch's cumulative reserve.
+        ['reserved', o.reserved - (n > 0 ? out.orders[n - 1].reserved : 0), e.reserved],
+        ['liquidity_shares', o.liquidityShares, e.liquidity_shares],
+      ];
+      for (const [name, a, x] of pairs) if (!near(a, x)) problems.push(`${tag} order ${n} ${name}: actual ${a} expected ${x}`);
+    });
+  }
+  return problems;
+}
+
 describe('breakout momentum golden parity (ranked and sized orders)', () => {
-  it.todo('orders.jsonl: pending P1-4 allocator (strategies/momentum/batchAllocator.ts) and P1-5 sizer');
+  for (const scenario of SCENARIOS) {
+    it(`${scenario}: allocateBatch reproduces every golden decision`, () => {
+      const decisions = readJsonl(scenario, 'orders.jsonl').length;
+      expect(decisions).toBe(readJson(scenario, 'manifest.json').counts.decisions);
+      expect(replayOrders(scenario).slice(0, 10)).toEqual([]);
+    });
+  }
 });
