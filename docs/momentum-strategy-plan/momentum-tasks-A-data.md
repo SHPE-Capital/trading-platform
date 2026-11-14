@@ -26,9 +26,22 @@ Existing code to build on: `data/alpaca.py`, `data/store.py`, `data/bars.py`,
   - Pull minute bars for the pool plus **SPY** (descriptor only, never traded)
     plus warm-up history. Record row counts, coverage and checksums in the
     store manifest.
+- **Scale (added 2026-11-13):** the pool is about 3 × N symbols (**N recommended
+  500 to 1,000**) over **5 to 10 years**, both read from the protocol config.
+  Pull in stages (pilot, 300 × 2 years, 500 × 5, then up to 1,000 × 10), make the
+  pull resumable, and **measure the real rate limit and bars per request**; the
+  16-hour estimate for 2 billion rows assumes 200 requests per minute and 10,000
+  bars per request. Use the SIP feed for research history (the free plan blocks
+  only the latest 15 minutes) and record the feed in the manifest.
+- **Before the big pull:** `data/store.py` rewrites its whole JSON manifest every
+  20 units, which does not scale to about 240,000 units. Shard the manifest by
+  year or move it to SQLite (**Coordinate** with the store owner; keep checksums).
+  Check free disk (this machine has about 86 GB; a 2,000-symbol, 10-year pool is
+  at most about 43 GB).
 - **Done when:** the manifest lists coverage per symbol and year, and the doc
   states plainly whether delisted coverage is sufficient. If it is not, the
-  narrowed claim is written down (§6 last paragraph).
+  narrowed claim is written down (§6 last paragraph). The doc also records pull
+  time, bytes on disk and the real rate limit at each stage.
 
 ## A2 Missing-bar classification
 
@@ -93,6 +106,9 @@ Existing code to build on: `data/alpaca.py`, `data/store.py`, `data/bars.py`,
     suspensions.
   - Produce the schedule over the full analysis window as a versioned Parquet
     file with a checksum.
+- **Configurable:** N, bands per axis, hash seed, and the eligibility thresholds
+  come from the protocol config. Extend the existing config-driven
+  `data/universe.py` instead of rewriting it. Test at N = 30, 300, 500 and 1,000.
 - **Done when:** the schedule is reproducible bit for bit, shows week-to-week
   churn statistics, and includes delisted names in the weeks they were
   eligible.
@@ -107,8 +123,13 @@ Existing code to build on: `data/alpaca.py`, `data/store.py`, `data/bars.py`,
   `MarketPanel` arrays (float64 or float32 per the decision in C5) once, save
   them as `.npy` or Arrow, and let worker processes memory-map them read-only.
   Report build time and size.
+- **At scale:** 1,000 stocks × 10 years of five float32 fields is about 20 GB, more
+  than this machine's RAM, so build and map the panel **per week chunk** and let
+  workers read only the windows they replay. N = 500 over 5 years is about 5 GB.
+  Report RSS per worker.
 - **Done when:** a 300-stock × 1-year panel loads in seconds in a worker
-  without copying (verified by watching RSS), and it matches the store values.
+  without copying (verified by watching RSS), it matches the store values, and a
+  1,000-stock week chunk loads without exceeding the host's RAM budget.
 
 ## A7 Market descriptor inputs
 

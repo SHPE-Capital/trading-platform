@@ -94,8 +94,17 @@ after 0-E merges it), T2 `trade/sizing.py`, T5 `trade/costs.py`, T4
   included), the ledger, the rejection log with reasons, flags, and summary
   metrics (trades, active sessions, max drawdown, concentration by stock and
   date).
-- **Done when:** the §15 portfolio test list passes (see C7), and the engine
-  is deterministic: same inputs give byte-identical output.
+- **Configurable:** every cap and threshold comes from `AccountConfig` (built from
+  the 0-G config), including max positions, percentages, liquidity cap, halt and
+  starting equity. Ranking is a named function (default dollar volume with the
+  asset ID tie-break), and there is an optional entry-score threshold and
+  size-multiplier input, both off by default ([stream F](momentum-tasks-F-later-ideas.md)).
+  Search and validation replays use a fixed reference equity per session so a
+  session's return does not depend on other sessions (needed for the D6 week-chunk
+  cache); forward accounts carry real equity.
+- **Done when:** the §15 portfolio test list passes (see C7), the engine
+  is deterministic: same inputs give byte-identical output, and the default
+  hooks produce the same output as the guide's rules.
 
 ## C5 Performance pass (Numba)
 
@@ -107,9 +116,15 @@ after 0-E merges it), T2 `trade/sizing.py`, T5 `trade/costs.py`, T4
 - **Work:** profile C4 on a representative late-history window first. Port the
   hot loop to Numba (or vectorize). Decide float32 vs float64 based on parity.
   Keep the pure-Python C4 as the oracle.
+- **Timing (added 2026-11-13):** start a thin Numba kernel alongside C4 rather
+  than after it. A synthetic proxy on this machine ran a 63-session candidate at
+  N = 1,000 in 0.114 s on one thread but scaled only 2.5× on 16 threads (memory
+  bound), so the layout matters: float32, contiguous (stock-major or minute-major
+  chosen by profile), no per-candidate allocations. Keep pure-Python C4 as the
+  oracle.
 - **Done when:** results match C4 exactly (or within a stated tolerance) on
-  random configs, and the speedup is reported per candidate replay. E1 feeds
-  this number into the projection.
+  random configs, and the speedup is reported per candidate replay at N = 300,
+  500 and 1,000. E1 feeds this number into the projection.
 
 ## C6 Quote replay for finalists and forward paths
 

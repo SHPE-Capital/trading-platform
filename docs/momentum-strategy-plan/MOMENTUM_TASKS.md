@@ -30,11 +30,64 @@ placeholder), and the live order policy.
 scope decision that must happen in the first days (guide §14 permits reducing N,
 history length and search budget before the reserved period is inspected).
 
+## Scope and configuration (added 2026-11-13)
+
+- **Everything tunable is configuration.** One typed protocol config (task
+  **0-G**) holds every number: N, history years, grid, exits, account caps,
+  costs, weights, search budget, seeds, finalists per seed, validation length,
+  acceptance floors, bootstrap settings and compute settings. The full list with
+  defaults, recommendations and the task that decides each is
+  [momentum-config-reference.md](momentum-config-reference.md).
+- **Recommended scope (for 0-F):** N of **500, stretching to 1,000** (the guide's
+  300 is the fallback), and **5 to 10 years** of history, staged: pilot, 300 × 2
+  years, then 500 × 5 years, then 1,000 × 10 years only if the benchmark, data
+  coverage, disk and RAM allow. The staging, size estimates and risks are in the
+  config reference.
+- **Required design change:** the evaluation cache (D6) is keyed per config and per
+  **week chunk**, so an expanding window costs only the new week. Without it, the
+  proxy projects about 190 hours for the full walk-forward at N = 1,000.
+- **Later ideas** (learned signal ranking, learned entry model, learned sizing,
+  exhaustive grid precompute) are in [stream F](momentum-tasks-F-later-ideas.md).
+  They are outside the Nov 30 deliverable; the seams they need are listed there.
+
+### What the adjacent research-python repo changed
+
+Checked on 2026-11-13 (`main`):
+
+1. **Study ID collision.** `docs/teams/momentum.md` already defines **RM1–RM8** for
+   the ORB program. This plan's study folder was named `rm9-weekly-calibration`;
+   it is now `rm9-weekly-calibration`. Add the RM9 row to `docs/teams/momentum.md`
+   (E5).
+2. **Two momentum programs.** The team guide describes an ORB strategy (SM1, P8,
+   R1, RM1–RM8). This board describes the five-component breakout. Decide whether
+   they share the exit, cost and sizing studies (RM3, RM5, RM7) or this program
+   replaces them. Record it in 0-F.
+3. **ML tooling already exists.** RF, MLP, sweeps, MLflow and ONNX export are done;
+   LightGBM (M1b), triple-barrier labels (C1c) and the platform ONNX wrapper
+   (P2) are open. The surrogate (D4) uses scikit-learn
+   `HistGradientBoostingRegressor`, a core dependency, so no new dependency is
+   needed. Stream F reuses the rest.
+4. **Merge status.** `docs/tasks.md` on `main` lists T1 and T4 as Open; this board
+   says they exist on unmerged branches. Confirm in 0-E which are real.
+5. **Store scaling.** `data/store.py` rewrites one JSON manifest every 20 units.
+   That does not scale to 1,000+ symbols over years. Shard it or move it to
+   SQLite before the big pull (A1).
+6. **Where code runs.** Decision logic is TypeScript in the platform (P1);
+   calibration and account replay stay in research-python (about 1,000 times
+   faster than the platform engine); the platform engine is only an independent
+   cross-check of finalists (**E8**). The two repos do not share bar stores; the
+   weekly config JSON and golden fixtures are the interface. Details, plus the
+   widened grid (grid v2, exits and account as parameters) and running several
+   strategies at once (**P2-8** shadow policies, the **P2-7** live-symbol-limit
+   check), are in [momentum-config-reference.md](momentum-config-reference.md).
+7. **Universe builder is config-driven already.** `data/universe.py` reads bins and
+   cell sizes from YAML, so A5 should extend it rather than rewrite it.
+
 ## Workstreams
 
 | Stream | File | Repo | Suggested owner profile | Tasks |
 |---|---|---|---|---|
-| 0 Contracts and setup | [momentum-tasks-0-contracts.md](momentum-tasks-0-contracts.md) | both | Project lead plus one rep from each stream | 0-A … 0-F |
+| 0 Contracts and setup | [momentum-tasks-0-contracts.md](momentum-tasks-0-contracts.md) | both | Project lead plus one rep from each stream | 0-A … 0-G |
 | A Data and universe | [momentum-tasks-A-data.md](momentum-tasks-A-data.md) | research-python | Data-minded, pandas/Parquet | A1 … A7 |
 | B Signal components | [momentum-tasks-B-signals.md](momentum-tasks-B-signals.md) | research-python | Beginner–intermediate; good first tasks (B1–B3 split across 3 people) | B1 … B6 |
 | C Account simulator | [momentum-tasks-C-account.md](momentum-tasks-C-account.md) | research-python | Strongest systems/numerics person (owns the critical path) | C1 … C7 |
@@ -43,6 +96,7 @@ history length and search budget before the reserved period is inspected).
 | P1 Platform strategy | [momentum-tasks-P1-platform-strategy.md](momentum-tasks-P1-platform-strategy.md) | trading-platform (backend) | TypeScript | P1-1 … P1-6 |
 | P2 Platform execution | [momentum-tasks-P2-platform-execution.md](momentum-tasks-P2-platform-execution.md) | trading-platform (backend) | TypeScript, broker APIs | P2-1 … P2-7 |
 | P3 Dashboard | [momentum-tasks-P3-dashboard.md](momentum-tasks-P3-dashboard.md) | trading-platform (frontend + API) | Frontend | P3-1 … P3-3 |
+| F Later ideas (not in the Nov 30 scope) | [momentum-tasks-F-later-ideas.md](momentum-tasks-F-later-ideas.md) | research-python (+ platform for ONNX) | Statistics/ML, after the freeze | F1 … F4 |
 
 With fewer people, merge streams in this order: E into D, P3 into P1, A into B.
 Never merge C with anything; it is the critical path.
@@ -51,7 +105,7 @@ Never merge C with anything; it is the critical path.
 
 | Stream | Tasks startable today |
 |---|---|
-| 0 | 0-A, 0-B, 0-C, 0-D, 0-E, 0-F |
+| 0 | 0-A, 0-B, 0-C, 0-D, 0-E, 0-F, 0-G |
 | A | A1, A2, A3 |
 | B | B1, B2, B3 (against synthetic bars and hand-worked values) |
 | C | C1, C2, C3 (against stubs of 0-C) |
@@ -70,6 +124,7 @@ Never merge C with anything; it is the critical path.
 0-D golden fixture format ────► B6, P1-6
 0-E merge T1 ─────────────────► C2
 0-F scope decision ───────────► A1 (size), E1 (targets), D8 (run length)
+0-G protocol config ──────────► every stream reads its numbers from it
 
 A1 ─► A2, A3 ─► A4 ─► A5 ─► D7, D8
 A1 ─► A7 ─► D2 (real descriptors)
@@ -108,8 +163,10 @@ P1-3 + P2-3 + P2-5 ─► end-to-end paper demo
 - trading-platform: follow `AGENTS.md` (typecheck, lint, focused Jest tests; do
   not launch paper or real trading runtimes or run migrations incidentally).
 - Every number in the guide is a **provisional default** until the protocol
-  freeze (§7, §11). Put them in config, not in code constants, and list them in
-  the assumption register (E5).
+  freeze (§7, §11). Put them in the protocol config (0-G), not in code
+  constants, and list them in the assumption register (E5). A tunable numeric
+  literal in module code is a review defect. The inventory is
+  [momentum-config-reference.md](momentum-config-reference.md).
 - **Nothing reads the reserved final period before the freeze.** D8 enforces
   this in code (`reserved_start` guard); reviewers check it.
 - Each module has an owner **and a reviewer** from another stream (§16).
