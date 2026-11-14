@@ -158,7 +158,7 @@ P1-3 + P2-3 + P2-5 ─► end-to-end paper demo
 | **Nov 17** | First C4 + E1 benchmark (300 or reduced N, one early and one late calibration). **Freeze scope (0-F)** |
 | Nov 17–20 | Wave 2: D7 weekly calibrator, D8 walk-forward on development weeks, P1-3/P2-3 strategy and exits, parity test |
 | **Nov 21** | **Protocol freeze** (E5): universe procedure, formulas, exits, costs, weights, budgets, metrics, acceptance rules |
-| Nov 21–25 | Reserved-period run with checkpoints; paper demo stream; quote replay of finalists |
+| Nov 21–25 | Reserved-period run with checkpoints (first weekend run is time-boxed to `compute.max_wall_hours`, 36 h; later runs may run longer, see [config reference](momentum-config-reference.md#run-time-limits-first-weekend-run-then-long-runs-added-2026-11-14)); paper demo stream; quote replay of finalists |
 | Nov 25–28 | Bootstrap, charts, report, presentation rehearsal |
 | Nov 28–30 | Buffer |
 

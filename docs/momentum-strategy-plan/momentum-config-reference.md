@@ -65,7 +65,7 @@ config is hashed (E5) and a change needs a dated changelog entry.
 | | `acceptance.max_drawdown`, `max_single_stock_share` | 0.10, 0.30 | keep | D5 | E5 |
 | **evaluation** | `bootstrap.block_sessions`, `sensitivity_blocks`, `resamples` | 5, [10, 20], 2,000 | resamples 10,000 (cheap) | E2 | E5 |
 | **quote replay** | `quote_replay.enabled`, `max_quote_age_s`, `max_spread_pct`, `limit_offset_pct`, `cancel_after_s` | on/off, 2, 0.10%, 0.05%, 2 | enable for finalists | C6 | 0-F |
-| **compute** | `compute.workers`, `threads_per_worker`, `dtype`, `scratch_dir`, `rerun_reserve` | per host | measure in E1 | D7, A6 | E1, E6 |
+| **compute** | `compute.workers`, `threads_per_worker`, `dtype`, `scratch_dir`, `rerun_reserve`, `max_wall_hours` | per host; 36 for the first weekend run, then `null` (see "Run time limits") | measure in E1 | D7, A6 | E1, E6 |
 
 ## Final settings (lead decision, 2026-11-13)
 
@@ -98,6 +98,44 @@ within the credit budget, or HPC), or a reduced fallback from the stage plan bel
 the stage gates: do not start the 1,000 × 10 pull until 300 × 2 and 500 × 5 have passed
 their gates. Fall back to 500 × 5 (about 11 h pull, 32 GB) if the host or the freeze date
 does not allow it. Record the choice and the date in 0-F.
+
+## Run time limits: first weekend run, then long runs (added 2026-11-14)
+
+The first full calibration run is time-boxed to one weekend. After it, runs may take much
+longer. The limit is **configuration** (`compute.*`, 0-G), not a code constant.
+
+| Key | First weekend run | Later runs (after the first result and E3) |
+|---|---|---|
+| `compute.max_wall_hours` | **36** (Fri night to Sun night; set from the actual start time) | `null` (no cap) or a host limit such as 168 |
+| `search.budget` | 2,048 logical per seed (protocol) | 2,048 protocol, plus the 8,192 and 5-seed development comparison |
+| `search.seeds` | 3 | 3 protocol, 5 for the comparison |
+| Exhaustive precompute (F4a) | not run | allowed (about 18 to 36 h at N = 1,000) |
+| Grid | current grid (about 69,732 configs) | grid v2 with exits and account as parameters, if E3 supports it |
+
+How the limit works, so determinism and the audit trail survive:
+
+1. **The limit picks a pre-declared budget; it does not cut a run mid-search.** Before the
+   first run, use the E1 benchmark to choose the largest budget and N whose projected time is
+   under 70% of `max_wall_hours` (margin for the cold cache and one rerun). Declare it in the
+   protocol config. Running the same config again gives the same result.
+2. **The wall clock is only a safety stop.** It is checked at round boundaries (after the 64
+   evaluations of a round). At the limit the search writes a checkpoint, marks the run
+   `INCOMPLETE_TIME_LIMIT` in the audit trail, reports best-so-far per seed, and exits. An
+   incomplete run is never reported as a protocol result.
+3. **Runs resume.** The checkpoint holds the cache, population, surrogate training set,
+   seed state and round counter. A resumed run continues the same logical search. Later
+   runs reuse the week-chunk cache (D6) and indicator arrays (B7), so a longer run only pays
+   for configs and weeks not yet seen.
+4. **Cut order inside the weekend** follows "If time runs short": seeds, then budget, then
+   history length, then N. Record the cut and the reason in 0-F.
+5. **Do not change the protocol after the freeze (Nov 21).** Longer runs after the first
+   weekend are development comparisons and diagnostics (E3, E5) until then, and cannot
+   change the frozen budget, seeds or acceptance floors.
+
+Projection to check against the limit: 3 seeds × 2,048 evaluations is about 1.6 h per
+policy per cutoff on a cold 5-year window at N = 1,000 (proxy, not measured). The weekend cap
+therefore allows roughly 20 cold cutoffs, or many more with reuse. Replace this with the E1
+measurement once it exists.
 
 ## Scope recommendation (for 0-F)
 
