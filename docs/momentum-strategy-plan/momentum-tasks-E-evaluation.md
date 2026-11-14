@@ -42,6 +42,23 @@ Existing code to build on: `evaluation/stats.py` (`paired_block_bootstrap`,
   replace it with measured numbers.
 - **Done when:** a one-page table with measured numbers and the projection
   exists; it goes to the lead for 0-F by **Nov 17**.
+- **Status (Nov 13):** `scripts/momentum/bench.py` in research-python (branch
+  `momentum-e1-bench`, uncommitted) runs steps 1-2 on synthetic bars with a proxy replay kernel and
+  captures the machine profile (feeds E6). Steps 3-4 report BLOCKED until C4 (`trade/account`) and A6
+  exist. Re-run after C4 lands; the proxy numbers are not C4 numbers.
+- **Status update (2026-11-13, evening):** the harness now runs on the real pieces (account
+  engine, B5 masks, A6 panels, Numba kernel; research-python `momentum-e1-real`). Two runs:
+  (1) a first full matrix with 64 candidates and 13-week windows (steps 1-2 deterministic, 19
+  trades; step 4 cache reuse 92%; 9 matrix cells measured, 1,000 x 10 needs 16 GB of panel and
+  4.6 GB RAM at one thread). **Its time projections (20 to 247 h per weekend with the cache) are
+  not trustworthy:** the shared indicator build was charged to every candidate of a small sample,
+  and its "warm" pass was not warm. (2) A rerun on `p1/MO-D6-bench` with the real D6 cache,
+  at least 256 candidates and per-stage timings (replay, weights and score, validation, cache
+  IO) is the one to cite; add its table here and in `bench/e1_table.md` when it finishes.
+  Required E1 changes: report the indicator build as a per-chunk shared cost, measure the
+  Parquet to panel conversion, run steps 3-4 on the real pilot panel (`--panel-dir`) for real
+  signal density, and add a `search_replay_fraction` scenario for a surrogate. Label every
+  table "compute cost with stand-in selection" until D1-D5 exist. Pull numbers are paid-plan.
 
 ## E2 Policy comparison report
 

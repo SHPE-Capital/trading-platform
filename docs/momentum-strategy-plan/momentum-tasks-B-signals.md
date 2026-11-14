@@ -88,6 +88,15 @@ ADR 0013.
   stays within tolerance) and extend the warm-up if it fails.
 - **Done when:** a readiness mask per component setting exists, and there is a
   convergence report for the longest settings (EMA 60, ADX 21).
+- **Status of B1 to B4 (2026-11-13):** batch forms are done on research-python
+  `momentum-e1-real` (`features/momentum/*`, 27 tests plus 18 Numba parity tests). The
+  **incremental per-bar forms are deferred** (needed for P1 parity and B6). The author did not
+  have Appendix A, so these are **assumptions for Person 2 to confirm**: Wilder and EMA are
+  seeded with the mean of the first n valid inputs (ATR14 first valid at bar 14, ADX(a) at
+  2a-1); a non-finite input resets the recursion; true range, breakout window and EMA carry
+  across sessions while VWAP and RVOL reset; RVOL needs w contiguous same-session bars. Numba
+  kernels (`_kernels.py`) are the default; `SHPE_MOMENTUM_NUMBA=0` selects the NumPy reference
+  path. Measured (300 stocks, 25 sessions): cold build of one config 20.8 s to 1.65 s.
 
 ## B5 Signal masks for a configuration, plus the indicator cache
 
@@ -105,6 +114,12 @@ ADR 0013.
 - **Done when:** evaluating 1,000 random configs on a 30-stock × 20-session
   panel reuses cached arrays (shown by cache-hit counters), and the masks match
   a slow reference.
+- **Status (2026-11-13):** done (`indicator_cache.py`, `signals.py`). 1,000 random configs match
+  the slow reference (the test takes about 6 minutes); warm mask 4 ms per config at N = 300
+  over 63 sessions. Known gaps: the reference reuses the readiness masks instead of
+  re-deriving them per config, and `readiness_masks` recomputes the RVOL ratio that the cache
+  already holds (about 1.2 s of the cold build). Pass the cached ratio in (small follow-up for
+  the B5 owner).
 
 ## B6 Golden parity fixture generator
 
@@ -119,3 +134,17 @@ ADR 0013.
   scripted account state.
 - **Done when:** the files are generated deterministically, checked in, and
   consumed by P1-6.
+
+## B7 Persisted indicator cache (added 2026-11-13)
+
+- **Owns:** `strategies/momentum/breakout/indicator_store.py`, tests
+- **Depends on:** B5, A6
+- **Why:** the indicator build is the cost floor and it is rebuilt for every week chunk in
+  every run and every worker. Persisting it makes it a once-per-chunk cost and, memory-mapped,
+  cuts RAM per worker (4.6 GB at N = 1,000, one thread).
+- **Work:** save each distinct indicator array and signal array per week chunk as `.npy` next
+  to the panel chunk. Key: data version, universe schedule version, indicator and parameter
+  setting, warm-up length, code version. Open memory-mapped read-only. Fall back to compute
+  and write. Parallelize cold builds across chunks with processes.
+- **Done when:** a second run of the same chunk computes nothing, two processes share one
+  mapped copy (RSS check), and a changed key component forces a rebuild.
