@@ -134,7 +134,7 @@ signal-only shadow instances (P2-8). With several strategies, shadow all but the
 | 1 | Finish the rerun on `p1/MO-D6-bench`; paste the table into E1 | Person 1 | replaces the estimates above |
 | 1 | Confirm Appendix A items (section 4) | Person 2 | blocks sign-off on B1 to B5, C2, C4 |
 | 1 | Confirm D6 ownership; adopt one cache | Person 2 and Person 1 | |
-| 2 | B7, mask-hash dedupe, B5 follow-up | Person 2 | files listed in the packets |
+| 2 | B7, D6b (mask-hash dedupe), D9 (strategy registry), B5 follow-up | Person 2 | brief: [agents/r6-reuse.md](agents/r6-reuse.md); cache-key spec is in that brief; packets in the B and D stream files |
 | 2 | Compute host decision and `--panel-dir` run on the pilot panel | Person 1 | 0-F input |
 | 3 | A6 conversion timing, E1 table changes, C7 halt scenario | Person 1 / Person 2 | |
 
