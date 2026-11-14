@@ -1,0 +1,517 @@
+{
+  "$defs": {
+    "AcceptanceCheck": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "passed": {
+          "title": "Passed",
+          "type": "boolean"
+        },
+        "threshold": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Threshold"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        }
+      },
+      "required": [
+        "name",
+        "passed"
+      ],
+      "title": "AcceptanceCheck",
+      "type": "object"
+    },
+    "AcceptanceResults": {
+      "additionalProperties": false,
+      "description": "Outcome of the D5 acceptance rules, per stage; ``passed`` is the overall verdict.",
+      "properties": {
+        "checks": {
+          "items": {
+            "$ref": "#/$defs/AcceptanceCheck"
+          },
+          "title": "Checks",
+          "type": "array"
+        },
+        "passed": {
+          "title": "Passed",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "passed",
+        "checks"
+      ],
+      "title": "AcceptanceResults",
+      "type": "object"
+    },
+    "AccountSettings": {
+      "additionalProperties": false,
+      "properties": {
+        "cost_bps": {
+          "title": "Cost Bps",
+          "type": "number"
+        },
+        "daily_halt_pct": {
+          "title": "Daily Halt Pct",
+          "type": "number"
+        },
+        "entry_score_threshold": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Entry Score Threshold"
+        },
+        "exit": {
+          "$ref": "#/$defs/ExitSettings"
+        },
+        "fill": {
+          "$ref": "#/$defs/FillSettings"
+        },
+        "liquidity_cap_pct": {
+          "title": "Liquidity Cap Pct",
+          "type": "number"
+        },
+        "liquidity_lookback": {
+          "title": "Liquidity Lookback",
+          "type": "integer"
+        },
+        "liquidity_min_obs": {
+          "title": "Liquidity Min Obs",
+          "type": "integer"
+        },
+        "max_positions": {
+          "title": "Max Positions",
+          "type": "integer"
+        },
+        "per_stock_pct": {
+          "title": "Per Stock Pct",
+          "type": "number"
+        },
+        "ranking": {
+          "title": "Ranking",
+          "type": "string"
+        },
+        "risk_pct": {
+          "title": "Risk Pct",
+          "type": "number"
+        },
+        "search_replay_reference_equity": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Search Replay Reference Equity"
+        },
+        "size_multiplier": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Size Multiplier"
+        },
+        "starting_cash": {
+          "title": "Starting Cash",
+          "type": "number"
+        },
+        "total_exposure_cap": {
+          "title": "Total Exposure Cap",
+          "type": "number"
+        }
+      },
+      "required": [
+        "starting_cash",
+        "max_positions",
+        "per_stock_pct",
+        "risk_pct",
+        "total_exposure_cap",
+        "liquidity_cap_pct",
+        "liquidity_lookback",
+        "liquidity_min_obs",
+        "daily_halt_pct",
+        "cost_bps",
+        "ranking",
+        "entry_score_threshold",
+        "size_multiplier",
+        "search_replay_reference_equity",
+        "exit",
+        "fill"
+      ],
+      "title": "AccountSettings",
+      "type": "object"
+    },
+    "DateRange": {
+      "additionalProperties": false,
+      "description": "Inclusive calendar-date range.",
+      "properties": {
+        "end": {
+          "format": "date",
+          "title": "End",
+          "type": "string"
+        },
+        "start": {
+          "format": "date",
+          "title": "Start",
+          "type": "string"
+        }
+      },
+      "required": [
+        "start",
+        "end"
+      ],
+      "title": "DateRange",
+      "type": "object"
+    },
+    "Evaluations": {
+      "additionalProperties": false,
+      "properties": {
+        "actual": {
+          "description": "Account replays actually run (the rest were cache hits).",
+          "minimum": 0,
+          "title": "Actual",
+          "type": "integer"
+        },
+        "logical": {
+          "description": "Evaluations the search asked for.",
+          "minimum": 0,
+          "title": "Logical",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "logical",
+        "actual"
+      ],
+      "title": "Evaluations",
+      "type": "object"
+    },
+    "ExitSettings": {
+      "additionalProperties": false,
+      "properties": {
+        "initial_stop_atr": {
+          "title": "Initial Stop Atr",
+          "type": "number"
+        },
+        "max_hold_minutes": {
+          "title": "Max Hold Minutes",
+          "type": "integer"
+        },
+        "session_exit_minutes_before_close": {
+          "title": "Session Exit Minutes Before Close",
+          "type": "integer"
+        },
+        "trail_activation_atr": {
+          "title": "Trail Activation Atr",
+          "type": "number"
+        },
+        "trail_distance_atr": {
+          "title": "Trail Distance Atr",
+          "type": "number"
+        }
+      },
+      "required": [
+        "initial_stop_atr",
+        "trail_activation_atr",
+        "trail_distance_atr",
+        "max_hold_minutes",
+        "session_exit_minutes_before_close"
+      ],
+      "title": "ExitSettings",
+      "type": "object"
+    },
+    "FillSettings": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "limit_markup": {
+          "title": "Limit Markup",
+          "type": "number"
+        }
+      },
+      "required": [
+        "kind",
+        "limit_markup"
+      ],
+      "title": "FillSettings",
+      "type": "object"
+    },
+    "NoDeployment": {
+      "additionalProperties": false,
+      "properties": {
+        "reason": {
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "reason"
+      ],
+      "title": "NoDeployment",
+      "type": "object"
+    },
+    "Runtime": {
+      "additionalProperties": false,
+      "properties": {
+        "peak_memory_mb": {
+          "minimum": 0,
+          "title": "Peak Memory Mb",
+          "type": "number"
+        },
+        "seconds": {
+          "minimum": 0,
+          "title": "Seconds",
+          "type": "number"
+        }
+      },
+      "required": [
+        "seconds",
+        "peak_memory_mb"
+      ],
+      "title": "Runtime",
+      "type": "object"
+    },
+    "SelectedConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "config_id": {
+          "description": "0-B config_id of grid_version, subset, params.",
+          "pattern": "^[0-9a-f]{16}$",
+          "title": "Config Id",
+          "type": "string"
+        },
+        "grid_version": {
+          "title": "Grid Version",
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              }
+            ]
+          },
+          "description": "Flat 'component.param' -> value for every active component.",
+          "title": "Params",
+          "type": "object"
+        },
+        "subset": {
+          "description": "Active components, sorted, e.g. ['adx','breakout'].",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Subset",
+          "type": "array"
+        }
+      },
+      "required": [
+        "config_id",
+        "grid_version",
+        "subset",
+        "params"
+      ],
+      "title": "SelectedConfig",
+      "type": "object"
+    },
+    "UniverseMember": {
+      "additionalProperties": false,
+      "properties": {
+        "asset_id": {
+          "description": "Stable asset ID (survives ticker changes).",
+          "minLength": 1,
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "symbol": {
+          "minLength": 1,
+          "title": "Symbol",
+          "type": "string"
+        }
+      },
+      "required": [
+        "asset_id",
+        "symbol"
+      ],
+      "title": "UniverseMember",
+      "type": "object"
+    }
+  },
+  "$id": "weekly_config.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "acceptance": {
+      "$ref": "#/$defs/AcceptanceResults"
+    },
+    "account": {
+      "$ref": "#/$defs/AccountSettings"
+    },
+    "activation": {
+      "$ref": "#/$defs/DateRange",
+      "description": "Activation week: first and last session date the config trades."
+    },
+    "code_commit": {
+      "minLength": 7,
+      "title": "Code Commit",
+      "type": "string"
+    },
+    "data_version": {
+      "minLength": 1,
+      "title": "Data Version",
+      "type": "string"
+    },
+    "decision_cutoff": {
+      "format": "date-time",
+      "title": "Decision Cutoff",
+      "type": "string"
+    },
+    "ess": {
+      "description": "Realized effective sample size of the policy weights.",
+      "minimum": 0,
+      "title": "Ess",
+      "type": "number"
+    },
+    "evaluations": {
+      "$ref": "#/$defs/Evaluations"
+    },
+    "no_deployment": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/NoDeployment"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "policy": {
+      "enum": [
+        "uniform",
+        "recency",
+        "similarity"
+      ],
+      "title": "Policy",
+      "type": "string"
+    },
+    "protocol_hash": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Hash of the resolved protocol config, if frozen.",
+      "title": "Protocol Hash"
+    },
+    "run_id": {
+      "minLength": 1,
+      "title": "Run Id",
+      "type": "string"
+    },
+    "runtime": {
+      "$ref": "#/$defs/Runtime"
+    },
+    "schema_version": {
+      "const": "weekly_config.v1",
+      "default": "weekly_config.v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "search_range": {
+      "$ref": "#/$defs/DateRange"
+    },
+    "seeds": {
+      "items": {
+        "type": "integer"
+      },
+      "title": "Seeds",
+      "type": "array"
+    },
+    "selected": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SelectedConfig"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "universe": {
+      "items": {
+        "$ref": "#/$defs/UniverseMember"
+      },
+      "title": "Universe",
+      "type": "array"
+    },
+    "validation_range": {
+      "$ref": "#/$defs/DateRange"
+    }
+  },
+  "required": [
+    "run_id",
+    "code_commit",
+    "data_version",
+    "policy",
+    "decision_cutoff",
+    "search_range",
+    "validation_range",
+    "activation",
+    "universe",
+    "acceptance",
+    "ess",
+    "evaluations",
+    "seeds",
+    "account",
+    "runtime"
+  ],
+  "title": "WeeklyConfig",
+  "type": "object"
+}
