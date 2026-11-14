@@ -127,13 +127,26 @@ describe('onQuote', () => {
     expect(mgr.get('NVDA')).not.toBeNull();
   });
 
-  it('pushes to midprices and spreads rolling windows', () => {
+  it('pushes to midprices and spreads rolling windows once they have been read', () => {
     const mgr = new SymbolStateManager();
+    const state = mgr.getOrCreate('SPY');
+    void state.midpricesWindow; // first read starts recording
+    void state.spreadsWindow;
     mgr.onQuote(makeQuote('SPY', 100, 1_000));
     mgr.onQuote(makeQuote('SPY', 101, 2_000));
-    const state = mgr.get('SPY')!;
     expect(state.midpricesWindow.size()).toBe(2);
     expect(state.spreadsWindow.size()).toBe(2);
+  });
+
+  it('keeps windows nobody has read empty, and records from the first read on', () => {
+    const mgr = new SymbolStateManager();
+    mgr.onQuote(makeQuote('SPY', 100, 1_000));
+    const state = mgr.get('SPY')!;
+    expect(state.quotesWindow.size()).toBe(0);
+    mgr.onQuote(makeQuote('SPY', 101, 2_000));
+    expect(state.quotesWindow.size()).toBe(1);
+    expect(state.midpricesWindow.size()).toBe(0);
+    expect(JSON.stringify(state)).not.toContain('Window');
   });
 });
 
@@ -147,8 +160,9 @@ describe('onTrade', () => {
     expect(state.tradeCount).toBe(1);
   });
 
-  it('pushes to tradesWindow', () => {
+  it('pushes to tradesWindow once it has been read', () => {
     const mgr = new SymbolStateManager();
+    void mgr.getOrCreate('AAPL').tradesWindow;
     mgr.onTrade(makeTrade('AAPL', 185, 100, 1_000));
     mgr.onTrade(makeTrade('AAPL', 186, 50, 2_000));
     expect(mgr.get('AAPL')!.tradesWindow.size()).toBe(2);

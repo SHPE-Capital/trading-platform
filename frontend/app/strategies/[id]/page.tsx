@@ -26,6 +26,7 @@ import { useStrategyVersions } from "../../../hooks/useStrategyVersions";
 import { fetchStrategyRun } from "../../../services/strategiesService";
 import { fetchBacktests } from "../../../services/backtestService";
 import { formatTimestamp } from "../../../utils/dates";
+import { describeHoldingMs, pairsMaxHoldingMs } from "../../../utils/holdingTime";
 import type { BacktestResult } from "../../../types/api";
 
 interface Props {
@@ -64,6 +65,10 @@ export default function StrategyPerformancePage({ params }: Props) {
     return matching.sort((a, b) => (b.completed_at ?? 0) - (a.completed_at ?? 0))[0] ?? null;
   }, [backtests, id, versionId]);
 
+  // The limit of the filtered version, or of the newest one when none is picked.
+  const shownVersion = versions.find((v) => v.id === versionId) ?? versions[0];
+  const maxHoldingMs = pairsMaxHoldingMs(report?.strategyType, shownVersion?.config);
+
   const select = "rounded-md border border-zinc-300 bg-white px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-900";
 
   return (
@@ -77,6 +82,7 @@ export default function StrategyPerformancePage({ params }: Props) {
           <p className="text-xs text-zinc-400">
             {report ? `${report.strategyType} · lifetime across ${report.runs?.length ?? 0} run(s)` : ""}
             {report && report.runs && report.runs.length > 0 && ` · ${formatTimestamp(report.periodStart)} → ${formatTimestamp(report.periodEnd)}`}
+            {maxHoldingMs !== undefined && ` · max hold ${describeHoldingMs(maxHoldingMs)}`}
           </p>
         </div>
         <div className="flex flex-wrap gap-2 text-sm">
@@ -137,7 +143,7 @@ export default function StrategyPerformancePage({ params }: Props) {
 
           <div className="grid gap-6 lg:grid-cols-2">
             <SymbolTable rows={report.bySymbol} />
-            <HoldingTimesCard buckets={report.holdingTimes} />
+            <HoldingTimesCard buckets={report.holdingTimes} maxHoldingMs={maxHoldingMs} />
           </div>
 
           <OpenPositionsTable positions={report.openPositions} />

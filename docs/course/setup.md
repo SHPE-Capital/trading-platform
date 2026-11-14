@@ -77,14 +77,15 @@ which is the feed this repo uses by default.
 
 ## 4. Connect market data to the local simulator
 
-Open `backend/.env` in your editor. Update the existing data-key lines and add
-`LOCAL_STREAM_DATA=1`:
+Open `backend/.env` in your editor and fill in the existing data-key lines:
 
 ```dotenv
 ALPACA_DATA_KEY=replace_with_your_paper_key_id
 ALPACA_DATA_SECRET=replace_with_your_paper_secret
-LOCAL_STREAM_DATA=1
 ```
+
+These keys are required: without them the paper runner receives no market data
+and the app refuses to start strategies.
 
 Replace the placeholders with your actual values. Keep
 `ALPACA_TRADING_MODE=paper` and `EXECUTION_TARGET=sim` as provided by the template.
@@ -125,17 +126,16 @@ npm run doctor
 ```
 
 **Check it:** the app loads, you can sign in, and the startup output reports
-your market-data account with `live stream ON`. During regular U.S. stock-market
-hours, the paper runner should receive data for your strategy's symbols. A
-one-minute strategy needs two distinct bars before it can compare closes.
+`Market data: LIVE from your Alpaca keys`. The navbar badge shows where data
+comes from: **Live · IEX** while bars arrive, **Idle** until a strategy subscribes
+to symbols, **Market closed** outside trading hours, and **No data** when the
+runner has no keys. Hover it for details. A one-minute strategy needs two
+distinct bars before it can compare closes.
 
-Outside market hours, use cached replay data for the lesson. Ask the instructor
-for the hosted-cache access details and follow
-[seeding replay data](../guides/local-development.md#seeding-replay-data). That
-command runs from `backend/` and requires additional configuration; it is not a
-keyless download directly from Alpaca. Disable the live-stream opt-in for replay,
-then set `REPLAY_FROM`, `REPLAY_TO`, and optionally `REPLAY_SPEED` in the shell
-before starting the stack, as described there.
+Outside market hours the live stream is quiet, so test the strategy with a
+**backtest** instead: open **Backtest**, pick your strategy, and choose a past
+week. Backtests use the same strategy code on historical bars, with a simulated
+clock.
 
 ## Optional: send orders to your own Alpaca paper account
 
@@ -152,7 +152,6 @@ your personal paper credentials.
 $env:EXECUTION_TARGET = "alpaca-paper"
 $env:ALPACA_API_KEY = "replace_with_your_paper_key_id"
 $env:ALPACA_API_SECRET = "replace_with_your_paper_secret"
-$env:LOCAL_STREAM_DATA = "1"
 npm run dev:stack
 ```
 
@@ -162,7 +161,6 @@ npm run dev:stack
 export EXECUTION_TARGET=alpaca-paper
 export ALPACA_API_KEY="replace_with_your_paper_key_id"
 export ALPACA_API_SECRET="replace_with_your_paper_secret"
-export LOCAL_STREAM_DATA=1
 npm run dev:stack
 ```
 
@@ -189,7 +187,7 @@ in that shell, and rerun `npm run dev:stack`.
 | Alpaca authentication fails | Check both halves of the key pair, that they belong to your paper account, and whether you regenerated them. Restart after changing keys. |
 | `406 connection limit exceeded` | Another process may be using your account's market-data stream. Stop it before reconnecting this runner. |
 | Strategy runs but does nothing | Check market hours, incoming bars, the configured symbols, and the runner logs. The first bar is only a baseline; risk checks or the position cap can also block an order. |
-| Backend edits do not appear on Windows | Restart the relevant service: `docker compose -f docker/docker-compose.dev.yml restart paper-trading api`. |
+| Backend edits do not appear on Windows | Restart the relevant service: `docker compose -f docker/docker-compose.dev.yml restart paper-trading api backtest-worker`. |
 
 For more details, see [local development](../guides/local-development.md) and
 [strategy troubleshooting](../guides/troubleshooting-strategies.md).

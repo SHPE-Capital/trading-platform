@@ -60,7 +60,7 @@ const testConfig = createPairsConfig('A', 'B', {
   entryZScore: 2,
   exitZScore: 0.5,
   stopLossZScore: 4,
-  maxHoldingTimeMs: 10_000,
+  maxHoldingTimeMs: 60_000,
   cooldownMs: 5_000,
   fixedHedgeRatio: 1,
   tradeNotionalUsd: 5_000,
@@ -352,6 +352,61 @@ describe('exit signals', () => {
     expect(signal).not.toBeNull();
     const meta = signal!.meta as Record<string, unknown>;
     expect(meta.signalType).toBe('max_hold_exit');
+  });
+
+  describe('max hold is enforced even when scoring is skipped', () => {
+    function overdueStrategy(): PairsStrategy {
+      const strategy = makeStrategy();
+      warmUp(strategy);
+      forcePosition(strategy, 'long_spread');
+      const s = (strategy as unknown as { state: PairsInternalState }).state;
+      s.positionOpenedAt = currentTs - testConfig.maxHoldingTimeMs - 1;
+      return strategy;
+    }
+
+    it('fires when only one leg printed a bar this minute', () => {
+      const strategy = overdueStrategy();
+      currentTs += 1000;
+      const symbolState = new SymbolStateManager();
+      symbolState.onBar(bar('A', 100)); // partner bar for this minute never arrives
+      symbolState.onBar(bar('B', 100, currentTs - 60_000));
+
+      const signal = strategy.evaluate(contextFor(symbolState));
+      expect((signal!.meta as Record<string, unknown>).signalType).toBe('max_hold_exit');
+    });
+
+    it('fires when no z-score can be computed', () => {
+      const strategy = overdueStrategy();
+      mockZScore.mockReturnValue(null);
+      currentTs += 1000;
+
+      const signal = strategy.evaluate(makeContext(100, 100));
+      expect((signal!.meta as Record<string, unknown>).signalType).toBe('max_hold_exit');
+    });
+
+    it('fires when the same minute is delivered twice', () => {
+      const strategy = overdueStrategy();
+      currentTs += 1000;
+      const ctx = makeContext(100, 100);
+      // First delivery: z between exit and stop-loss, position young, so it is simply held.
+      mockZScore.mockReturnValueOnce({ zScore: 1, mean: 0, std: 0.1, value: 0.1 });
+      const s = (strategy as unknown as { state: PairsInternalState }).state;
+      s.positionOpenedAt = currentTs;
+      expect(strategy.evaluate(ctx)).toBeNull();
+
+      currentTs += testConfig.maxHoldingTimeMs + 1;
+      const signal = strategy.evaluate(ctx); // repeat bar: scoring skips it
+      expect((signal!.meta as Record<string, unknown>).signalType).toBe('max_hold_exit');
+    });
+
+    it('does not fire before the limit', () => {
+      const strategy = makeStrategy();
+      warmUp(strategy);
+      forcePosition(strategy, 'long_spread');
+      mockZScore.mockReturnValue(null);
+      currentTs += 1000;
+      expect(strategy.evaluate(makeContext(100, 100))).toBeNull();
+    });
   });
 
   it('after any exit: cooldownActive is true and cooldownExpiresAt ≈ now + cooldownMs', () => {

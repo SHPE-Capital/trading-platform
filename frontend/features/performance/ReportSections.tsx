@@ -15,6 +15,8 @@ import type {
 } from "../../types/analytics";
 import { formatCurrency, formatPercent, pnlColorClass } from "../../utils/formatting";
 import { formatDuration, formatTimestamp } from "../../utils/dates";
+import { runDataLabel } from "../../utils/marketData";
+import { describeHoldingMs } from "../../utils/holdingTime";
 
 export function Section({ title, children, hint }: { title: string; children: React.ReactNode; hint?: string }) {
   return (
@@ -95,11 +97,15 @@ export function SlippageCard({ slippage }: { slippage: SlippageSummary }) {
   );
 }
 
-export function HoldingTimesCard({ buckets }: { buckets: PerformanceReport["holdingTimes"] }) {
+/** `maxHoldingMs` is the strategy's hard hold limit, shown only for strategies that have one. */
+export function HoldingTimesCard({ buckets, maxHoldingMs }: { buckets: PerformanceReport["holdingTimes"]; maxHoldingMs?: number }) {
   const max = Math.max(1, ...buckets.map((b) => b.trades));
   const any = buckets.some((b) => b.trades > 0);
   return (
-    <Section title="Holding time" hint="Closed trades by how long the position was held.">
+    <Section
+      title="Holding time"
+      hint={`Closed trades by how long the position was held.${maxHoldingMs === undefined ? "" : ` Hard limit: positions are force-closed after ${describeHoldingMs(maxHoldingMs)}.`}`}
+    >
       {!any ? <Empty>No closed trades yet.</Empty> : (
         <ul className="space-y-1.5 text-xs">
           {buckets.filter((b) => b.trades > 0).map((b) => (
@@ -213,12 +219,15 @@ export function RunsTable({ runs }: { runs: RunSummary[] }) {
               <th className={`${th} text-right`}>Trades</th><th className={`${th} text-right`}>PnL</th>
             </tr></thead>
             <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
-              {[...runs].sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0)).map((r) => (
+              {[...runs].sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0)).map((r) => {
+                const data = runDataLabel({ marketData: r.marketData });
+                return (
                 <tr key={r.runId}>
                   <td className={td}>
                     <Link href={`/runs/${r.runId}`} className="font-medium text-zinc-900 hover:underline dark:text-zinc-50">{r.name}</Link>
                     <div className="flex gap-1 text-[10px] uppercase tracking-wide text-zinc-400">
                       {r.sandbox && <span>sandbox</span>}{r.backfill && <span>backfilled</span>}<span>{r.runtimeOrigin}</span>
+                      {data && <span>{data}</span>}
                     </div>
                   </td>
                   <td className={`${td} text-zinc-500`}>{r.versionNumber != null ? `v${r.versionNumber}` : "—"}</td>
@@ -229,7 +238,8 @@ export function RunsTable({ runs }: { runs: RunSummary[] }) {
                   <td className={`${td} text-right`}>{r.trades}</td>
                   <td className={`${td} text-right font-semibold ${pnlColorClass(r.pnl)}`}>{formatCurrency(r.pnl)}</td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

@@ -26,6 +26,27 @@ export interface ServiceHealth {
   accountStatus?: string;
 }
 
+/** What market data the trading runtime receives (backend core/live/marketDataMonitor.ts). */
+export type MarketDataState = "live" | "stale" | "idle" | "market_closed" | "disconnected" | "no_data";
+
+export interface MarketDataStatus {
+  source: "alpaca-stream" | "none";
+  /** Alpaca feed: "iex" on free keys, "sip" on a paid plan. */
+  feed: string | null;
+  state: MarketDataState;
+  connected: boolean;
+  subscribedSymbols: number;
+  lastBarAt: number | null;
+  staleAfterMs: number;
+  message: string;
+}
+
+/** Where the trading runtime sends orders, and the account it resolved at boot. */
+export interface ExecutionInfo {
+  target: string | null;
+  brokerAccount: string | null;
+}
+
 export interface SystemStatus {
   status: SystemHealthStatus;
   services: {
@@ -34,6 +55,9 @@ export interface SystemStatus {
     alpaca: ServiceHealth;
   };
   mode: ExecutionMode;
+  execution?: ExecutionInfo;
+  /** Null on a backend with no trading engine (API-only). */
+  marketData?: MarketDataStatus | null;
   build?: { origin: string; sha: string; dirty: boolean };
   ts: string;
 }
@@ -120,6 +144,7 @@ export interface BacktestResult {
 export type ReplaySpeed = 0.25 | 0.5 | 1 | 2 | 5 | 10 | "step";
 export type ReplayStatus = "idle" | "playing" | "paused" | "completed" | "error";
 
+/** A replay session as /replay/status reports it (without its events). */
 export interface ReplaySession {
   id: string;
   name: string;
@@ -128,4 +153,81 @@ export interface ReplaySession {
   status: ReplayStatus;
   speed: ReplaySpeed;
   simulatedNow: number;
+  description?: string;
+}
+
+/** A recorded event log that can be loaded for replay (GET /replay/sessions). */
+export interface EventLogRecord {
+  id: string;
+  name: string;
+  description?: string;
+  /** "paper", "live", ... — the runtime that recorded it */
+  source: string;
+  runId?: string;
+  eventCount: number;
+  startDate: string;
+  endDate: string;
+  createdAt: number;
+}
+
+/** Narrows what a load replays. Every set field must match. */
+export interface ReplayFilter {
+  eventTypes?: string[];
+  /** Events without a symbol (system, portfolio) always pass. */
+  symbols?: string[];
+  startTs?: number;
+  endTs?: number;
+}
+
+/** Playback progress pushed over /ws/events. */
+export interface ReplayTickEvent {
+  type: "REPLAY_TICK";
+  ts: number;
+  sessionId: string;
+  cursor: number;
+  totalEvents: number;
+  status: ReplayStatus;
+  speed: ReplaySpeed;
+  simulatedNow: number;
+}
+
+export type SignalOutcome = "filled" | "risk_rejected" | "capital_unavailable" | "no_fill";
+
+export interface SignalAttribution {
+  signalId: string;
+  strategyId: string;
+  symbol: string;
+  direction: string;
+  signalTs: number;
+  signalMidPrice: number | null;
+  fillPrice: number | null;
+  fillTs: number | null;
+  /** Positive = paid away from the mid */
+  slippageBps: number | null;
+  realizedPnl: number | null;
+  holdingTimeMs: number | null;
+  outcome: SignalOutcome;
+}
+
+export interface StrategyAttributionSummary {
+  totalSignals: number;
+  filledSignals: number;
+  totalRealizedPnl: number;
+  winRate: number;
+}
+
+/** GET /replay/attribution, once the loaded session has completed. */
+export interface ReplayAttribution {
+  sessionId: string;
+  totalSignals: number;
+  filledSignals: number;
+  fillRate: number;
+  totalRealizedPnl: number;
+  winRate: number;
+  avgSlippageBps: number;
+  avgHoldingTimeMs: number;
+  maxDrawdown: number;
+  signals: SignalAttribution[];
+  equityCurve: Array<{ ts: number; equity: number }>;
+  byStrategy: Record<string, StrategyAttributionSummary>;
 }

@@ -3,19 +3,19 @@
  *
  * Frontend service for replay session API calls.
  *
- * Inputs:  Session IDs and playback commands.
- * Outputs: ReplaySession state from the backend API.
+ * Inputs:  Session IDs, filters and playback commands.
+ * Outputs: Recorded event logs, ReplaySession state and attribution from the backend API.
  */
 
 import { apiGet, apiPost } from "./api";
-import type { ReplaySession } from "../types/api";
+import type { EventLogRecord, ReplayAttribution, ReplayFilter, ReplaySession } from "../types/api";
 
 /**
- * Fetches all available replay session records.
- * @returns Array of session metadata objects
+ * Fetches all recorded event logs that can be loaded for replay.
+ * @returns Event log metadata, newest first
  */
-export async function fetchReplaySessions(): Promise<ReplaySession[]> {
-  return apiGet<ReplaySession[]>("/replay/sessions");
+export async function fetchReplaySessions(): Promise<EventLogRecord[]> {
+  return apiGet<EventLogRecord[]>("/replay/sessions");
 }
 
 /**
@@ -27,19 +27,32 @@ export async function fetchReplayStatus(): Promise<ReplaySession | null> {
 }
 
 /**
- * Loads a replay session into the engine.
- * @param sessionId - Event log session UUID
+ * Loads an event log into the engine, optionally filtered.
+ * @param sessionId - Event log UUID
+ * @param filter - Optional constraints on which events are replayed
+ * @returns The loaded session, paused at its first event
  */
-export async function loadReplaySession(sessionId: string): Promise<void> {
-  return apiPost("/replay/load", { sessionId });
+export async function loadReplaySession(sessionId: string, filter?: ReplayFilter): Promise<ReplaySession | null> {
+  const res = await apiPost<{ session: ReplaySession | null }>("/replay/load", filter ? { sessionId, filter } : { sessionId });
+  return res.session;
 }
 
 /**
  * Sends a playback control command to the replay engine.
  * @param command - ReplayCommand action object
+ * @returns The session state after the command
  */
 export async function controlReplay(
   command: { action: string; [key: string]: unknown },
-): Promise<void> {
-  return apiPost("/replay/control", command);
+): Promise<ReplaySession | null> {
+  const res = await apiPost<{ session: ReplaySession | null }>("/replay/control", command);
+  return res.session;
+}
+
+/**
+ * Fetches the attribution report of the loaded session (completed sessions only).
+ * @returns ReplayAttribution
+ */
+export async function fetchReplayAttribution(): Promise<ReplayAttribution> {
+  return apiGet<ReplayAttribution>("/replay/attribution");
 }

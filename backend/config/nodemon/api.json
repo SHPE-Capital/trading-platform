@@ -7,7 +7,7 @@
     "src/utils"
   ],
   "ext": "ts",
-  "exec": "ts-node src/index.ts",
+  "exec": "ts-node --transpile-only src/index.ts",
   "env": {
     "PORT": "8082"
   }

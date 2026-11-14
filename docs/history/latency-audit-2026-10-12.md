@@ -170,7 +170,7 @@ on the same Windows desktop. Medians in frames/s; run-to-run spread was 3–27%.
   stages 17.6%, full with recording 75.6%. "Sampled" is still above the
   provisional 5% gate at maximum throughput on this host; judge it on Linux.
 
-### Next candidates (not done; same method applies)
+### Next candidates (done 2026-10-20, see §8)
 
 From a CPU profile of the engine after `283e1fc` (`quote_imbalance`, no probe,
 quarantine on):
@@ -185,3 +185,75 @@ quarantine on):
    This matters only for signal-heavy strategies (the ×20 configuration).
 
 None of this replaces the live-capture and AWS measurements in §6.
+
+## 8. Follow-up 2026-10-20: second optimisation pass (`perf/platform-optimizations`)
+
+Nineteen feature commits had landed on `JC` since §7 and cost 15–35% on the
+same recording (e.g. `quote_imbalance` ×1 82k → 53k frames/s), with identical
+decisions. This pass started from that baseline. Each change is its own
+commit, with checksums compared and the full suite run.
+
+| Configuration | `JC` baseline (`bacbdd6`) | Final | Change |
+|---|---|---|---|
+| `quote_imbalance` ×1 | 52,984 | 86,939 | +64% |
+| `quote_imbalance` ×20 | 3,673 | 6,738 | +83% |
+| `null` | 80,952 | 126,973 | +57% |
+| `pairs_trading` | 75,015 | 118,170 | +58% |
+| `minute_reversal` | 71,169 | 116,583 | +64% |
+
+Frames/s, median of 5–7 repetitions, Windows desktop, `--invalid-data pass
+--sink sim --sample 0`. **Decision and fill checksums are identical in every
+row.** Per-frame processing p99 (null) went from 0.029 to 0.012 ms. Synthetic
+backtests (`BacktestEngine`, one year of minute bars for SPY/QQQ pairs) gave
+identical orders, fills and equity; pairs ran about 13% faster.
+
+What changed:
+- Market-data and internal event envelopes use `newEventId()` (a counter)
+  instead of UUIDv4. Persisted ids (signals, intents, orders, fills) stay
+  UUIDs.
+- `rfc3339ToEpochMs` replaces `new Date(iso)` in the normalizer and
+  validation. It is property-tested equal to `Date`, including NaN and V8's
+  >9-digit quirk.
+- Per-intent risk checks read `PortfolioRiskView` (cash, equity,
+  initialCapital, positions); `_runChecks` no longer allocates closures.
+- The post-fill `PORTFOLIO_UPDATED` snapshot is built only when something
+  subscribes (`EventBus.hasSubscribers`). Backtests have no subscriber.
+- `SymbolState` rolling windows record only once read: nothing in the
+  platform reads them. `GET /api/market-data/snapshot/:symbol` no longer
+  serialises them.
+- `timeframeToMs` is memoised.
+- Rolling windows keep late (out-of-order) items in time order and evict
+  from the newest timestamp.
+- The runtime prunes closed orders older than 6 h, so memory stayed bounded
+  over long runs.
+- Updated bars, trade corrections and cancels now correct symbol state
+  (state-only, never re-running strategies).
+- Order submit → HTTP response-headers timing is measured.
+- Reports draw latency and delay-curve SVG charts.
+
+**Dev containers.** The "27% of 1600%" Docker reading was startup: each
+backend container ran `ts-node` with full type-checking, about 20 s at 1–2
+cores, three at once. Idle CPU was about 0%. Dev runners now use
+`ts-node --transpile-only` (types still enforced by `npm run typecheck`, CI
+and the editor). Startup work is about 12 s, and steady memory went from
+~320 MB to ~95 MB per backend container (four app containers: ~950 MB →
+~445 MB). No GPU is used by any part of the stack.
+
+**Linux (WSL2, Docker, Node 22).** Fixture checks pass. Event-loop delay
+p50 is 0.002 ms, so measurement is reliable on Linux, unlike Windows. Frame
+receive-to-done p99 is 0.045 ms; receive-to-submit p99 is 0.13 ms
+(in-memory journal). A/A on the fixed recording: the intended "sampled"
+config costs ~1.4 µs per frame (12.6% at maximum throughput, inside a
+13–23% run-to-run spread).
+
+**Where it stops.** In the final profile of the live path, about 18% is
+native `JSON.parse` of frame text inside the adapter, ~13% is runtime/GC,
+and the rest is spread thinly (each ≤ 2%). A full-string timestamp cache
+was tried and reverted: no measurable gain. Going further would need a
+custom frame parser or moving parsing to worker threads, which is
+rewrite-level for a few percent. The backtest path is dominated by GC from
+per-order objects and the UUIDs that results persist.
+
+Still requires you: a market-hours capture, a `LATENCY_PROBE` window and
+the paper probe against real Alpaca/Supabase (§6). EC2 numbers also need
+the runbook's §6.

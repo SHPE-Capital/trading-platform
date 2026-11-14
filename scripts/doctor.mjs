@@ -84,11 +84,11 @@ report(
 
 const creds = loadDataCredentials();
 if (!creds.source) {
-  report("warn", "Alpaca market-data keys", "none: backtests use the local bar cache only", "add your OWN free Alpaca keys as ALPACA_DATA_KEY/ALPACA_DATA_SECRET in backend/.env, or run `npm run data:pull`");
+  report("warn", "Alpaca market-data keys", "none: strategies cannot run and backtests use only cached bars", "add your OWN free Alpaca paper keys as ALPACA_DATA_KEY/ALPACA_DATA_SECRET in backend/.env (https://app.alpaca.markets)");
 } else {
   const who = await identifyAlpacaAccount(creds.key, creds.secret);
   if (who.isClub) {
-    report("warn", "Alpaca market-data keys", `${creds.source} holds the CLUB account's keys (${who.account}); dev:stack withholds them`, "put your own free Alpaca keys in ALPACA_DATA_KEY/ALPACA_DATA_SECRET (these take priority), or run `npm run data:pull`");
+    report("warn", "Alpaca market-data keys", `${creds.source} holds the CLUB account's keys (${who.account}); dev:stack withholds them, so strategies cannot run`, "put your own free Alpaca paper keys in ALPACA_DATA_KEY/ALPACA_DATA_SECRET (these take priority)");
   } else {
     report("pass", "Alpaca market-data keys", `from ${creds.source}${who.account ? `, account ${who.account}` : " (could not verify the account)"}`);
   }

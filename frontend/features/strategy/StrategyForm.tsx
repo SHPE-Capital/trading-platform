@@ -23,6 +23,7 @@ import RiskBudgetSection, { type RiskBudgetState, defaultRiskBudgetState } from 
 import VersionSelect from "./VersionSelect";
 import { createProposal } from "../../services/proposalsService";
 import { useAuth } from "../../context/AuthContext";
+import { describeMinutes, maxHoldingHint, maxHoldingProblem } from "../../utils/holdingTime";
 
 interface Props {
   onSubmit: (selection: { strategyId: string; versionId: string }) => Promise<void>;
@@ -390,7 +391,7 @@ export default function StrategyForm({ onSubmit, isLoading }: Props) {
           />
           <FieldHint>{describeMinutes(rollingWindowMins)}</FieldHint>
         </Field>
-        <Field label="Max Holding Time (minutes)">
+        <Field label="Max Holding Time (minutes, hard limit)">
           <input
             type="number"
             step="1"
@@ -400,7 +401,7 @@ export default function StrategyForm({ onSubmit, isLoading }: Props) {
             onChange={(e) => setMaxHoldingMins(Number(e.target.value))}
             className={inputClass}
           />
-          <FieldHint>{describeMinutes(maxHoldingMins)} — force-exit if the spread has not reverted</FieldHint>
+          <FieldHint>{maxHoldingHint(maxHoldingMins)}</FieldHint>
         </Field>
         <Field label="Cooldown After Exit (minutes)">
           <input
@@ -608,15 +609,6 @@ const inputClass =
  */
 const MAX_WINDOW_MINS = 527_040;
 
-/** Renders a minutes count as a human-scale duration so mis-typed values stand out. */
-function describeMinutes(mins: number): string {
-  if (!Number.isFinite(mins) || mins <= 0) return "—";
-  if (mins < 60) return `${mins} min`;
-  if (mins < 1_440) return `${(mins / 60).toFixed(1).replace(/\.0$/, "")} hours`;
-  if (mins < 43_200) return `${(mins / 1_440).toFixed(1).replace(/\.0$/, "")} days`;
-  return `${(mins / 43_200).toFixed(1).replace(/\.0$/, "")} months`;
-}
-
 /**
  * Validates every duration field before submit. Returns an error message, or
  * null when all values are sane.
@@ -630,12 +622,14 @@ function validateDurations(v: {
 }): string | null {
   const fields: Array<[string, number, number]> = [
     ["Spread Window", v.rollingWindowMins, 5],
-    ["Max Holding Time", v.maxHoldingMins, 1],
     ["Cooldown After Exit", v.cooldownMins, 0],
   ];
   if (v.hedgeRatioMethod === "rolling_ols") {
     fields.push(["OLS Window", v.olsWindowMins, 30]);
   }
+
+  const holdingProblem = maxHoldingProblem(v.maxHoldingMins);
+  if (holdingProblem) return holdingProblem;
 
   for (const [label, value, min] of fields) {
     if (!Number.isFinite(value)) return `${label} must be a number.`;

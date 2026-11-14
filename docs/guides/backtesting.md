@@ -106,7 +106,7 @@ environment variable.
 - **Queued forever:** check the worker logs, database migrations, and matching
   `APP_RUNTIME_ORIGIN` between API and worker.
 - **Missing bars/401:** verify data keys or seed the exact range using
-  [local data setup](local-development.md#seeding-replay-data).
+  [local data setup](local-development.md#seeding-cached-bars).
 - **No trades:** inspect minimum observations, trigger kinds, session coverage,
   and risk rejections before changing the strategy.
 - **Cannot save an old result:** the staging window may have expired; rerun.

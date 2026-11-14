@@ -181,13 +181,34 @@ describe('AlpacaMarketDataAdapter: subscribe/unsubscribe', () => {
     );
   });
 
-  it('sends unsubscribe message', () => {
+  it('sends unsubscribe message when connected', () => {
     const { adapter } = makeAdapter();
     const mockWs = { send: jest.fn() };
-    (adapter as unknown as { ws: unknown }).ws = mockWs;
+    (adapter as unknown as { ws: unknown; isConnected: boolean }).ws = mockWs;
+    (adapter as unknown as { isConnected: boolean }).isConnected = true;
     adapter.unsubscribe(['SPY']);
     expect(mockWs.send).toHaveBeenCalledWith(
       JSON.stringify({ action: 'unsubscribe', quotes: ['SPY'], trades: ['SPY'], bars: ['SPY'] }),
     );
+  });
+
+  it('forgets a symbol unsubscribed before authentication, so it is not restored', () => {
+    const { adapter } = makeAdapter();
+    const mockWs = { send: jest.fn() };
+    (adapter as unknown as { ws: unknown }).ws = mockWs;
+    adapter.subscribe(['SPY', 'QQQ']);
+    adapter.unsubscribe(['SPY']);
+    expect(mockWs.send).not.toHaveBeenCalled();
+    handleMessage(adapter, [{ T: 'success', msg: 'authenticated' }]);
+    expect(mockWs.send).toHaveBeenCalledWith(
+      JSON.stringify({ action: 'subscribe', quotes: ['QQQ'], trades: ['QQQ'], bars: ['QQQ'] }),
+    );
+  });
+
+  it('forgets a symbol unsubscribed with no socket at all', () => {
+    const { adapter } = makeAdapter();
+    adapter.subscribe(['SPY']);
+    adapter.unsubscribe(['SPY']);
+    expect((adapter as unknown as { subscribed: Set<string> }).subscribed.size).toBe(0);
   });
 });

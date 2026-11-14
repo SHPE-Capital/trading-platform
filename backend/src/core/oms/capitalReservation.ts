@@ -80,8 +80,11 @@ export class CapitalReservationManager {
 
     const amount = worstCaseNotional;
 
-    if (amount <= 0) {
-      logger.warn("CapitalReservationManager: cannot reserve — amount is zero or negative", {
+    // `!(amount > 0)` rather than `amount <= 0`: a NaN amount would pass both
+    // this and the `amount > available` test below, and once stored it makes
+    // getAvailableCash() NaN for every later reservation.
+    if (!(amount > 0)) {
+      logger.warn("CapitalReservationManager: cannot reserve — amount is not a positive number", {
         intentId: intent.id,
         qty: intent.qty,
         limitPrice: intent.limitPrice,
@@ -140,6 +143,14 @@ export class CapitalReservationManager {
     let totalAmount = 0;
     for (const intent of intents) {
       totalAmount += this.estimateCost(intent, priceEstimator);
+    }
+
+    // A NaN leg cost cannot be checked against available cash; refuse the group.
+    if (Number.isNaN(totalAmount)) {
+      logger.warn("CapitalReservationManager: cannot reserve group — a leg's cost is not a number", {
+        intentCount: intents.length,
+      });
+      return null;
     }
 
     // All sell or zero-cost group — create tracking reservation

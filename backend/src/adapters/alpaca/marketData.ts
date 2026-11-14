@@ -26,10 +26,13 @@ import {
   validateRawQuote,
   validateRawTrade,
   validateRawBar,
+  normalizeTradeCorrection,
+  normalizeTradeCancel,
+  validateRawTradeAdjustment,
 } from "./normalizer";
 import { logger } from "../../utils/logger";
 import { nowMs } from "../../utils/time";
-import { newId } from "../../utils/ids";
+import { newEventId } from "../../utils/ids";
 import type { EventBus } from "../../core/engine/eventBus";
 import type { Symbol, ExecutionMode } from "../../types/common";
 import type { MarketDataIssue } from "../../types/market";
@@ -95,6 +98,11 @@ export class AlpacaMarketDataAdapter {
     this.observers = [...(options.probe ? [options.probe] : []), ...(options.observers ?? [])];
     this.quarantine = options.invalidData === "quarantine";
     this.url = options.url;
+  }
+
+  /** True while the socket is open and authenticated. */
+  get connected(): boolean {
+    return this.isConnected;
   }
 
   /**
@@ -175,8 +183,9 @@ export class AlpacaMarketDataAdapter {
    * @param symbols - Array of ticker symbols to unsubscribe from
    */
   unsubscribe(symbols: Symbol[]): void {
-    if (!this.ws) return;
+    // Drop from the desired set first, so a reconnect does not restore them.
     symbols.forEach((s) => this.subscribed.delete(s));
+    if (!this.isConnected || !this.ws) return;
     this.ws.send(JSON.stringify({
       action: "unsubscribe",
       quotes: symbols,
@@ -261,7 +270,8 @@ export class AlpacaMarketDataAdapter {
     }
     let frameTrace: EventTrace | undefined;
     if (frame && this.probe) {
-      this.probe.frameParsed(frame, messages.length, process.hrtime.bigint(), true);
+      // Parse timing is a stage-detail measurement; frame detail skips the clock read.
+      this.probe.frameParsed(frame, messages.length, this.probe.stageDetail ? process.hrtime.bigint() : 0n, true);
       frameTrace = this.probe.frameTrace(frame);
     }
 
@@ -313,32 +323,61 @@ export class AlpacaMarketDataAdapter {
         case "q":
           // Ordinary runtimes take the first branch: exactly the original publish.
           if (!this.probe && !this.quarantine) {
-            this.eventBus.publish({ id: newId(), type: "QUOTE_RECEIVED", ts: nowMs(), mode: this.mode, payload: normalizeQuote(m as never) });
+            this.eventBus.publish({ id: newEventId(), type: "QUOTE_RECEIVED", ts: nowMs(), mode: this.mode, payload: normalizeQuote(m as never) });
           } else {
             this._publishObserved(frame, frameTrace, index, "quote", m, validateRawQuote, () => ({
-              id: newId(), type: "QUOTE_RECEIVED", ts: nowMs(), mode: this.mode, payload: normalizeQuote(m as never),
+              id: newEventId(), type: "QUOTE_RECEIVED", ts: nowMs(), mode: this.mode, payload: normalizeQuote(m as never),
             }));
           }
           break;
 
         case "t":
           if (!this.probe && !this.quarantine) {
-            this.eventBus.publish({ id: newId(), type: "TRADE_RECEIVED", ts: nowMs(), mode: this.mode, payload: normalizeTrade(m as never) });
+            this.eventBus.publish({ id: newEventId(), type: "TRADE_RECEIVED", ts: nowMs(), mode: this.mode, payload: normalizeTrade(m as never) });
           } else {
             this._publishObserved(frame, frameTrace, index, "trade", m, validateRawTrade, () => ({
-              id: newId(), type: "TRADE_RECEIVED", ts: nowMs(), mode: this.mode, payload: normalizeTrade(m as never),
+              id: newEventId(), type: "TRADE_RECEIVED", ts: nowMs(), mode: this.mode, payload: normalizeTrade(m as never),
             }));
           }
           break;
 
         case "b":
           if (!this.probe && !this.quarantine) {
-            this.eventBus.publish({ id: newId(), type: "BAR_RECEIVED", ts: nowMs(), mode: this.mode, payload: normalizeBar(m as never, "1m") });
+            this.eventBus.publish({ id: newEventId(), type: "BAR_RECEIVED", ts: nowMs(), mode: this.mode, payload: normalizeBar(m as never, "1m") });
           } else {
             this._publishObserved(frame, frameTrace, index, "bar", m, validateRawBar, () => ({
-              id: newId(), type: "BAR_RECEIVED", ts: nowMs(), mode: this.mode, payload: normalizeBar(m as never, "1m"),
+              id: newEventId(), type: "BAR_RECEIVED", ts: nowMs(), mode: this.mode, payload: normalizeBar(m as never, "1m"),
             }));
           }
+          break;
+
+        // Revisions of data already delivered: they correct state but never
+        // re-run strategies. Unusable ones are dropped whatever the policy.
+        case "u":
+          if (validateRawBar(m)?.severity === "reject") {
+            if (frame) this.probe?.revision("bar_revised_rejected");
+            break;
+          }
+          if (frame) this.probe?.revision("bar_revised");
+          this.eventBus.publish({ id: newEventId(), type: "BAR_REVISED", ts: nowMs(), mode: this.mode, payload: normalizeBar(m as never, "1m") });
+          break;
+
+        case "c":
+          if (validateRawTradeAdjustment(m)?.severity === "reject") {
+            if (frame) this.probe?.revision("trade_corrected_rejected");
+            break;
+          }
+          if (frame) this.probe?.revision("trade_corrected");
+          this.eventBus.publish({ id: newEventId(), type: "TRADE_CORRECTED", ts: nowMs(), mode: this.mode, payload: normalizeTradeCorrection(m) });
+          break;
+
+        case "x":
+          if (validateRawTradeAdjustment(m)?.severity === "reject") {
+            if (frame) this.probe?.revision("trade_canceled_rejected");
+            break;
+          }
+          if (frame) this.probe?.revision("trade_canceled");
+          this.eventBus.publish({ id: newEventId(), type: "TRADE_CANCELED", ts: nowMs(), mode: this.mode, payload: normalizeTradeCancel(m) });
           break;
 
         default:

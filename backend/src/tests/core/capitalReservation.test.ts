@@ -58,6 +58,23 @@ describe('CapitalReservationManager.reserve', () => {
     expect(mgr.reserve(makeIntent(), -1_000, 100_000)).toBeNull();
   });
 
+  it('returns null for a NaN worstCaseNotional and leaves available cash intact', () => {
+    // A NaN amount passed both `amount <= 0` and `amount > available`, was
+    // stored, and turned getAvailableCash() into NaN, so every later buy passed
+    // the `amount > available` test whatever the cash.
+    const mgr = new CapitalReservationManager();
+    expect(mgr.reserve(makeIntent(), NaN, 100_000)).toBeNull();
+    expect(mgr.getAvailableCash(100_000)).toBe(100_000);
+    expect(mgr.reserve(makeIntent({ id: 'intent-2' }), 200_000, 100_000)).toBeNull();
+  });
+
+  it('reserveGroup returns null when a leg costs NaN', () => {
+    const mgr = new CapitalReservationManager();
+    const legs = [makeIntent({ qty: NaN, limitPrice: 10 }), makeIntent({ id: 'intent-2', qty: 1, limitPrice: 10 })];
+    expect(mgr.reserveGroup(legs, 100_000)).toBeNull();
+    expect(mgr.getAvailableCash(100_000)).toBe(100_000);
+  });
+
   it('returns null when totalCash is insufficient for the reservation', () => {
     const mgr = new CapitalReservationManager();
     expect(mgr.reserve(makeIntent(), 50_000, 10_000)).toBeNull();

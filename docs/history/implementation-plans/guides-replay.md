@@ -1,6 +1,13 @@
 > Historical specification archived during the 2026-10-20 documentation refresh.
 > It includes proposals and completed tasks; it is not the current operating guide.
 > Current documentation: [replay.md](../../guides/replay.md).
+>
+> Status 2026-10-28: Parts 1–11 are implemented, with these differences from the
+> proposal. The table already existed (migration 0000). The repository is
+> `adapters/supabase/eventLogRepository.ts`. Recording is opt-in
+> (`REPLAY_RECORD=1`) in `runtime/bootstrap.ts` and capped. The clock override
+> wraps only each publish. Attribution runs on the recorded signals and fills.
+> Strategy re-execution (`replayStrategies: true`) was not built.
 
 # Replay System — Build Guide
 

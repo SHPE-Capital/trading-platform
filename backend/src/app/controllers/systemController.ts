@@ -11,8 +11,11 @@ import { getSupabaseClient } from "../../adapters/supabase/client";
 import { env } from "../../config/env";
 import { nowIso } from "../../utils/time";
 import type { AppContext } from "../context";
+import type { MarketDataState, MarketDataStatus } from "../../core/live/marketDataMonitor";
 
 type SystemHealthStatus = "healthy" | "degraded" | "unhealthy";
+
+const DATA_PROBLEM_STATES: ReadonlySet<MarketDataState> = new Set(["no_data", "disconnected", "stale"]);
 type ExecutionMode = "paper" | "live" | "backtest" | "replay";
 
 interface ServiceHealth {
@@ -30,6 +33,8 @@ interface HealthResponse {
   mode: ExecutionMode;
   /** Where this process sends orders, and the account it resolved at boot. */
   execution: { target: string | null; brokerAccount: string | null };
+  /** What market data this process receives; null where no engine runs (API-only). */
+  marketData: MarketDataStatus | null;
   build: { origin: string; sha: string; dirty: boolean };
   ts: string;
 }
@@ -111,7 +116,7 @@ export function setKillSwitch(req: Request, res: Response): void {
  * Checks Supabase and Alpaca connectivity and returns per-service health details.
  */
 export async function getSystemStatus(req: Request, res: Response): Promise<void> {
-  const { executionTarget, brokerAccount } = (req.app?.locals?.ctx ?? {}) as AppContext;
+  const { executionTarget, brokerAccount, marketData } = (req.app?.locals?.ctx ?? {}) as AppContext;
   // A sim book, or a process with no trading keys, never talks to the broker.
   const brokerUnused = executionTarget === "sim" || !env.alpacaApiKey || !env.alpacaApiSecret;
   const [supabase, alpaca] = await Promise.all([
@@ -125,11 +130,18 @@ export async function getSystemStatus(req: Request, res: Response): Promise<void
   else if (healthyCount === 1) status = "degraded";
   else status = "unhealthy";
 
+  // A trading runtime that can't receive bars can't trade, so it is not "operational".
+  const marketDataStatus = marketData?.status() ?? null;
+  if (status === "healthy" && marketDataStatus && DATA_PROBLEM_STATES.has(marketDataStatus.state)) {
+    status = "degraded";
+  }
+
   const body: HealthResponse = {
     status,
     services: { supabase, alpaca },
     mode: env.alpacaTradingMode,
     execution: { target: executionTarget ?? null, brokerAccount: brokerAccount ?? null },
+    marketData: marketDataStatus,
     build: { origin: env.runtimeOrigin, sha: env.buildSha, dirty: env.buildDirty },
     ts: nowIso(),
   };
