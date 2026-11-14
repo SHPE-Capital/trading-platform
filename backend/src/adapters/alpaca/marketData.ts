@@ -173,6 +173,7 @@ export class AlpacaMarketDataAdapter {
       quotes: symbols,
       trades: symbols,
       bars: symbols,
+      updatedBars: symbols,
     }));
     this._lifecycle("subscribe_sent", { symbols });
     logger.info("AlpacaMarketDataAdapter: subscribed", { symbols });
@@ -191,6 +192,7 @@ export class AlpacaMarketDataAdapter {
       quotes: symbols,
       trades: symbols,
       bars: symbols,
+      updatedBars: symbols,
     }));
     logger.info("AlpacaMarketDataAdapter: unsubscribed", { symbols });
   }
@@ -297,6 +299,7 @@ export class AlpacaMarketDataAdapter {
                 quotes: symbols,
                 trades: symbols,
                 bars: symbols,
+                updatedBars: symbols,
               }));
               this._lifecycle("subscribe_sent", { symbols, restored: true });
               logger.info("AlpacaMarketDataAdapter: restored subscriptions", { symbols });

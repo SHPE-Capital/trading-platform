@@ -67,6 +67,38 @@ config is hashed (E5) and a change needs a dated changelog entry.
 | **quote replay** | `quote_replay.enabled`, `max_quote_age_s`, `max_spread_pct`, `limit_offset_pct`, `cancel_after_s` | on/off, 2, 0.10%, 0.05%, 2 | enable for finalists | C6 | 0-F |
 | **compute** | `compute.workers`, `threads_per_worker`, `dtype`, `scratch_dir`, `rerun_reserve` | per host | measure in E1 | D7, A6 | E1, E6 |
 
+## Final settings (lead decision, 2026-11-13)
+
+The lead set the final run to **N = 1,000 stocks over 10 years**. Everything else
+stays at the defaults in the tables above until E5 freezes the protocol. Put these in the
+protocol config (0-G); they are not code constants.
+
+| Key | Final value | Note |
+|---|---|---|
+| `universe.n` | **1,000** | pool to pull is about 3 × N = 3,000 symbols |
+| `history.years` | **10** | declared before evaluation; reserved period excluded |
+| `search.budget`, `seeds`, `finalists_per_seed` | 2,048, 3, 12 | unchanged protocol |
+| `validation.sessions` | 63 | unchanged |
+| `acceptance.validation_min_trades` / `min_sessions` | 50 / 30 | raised for N of 500 or more, see table above |
+| `compute.rerun_reserve` | 2.0 | unchanged |
+
+**This setting does not fit on the development machine as measured (Nov 13).** The
+requirements it creates are in the next table; the lead must resolve them (0-F) before the
+big pull:
+
+| Need at 1,000 × 10 | Measured or derived | This machine (16 GB RAM, ~70 GB free disk) |
+|---|---|---|
+| Pull, Parquet on disk | about 44 h and about 126 GB at 190 requests/min, 41 bytes/row (paid plan; free plan unverified) | **Does not fit on disk.** |
+| Panel, float32 week chunks | about 20.5 GB (2.05 MB per stock-year), must be chunked and memory-mapped | Exceeds RAM; fits disk if Parquet is converted and deleted per stage |
+| Replay RAM, one worker, N = 1,000 | about 4.6 GB per worker at 1 thread, 12.6 GB total at 16 threads (projected) | Limits workers to 2 to 3 unless indicators are memory-mapped (B7) |
+| Weekly calibration at 1,000 stocks, 5 years | about 45 to 60 min cold, 30 to 45 min with reuse (estimate, not yet measured) | 52 weekends do not fit in one weekend |
+
+So the final run needs a **compute host with at least 200 GB disk and 32 GB RAM** (AWS
+within the credit budget, or HPC), or a reduced fallback from the stage plan below. Keep
+the stage gates: do not start the 1,000 × 10 pull until 300 × 2 and 500 × 5 have passed
+their gates. Fall back to 500 × 5 (about 11 h pull, 32 GB) if the host or the freeze date
+does not allow it. Record the choice and the date in 0-F.
+
 ## Scope recommendation (for 0-F)
 
 Go bigger, but stage it so a failure is cheap and the freeze date stays safe.
@@ -92,7 +124,35 @@ and must include names that later delisted. Set `pool_max_symbols` to about 3 ×
 - More history does not by itself raise live returns. It reduces the chance of
   deploying a lucky config. Treat it as evidence quality, not alpha.
 
-### Size and time estimates (proxy-based, replace with E1 numbers)
+### Measured results so far (2026-11-13, this machine, paid Alpaca plan)
+
+These replace the proxy figures below where they overlap. All come from real code on
+synthetic minute bars unless noted; trade density on real data will differ.
+
+- **Account replay (C5 Numba kernel, 63 sessions after a 20-session warm-up, 1 thread):**
+  0.025 s at N = 300, 0.041 s at 500, 0.049 s at 1,000, about 30 to 35 times the pure
+  Python oracle, with exactly matching ledgers. 16 threads give about 10 times
+  (the proxy predicted 2.5 times). Timings were taken while other jobs ran, so they are
+  noisy upward.
+- **Indicators:** the cold indicator and mask build, not the account replay, is the cost
+  floor. After the Numba pass one config's cold build on 300 stocks and 25 sessions fell from about 20.8 s to
+  1.65 s. This cost is shared by every candidate in a chunk, so it must not be charged
+  per candidate in projections. The first E1 matrix run did charge it per candidate on a
+  sample of 64, which makes its 20 to 247 h weekend projections far too pessimistic; rerun
+  with at least 256 candidates and the D6 cache (branch `p1/MO-D6-bench`).
+- **Threads:** the kernel scales about 10 times on 16 threads, but the end-to-end path
+  was slower with 8 and 16 threads than with 1 (NumPy indicator work holds the GIL).
+  Parallelize across week chunks with processes sharing memory-mapped arrays.
+- **Panel:** 38.8 KB per stock-week and 2.05 MB per stock-year (float32, five fields).
+  1,000 stocks over 10 years is about 20.5 GB. One 1,000-stock week chunk is 41 MB.
+- **Week-chunk cache:** consecutive weeks reuse about 92% of (config, chunk) results; a
+  window advanced one week computes exactly one new chunk per config.
+- **Pilot pull (77 symbols, 2.25 years, SIP, paid plan):** 19.25 million bars, 789 MB,
+  881 s, no errors, no 429s. 6,901 bars per request (the plan assumed 10,000), 41 bytes
+  per row. The 190 requests/min is our own throttle, so the real limit is unknown.
+  Delisted names have minute bars back to 2016; renamed tickers stop at the rename.
+
+### Size and time estimates (proxy-based, superseded by the measurements above)
 
 The proxy (synthetic minute bars, Numba account loop, this Ryzen 7 3700X, 16
 threads, 63-session window per candidate) measured:
@@ -143,6 +203,25 @@ them over the history is about 18 hours (5 years) to 36 hours (10 years) at
 N = 1000 by the proxy. Keep the 2,048 search budget as the protocol, because it
 mirrors what a team could run weekly. Use the exhaustive result as ground truth
 for E3: does the search find the true top configs, and is the surrogate helping?
+
+## Reusing work across runs and strategies (added 2026-11-13)
+
+Benchmarks showed the week-chunk return cache alone is not enough. Four reuse levels, in
+the order to build them (full detail and the multi-strategy cost model are in
+[handoff/multi-strategy-and-benchmark-changes.md](handoff/multi-strategy-and-benchmark-changes.md)):
+
+1. **Return-path cache per config and week chunk (D6).** Shared by the three policies,
+   all seeds and every later weekend. Weights are not in the key.
+2. **Persisted indicator arrays per week chunk (new task B7).** Key: data version,
+   indicator and parameter setting, warm-up length. Memory-mapped, so every config,
+   strategy and weekend reuses them and RAM per worker drops.
+3. **Mask-hash deduplication (D6 extension).** Identical signal masks with the same
+   account settings give identical returns; replay each unique mask once.
+4. **Per-session keys (optional D6 granularity).** Positions are flat every night, so a
+   session is independent given its 20-session history; this survives window changes.
+
+Reuse never crosses a change of universe or N (stocks compete for cash), exits, sizing,
+costs or the code version, because those are in the key.
 
 ## Widening the search space (grid v2, exits and account as parameters)
 

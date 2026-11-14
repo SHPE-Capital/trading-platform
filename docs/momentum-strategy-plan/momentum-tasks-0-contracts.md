@@ -49,6 +49,13 @@ by different people; the lead reviews all of them.
 - **Done when:** `len(list(enumerate_configs())) == 69_732` for the default grid;
   14 subsets; IDs are stable across Python sessions and platforms; the encoding
   round-trips; a different domain from config enumerates correctly.
+- **Status (2026-11-13):** built on research-python `momentum-e1-real` (`grid.py`, 10 tests
+  with the types). The guide's Appendix A was not available, so the **subset rule is
+  inferred**: breakout always active plus 1 to 3 of ADX, EMA, RVOL, VWAP, all five
+  excluded. It is the only rule that gives 14 subsets and exactly 69,732 configs, but ADX
+  as the anchor fits the count equally well. **Person 2 must confirm against Appendix A**;
+  correcting it is a new grid version. Config ID is 16 hex of SHA-256 over canonical JSON;
+  the domain is loaded from a mapping until 0-G exists.
 
 ## 0-C Account simulator I/O contract and the `calibration/` layer
 
@@ -80,6 +87,10 @@ by different people; the lead reviews all of them.
     ports them (an explicit exception to ADR 0009).
 - **Done when:** types import cleanly, the ADR is merged, and `lint-imports`
   knows the new layer.
+- **Status (2026-11-13):** types, `calibration/` package, ADR 0013 (status Proposed, needs
+  merge approval) and the `calibration` layer in `pyproject.toml` are on `momentum-e1-real`;
+  `lint-imports` passes. `simulate_account` is now implemented (C4); the wrapper in
+  `account_types.py` does not take `warmup_sessions` (see C4).
 
 ## 0-D Golden parity fixture format
 
@@ -105,6 +116,11 @@ by different people; the lead reviews all of them.
 - **Done when:** merged, `uv run pytest` and `uv run ruff check` pass, and the
   T1 row in `docs/tasks.md` is marked Done. While there, also refresh the
   stale statuses (C1f, C1h, C1i are merged but listed as Open).
+- **Status (2026-11-13): the branch `juancavallin/T1` does not exist locally or on origin
+  of research-python** (only `main`, `JC`, `momentum-e1-bench`/`real`). A minimal T1 was
+  **rebuilt**: `trade/exits.py` (`StopState`, `step_stop`) and `trade/exit_package.py`
+  (C2). `simulate_trades` in `trade/simulate.py` is still the stub and the `docs/tasks.md`
+  refresh was not done. If the real branch turns up, reconcile it with the rebuild.
 
 ## 0-F Scope decision and owner assignment
 
@@ -126,6 +142,12 @@ by different people; the lead reviews all of them.
   (including delisted names and the feed), E6.
 - **Done when:** the decision is written, dated, and linked from the index, and
   each chosen value is entered in the protocol config (0-G).
+- **Decision so far (lead, 2026-11-13):** final scope **N = 1,000 over 10 years**, with the
+  staged gates kept. Measured needs (about 44 h and 126 GB pull, about 20.5 GB panel,
+  workers limited by RAM) mean it requires a compute host with at least 200 GB disk and
+  32 GB RAM, or the 500 × 5 fallback. Still open: the host, the reserved-period date,
+  whether quote replay is in scope, and whether the ORB studies are shared. Record the host
+  and the date here when decided.
 
 ## 0-G Protocol configuration
 

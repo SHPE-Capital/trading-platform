@@ -51,6 +51,8 @@ export class RiskEngine {
   private lastOrderTs: Map<string, number> = new Map();
   /** Equity at the start of the current session (set on first check) */
   private sessionStartEquity: number | null = null;
+  /** Latched once the daily halt (config.dailyHaltPct) trips; cleared by resetSession(). */
+  private dailyHaltTripped = false;
   /** Per-strategy capital budgets registered at engine startup */
   private readonly _strategyBudgets = new Map<string, StrategyRiskBudget>();
   /**
@@ -221,6 +223,7 @@ export class RiskEngine {
    */
   resetSession(): void {
     this.sessionStartEquity = null;
+    this.dailyHaltTripped = false;
   }
 
   /**
@@ -383,6 +386,7 @@ export class RiskEngine {
     // an array of closures: this runs for every intent.
     return (
       this._checkKillSwitch(intent) ??
+      this._checkDailyHalt(intent, portfolio) ??
       this._checkMarketOpen(ts) ??
       this._checkStaleQuote(referenceTs) ??
       this._checkCooldown(intent, ts) ??
@@ -439,6 +443,22 @@ export class RiskEngine {
   private _checkKillSwitch(_intent: OrderIntent): { failedCheck: string; reason: string } | null {
     if (!this.config.killSwitchActive) return null;
     return { failedCheck: "KILL_SWITCH", reason: "Global kill switch is active — all orders blocked" };
+  }
+
+  /** Blocks new buys once equity is `dailyHaltPct` below session-start equity; sells always pass. */
+  private _checkDailyHalt(
+    intent: OrderIntent,
+    portfolio: PortfolioRiskView,
+  ): { failedCheck: string; reason: string } | null {
+    const limit = this.config.dailyHaltPct;
+    if (limit == null || !Number.isFinite(limit) || limit <= 0) return null;
+    if (intent.side !== "buy") return null;
+    if (!this.dailyHaltTripped && this.sessionStartEquity != null && this.sessionStartEquity > 0) {
+      const fall = (this.sessionStartEquity - portfolio.equity) / this.sessionStartEquity;
+      if (fall >= limit) this.dailyHaltTripped = true;
+    }
+    if (!this.dailyHaltTripped) return null;
+    return { failedCheck: "DAILY_HALT", reason: `Daily halt: equity fell at least ${(limit * 100).toFixed(2)}% from session start; new entries blocked` };
   }
 
   private _checkCooldown(

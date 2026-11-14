@@ -132,6 +132,14 @@ returns for a config. D7 and D8 integrate everything.
 - **Done when:** tests show a hit for a weight-only change and a miss for each
   key component, a window extended by one week computes exactly one new chunk per
   config, and hit-rate counters exist for E1.
+- **Status (2026-11-13):** a Person 1 benchmark stand-in exists on research-python branch
+  `p1/MO-D6-bench` (`calibration/cache.py`, SQLite WAL, 16 tests): `CacheContext`, `ChunkKey`,
+  `EvalCache.get_window` with a cutoff guard, counters. **Person 2 should confirm they have not
+  started D6**; the API follows the packet keys so either version can be kept. Additions the
+  benchmarks justify: (a) deduplicate by signal-mask hash plus account settings (identical
+  masks give identical returns); (b) optional per-session keys, since positions are flat every
+  night; (c) the 20-session warm-up prefix length belongs in the key or the code version;
+  (d) indicator arrays are persisted separately by B7.
 
 ## D7 Weekend calibrator (one cutoff → one artifact)
 

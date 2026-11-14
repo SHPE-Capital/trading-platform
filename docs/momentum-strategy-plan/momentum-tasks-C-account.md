@@ -51,6 +51,13 @@ after 0-E merges it), T2 `trade/sizing.py`, T5 `trade/costs.py`, T4
     feasible outcome and **flag** it.
 - **Done when:** there are hand-worked tests for each exit reason, a gap, the
   trailing activation, and an early close.
+- **Status (2026-11-13):** `trade/exits.py` and `trade/exit_package.py` (`exit_scan` on plain
+  arrays, long only, bars labelled by integer minute) are done with 15 tests. The spec sections
+  were not available, so the within-bar order is an assumption to confirm: gap through the stop
+  at the open, then a timed exit at the open (session before max hold), then a low crossing the
+  stop. The ambiguity flag is set when the stop is hit on a bar whose high also reached the
+  trail trigger. If no exit triggers, the position exits at the last bar's close as
+  `data_end`.
 
 ## C3 Sizing and capacity
 
@@ -105,6 +112,17 @@ after 0-E merges it), T2 `trade/sizing.py`, T5 `trade/costs.py`, T4
 - **Done when:** the §15 portfolio test list passes (see C7), the engine
   is deterministic: same inputs give byte-identical output, and the default
   hooks produce the same output as the guide's rules.
+- **Status (2026-11-13):** C1, C3 and C4 are done (`fill_proxy.py`, `funded_sizing.py`,
+  `account.py`), with the C7 scenarios written first (104 trade tests). Pure-Python oracle:
+  about 0.8 to 1.6 s per 63-session candidate. Follow-ups: (a) the 20-session liquidity and
+  ranking history comes from `warmup_sessions=k` on `account.simulate_account` (the wrapper in
+  `account_types.py` does not take it), so D6 and D7 must decide who supplies the history
+  prefix to a week chunk; (b) the 160-share example was assumed (equity 100k, price 50,
+  ATR 1.0) because the guide text is not in the repo; (c) the daily halt trips at equity at or
+  below 99% of the start-of-day level and liquidates at the next open, and never blocks an
+  exit, so the C7 "halt prevents exit" scenario is **not modelled**; (d) partial fills are
+  unsupported in proxy mode; (e) signals in the last minutes before the session exit are
+  dropped without a rejection log entry.
 
 ## C5 Performance pass (Numba)
 
@@ -125,6 +143,13 @@ after 0-E merges it), T2 `trade/sizing.py`, T5 `trade/costs.py`, T4
 - **Done when:** results match C4 exactly (or within a stated tolerance) on
   random configs, and the speedup is reported per candidate replay at N = 300,
   500 and 1,000. E1 feeds this number into the projection.
+- **Status (2026-11-13):** done (`trade/account_fast.py`, Numba `nogil` kernel, `prepare_panel`
+  for per-panel work). Parity: 130 random panels and configs, ledger and rejections exact,
+  daily returns to rtol 1e-12, float64 accumulators. Per candidate (63 sessions, 1 thread):
+  0.025 s at N = 300, 0.041 s at 500, 0.049 s at 1,000, about 30 to 35 times the oracle.
+  Thread scaling about 10 times on 16 threads. JIT compile 8 s cold, 0.5 s cached. Timings
+  were noisy upward (other jobs were running). The lead approved the `numba` dependency on
+  2026-11-13.
 
 ## C6 Quote replay for finalists and forward paths
 

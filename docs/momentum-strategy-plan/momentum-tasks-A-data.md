@@ -42,6 +42,19 @@ Existing code to build on: `data/alpaca.py`, `data/store.py`, `data/bars.py`,
   states plainly whether delisted coverage is sufficient. If it is not, the
   narrowed claim is written down (§6 last paragraph). The doc also records pull
   time, bytes on disk and the real rate limit at each stage.
+- **Status (2026-11-13):** `scripts/momentum/pull_archive.py` (staged, resumable, SQLite
+  manifest by symbol-month) and a **pilot pull** are done on research-python
+  `momentum-e1-real`; results in `docs/data/momentum_archive.md`. **Paid-plan numbers** (the
+  key is paid; the project plans to switch to the free plan, so re-measure rate limits and
+  SIP access after the switch): 77 symbols, 19.25M bars, 789 MB, 881 s, no 429s, 6,901 bars
+  per request, 41 bytes per row, SIP and IEX both 200. Extrapolation at 190 requests/min:
+  300 x 2 about 3 h and 8 GB, 500 x 5 about 11 h and 32 GB, **1,000 x 10 about 44 h and
+  126 GB**. Delisted names have minute bars back to 2016, but renamed tickers stop at the
+  rename (A3 must supply stable IDs). The pilot's delisted names were chosen from memory;
+  the real pool needs a point-in-time listing source.
+- **Added requirement (2026-11-13):** convert pulled Parquet to float32 week-chunk panels
+  (A6) per stage and delete the Parquet afterward, or pull on a host with at least 200 GB
+  disk. Time the Parquet to panel conversion in E1; it has not been measured.
 
 ## A2 Missing-bar classification
 
@@ -130,6 +143,12 @@ Existing code to build on: `data/alpaca.py`, `data/store.py`, `data/bars.py`,
 - **Done when:** a 300-stock × 1-year panel loads in seconds in a worker
   without copying (verified by watching RSS), it matches the store values, and a
   1,000-stock week chunk loads without exceeding the host's RAM budget.
+- **Status (2026-11-13):** `data/panel.py` and `scripts/momentum/make_synth_panel.py` are done
+  (8 tests). Measured: 300 x 252 sessions builds in 4.0 s (0.62 GB) and maps in 3.0 s with
+  2.5 MB RSS growth; 1,000 x 252 is 2.05 GB; one 1,000-stock week chunk is 41 MB; 2.05 MB per
+  stock-year, so 1,000 x 10 is about 20.5 GB. The store loader is only tested on synthetic
+  bars. `panel.py` resolves `MarketPanel` with `importlib` because `data` sits below `trade`;
+  moving `MarketPanel` into `contracts` would be cleaner.
 
 ## A7 Market descriptor inputs
 

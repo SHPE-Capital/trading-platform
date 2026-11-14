@@ -166,7 +166,7 @@ describe('AlpacaMarketDataAdapter: subscribe/unsubscribe', () => {
     adapter.subscribe(['SPY']);
     handleMessage(adapter, [{ T: 'success', msg: 'authenticated' }]);
     expect(mockWs.send).toHaveBeenCalledWith(
-      JSON.stringify({ action: 'subscribe', quotes: ['SPY'], trades: ['SPY'], bars: ['SPY'] }),
+      JSON.stringify({ action: 'subscribe', quotes: ['SPY'], trades: ['SPY'], bars: ['SPY'], updatedBars: ['SPY'] }),
     );
   });
 
@@ -177,7 +177,7 @@ describe('AlpacaMarketDataAdapter: subscribe/unsubscribe', () => {
     (adapter as unknown as { isConnected: boolean }).isConnected = true;
     adapter.subscribe(['SPY', 'AAPL']);
     expect(mockWs.send).toHaveBeenCalledWith(
-      JSON.stringify({ action: 'subscribe', quotes: ['SPY', 'AAPL'], trades: ['SPY', 'AAPL'], bars: ['SPY', 'AAPL'] }),
+      JSON.stringify({ action: 'subscribe', quotes: ['SPY', 'AAPL'], trades: ['SPY', 'AAPL'], bars: ['SPY', 'AAPL'], updatedBars: ['SPY', 'AAPL'] }),
     );
   });
 
@@ -188,7 +188,7 @@ describe('AlpacaMarketDataAdapter: subscribe/unsubscribe', () => {
     (adapter as unknown as { isConnected: boolean }).isConnected = true;
     adapter.unsubscribe(['SPY']);
     expect(mockWs.send).toHaveBeenCalledWith(
-      JSON.stringify({ action: 'unsubscribe', quotes: ['SPY'], trades: ['SPY'], bars: ['SPY'] }),
+      JSON.stringify({ action: 'unsubscribe', quotes: ['SPY'], trades: ['SPY'], bars: ['SPY'], updatedBars: ['SPY'] }),
     );
   });
 
@@ -201,7 +201,7 @@ describe('AlpacaMarketDataAdapter: subscribe/unsubscribe', () => {
     expect(mockWs.send).not.toHaveBeenCalled();
     handleMessage(adapter, [{ T: 'success', msg: 'authenticated' }]);
     expect(mockWs.send).toHaveBeenCalledWith(
-      JSON.stringify({ action: 'subscribe', quotes: ['QQQ'], trades: ['QQQ'], bars: ['QQQ'] }),
+      JSON.stringify({ action: 'subscribe', quotes: ['QQQ'], trades: ['QQQ'], bars: ['QQQ'], updatedBars: ['QQQ'] }),
     );
   });
 

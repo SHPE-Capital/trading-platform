@@ -21,10 +21,20 @@ per-trade simulator with trailing stops on the **unmerged** `juancavallin/T1`
 branch. On the platform: Alpaca adapter, OMS queue and capital reservation,
 quote fill model, paper runtime, strategy manifests.
 
-Not started: the five-component breakout strategy, the funded account
-simulator, weighting policies, search/surrogate, the weekly walk-forward loop,
-the platform momentum strategy (`backend/src/strategies/momentum/index.ts` is a
-placeholder), and the live order policy.
+**Built on research-python branch `momentum-e1-real` (2026-11-13, not on `main`):**
+0-B (grid, 69,732 configs; the subset rule is inferred, see the handoff), 0-C (account
+types, `calibration/` layer, ADR 0013 Proposed), a **rebuilt** minimal T1 (`trade/exits.py`;
+the real `juancavallin/T1` branch was not found anywhere), C1 to C4 (account engine),
+C5 (Numba kernel, exact parity), B1 to B5 batch forms (incremental forms deferred) with
+Numba indicator kernels, A6 (panel loader and synthetic generator), the A1 pull script
+and a **pilot pull** (77 symbols), and the E1 harness on the real engine. A stand-in D6
+cache and calibration cutoff are on `p1/MO-D6-bench`. Measured numbers are in the config
+reference.
+
+Not started: weighting policies, score, search/surrogate, acceptance (D1 to D5), the weekly
+calibrator and walk-forward (D7, D8), A2 to A5 (missing bars, corporate actions,
+eligibility, universe schedule), the platform momentum strategy
+(`backend/src/strategies/momentum/index.ts` is a placeholder), and the live order policy.
 
 **The guide's own timeline expected the protocol freeze today.** Task 0-F is a
 scope decision that must happen in the first days (guide §14 permits reducing N,
@@ -38,14 +48,16 @@ history length and search budget before the reserved period is inspected).
   acceptance floors, bootstrap settings and compute settings. The full list with
   defaults, recommendations and the task that decides each is
   [momentum-config-reference.md](momentum-config-reference.md).
-- **Recommended scope (for 0-F):** N of **500, stretching to 1,000** (the guide's
-  300 is the fallback), and **5 to 10 years** of history, staged: pilot, 300 × 2
-  years, then 500 × 5 years, then 1,000 × 10 years only if the benchmark, data
-  coverage, disk and RAM allow. The staging, size estimates and risks are in the
-  config reference.
+- **Final scope (lead decision, 2026-11-13): N = 1,000 stocks over 10 years**, staged
+  (pilot, 300 × 2, 500 × 5, then 1,000 × 10). The measured requirements do not fit the
+  development machine: the pull is about 44 h and 126 GB, the panel about 20.5 GB. The
+  final run needs a compute host (at least 200 GB disk and 32 GB RAM) or the 500 × 5
+  fallback. Details and the settings table are in the config reference.
 - **Required design change:** the evaluation cache (D6) is keyed per config and per
-  **week chunk**, so an expanding window costs only the new week. Without it, the
-  proxy projects about 190 hours for the full walk-forward at N = 1,000.
+  **week chunk**, so an expanding window costs only the new week. Indicator arrays are
+  also persisted per chunk (new task **B7**) and identical signal masks are deduplicated.
+  See "Reusing work across runs and strategies" in the config reference and the
+  [multi-strategy handoff](handoff/multi-strategy-and-benchmark-changes.md).
 - **Later ideas** (learned signal ranking, learned entry model, learned sizing,
   exhaustive grid precompute) are in [stream F](momentum-tasks-F-later-ideas.md).
   They are outside the Nov 30 deliverable; the seams they need are listed there.
