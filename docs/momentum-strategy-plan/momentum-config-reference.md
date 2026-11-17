@@ -65,7 +65,7 @@ config is hashed (E5) and a change needs a dated changelog entry.
 | | `acceptance.max_drawdown`, `max_single_stock_share` | 0.10, 0.30 | keep | D5 | E5 |
 | **evaluation** | `bootstrap.block_sessions`, `sensitivity_blocks`, `resamples` | 5, [10, 20], 2,000 | resamples 10,000 (cheap) | E2 | E5 |
 | **quote replay** | `quote_replay.enabled`, `max_quote_age_s`, `max_spread_pct`, `limit_offset_pct`, `cancel_after_s` | on/off, 2, 0.10%, 0.05%, 2 | enable for finalists | C6 | 0-F |
-| **compute** | `compute.workers`, `threads_per_worker`, `dtype`, `scratch_dir`, `rerun_reserve` | per host | measure in E1 | D7, A6 | E1, E6 |
+| **compute** | `compute.workers`, `threads_per_worker`, `dtype`, `scratch_dir`, `rerun_reserve`, `max_wall_hours` | per host; 36 for the first weekend run, then `null` (see "Run time limits") | measure in E1 | D7, A6 | E1, E6 |
 
 ## Final settings (lead decision, 2026-11-13)
 
@@ -91,13 +91,51 @@ big pull:
 | Pull, Parquet on disk | about 44 h and about 126 GB at 190 requests/min, 41 bytes/row (paid plan; free plan unverified) | **Does not fit on disk.** |
 | Panel, float32 week chunks | about 20.5 GB (2.05 MB per stock-year), must be chunked and memory-mapped | Exceeds RAM; fits disk if Parquet is converted and deleted per stage |
 | Replay RAM, one worker, N = 1,000 | about 4.6 GB per worker at 1 thread, 12.6 GB total at 16 threads (projected) | Limits workers to 2 to 3 unless indicators are memory-mapped (B7) |
-| Weekly calibration at 1,000 stocks, 5 years | about 45 to 60 min cold, 30 to 45 min with reuse (estimate, not yet measured) | 52 weekends do not fit in one weekend |
+| Weekly calibration at 1,000 stocks, 5 years, one strategy | about 3 h cold, about 1.5 h with 50% reuse (estimate from 18 ms per 25-session config-chunk; the 20-session history prefix is re-simulated per chunk and is a likely 5x saving, to be measured) | 52 weekends do not fit in one weekend |
 
 So the final run needs a **compute host with at least 200 GB disk and 32 GB RAM** (AWS
 within the credit budget, or HPC), or a reduced fallback from the stage plan below. Keep
 the stage gates: do not start the 1,000 × 10 pull until 300 × 2 and 500 × 5 have passed
 their gates. Fall back to 500 × 5 (about 11 h pull, 32 GB) if the host or the freeze date
 does not allow it. Record the choice and the date in 0-F.
+
+## Run time limits: first weekend run, then long runs (added 2026-11-14)
+
+The first full calibration run is time-boxed to one weekend. After it, runs may take much
+longer. The limit is **configuration** (`compute.*`, 0-G), not a code constant.
+
+| Key | First weekend run | Later runs (after the first result and E3) |
+|---|---|---|
+| `compute.max_wall_hours` | **36** (Fri night to Sun night; set from the actual start time) | `null` (no cap) or a host limit such as 168 |
+| `search.budget` | 2,048 logical per seed (protocol) | 2,048 protocol, plus the 8,192 and 5-seed development comparison |
+| `search.seeds` | 3 | 3 protocol, 5 for the comparison |
+| Exhaustive precompute (F4a) | not run | allowed (about 18 to 36 h at N = 1,000) |
+| Grid | current grid (about 69,732 configs) | grid v2 with exits and account as parameters, if E3 supports it |
+
+How the limit works, so determinism and the audit trail survive:
+
+1. **The limit picks a pre-declared budget; it does not cut a run mid-search.** Before the
+   first run, use the E1 benchmark to choose the largest budget and N whose projected time is
+   under 70% of `max_wall_hours` (margin for the cold cache and one rerun). Declare it in the
+   protocol config. Running the same config again gives the same result.
+2. **The wall clock is only a safety stop.** It is checked at round boundaries (after the 64
+   evaluations of a round). At the limit the search writes a checkpoint, marks the run
+   `INCOMPLETE_TIME_LIMIT` in the audit trail, reports best-so-far per seed, and exits. An
+   incomplete run is never reported as a protocol result.
+3. **Runs resume.** The checkpoint holds the cache, population, surrogate training set,
+   seed state and round counter. A resumed run continues the same logical search. Later
+   runs reuse the week-chunk cache (D6) and indicator arrays (B7), so a longer run only pays
+   for configs and weeks not yet seen.
+4. **Cut order inside the weekend** follows "If time runs short": seeds, then budget, then
+   history length, then N. Record the cut and the reason in 0-F.
+5. **Do not change the protocol after the freeze (Nov 21).** Longer runs after the first
+   weekend are development comparisons and diagnostics (E3, E5) until then, and cannot
+   change the frozen budget, seeds or acceptance floors.
+
+Projection to check against the limit: 3 seeds × 2,048 evaluations is about 1.6 h per
+policy per cutoff on a cold 5-year window at N = 1,000 (proxy, not measured). The weekend cap
+therefore allows roughly 20 cold cutoffs, or many more with reuse. Replace this with the E1
+measurement once it exists.
 
 ## Scope recommendation (for 0-F)
 
@@ -134,12 +172,19 @@ synthetic minute bars unless noted; trade density on real data will differ.
   Python oracle, with exactly matching ledgers. 16 threads give about 10 times
   (the proxy predicted 2.5 times). Timings were taken while other jobs ran, so they are
   noisy upward.
-- **Indicators:** the cold indicator and mask build, not the account replay, is the cost
-  floor. After the Numba pass one config's cold build on 300 stocks and 25 sessions fell from about 20.8 s to
-  1.65 s. This cost is shared by every candidate in a chunk, so it must not be charged
-  per candidate in projections. The first E1 matrix run did charge it per candidate on a
-  sample of 64, which makes its 20 to 247 h weekend projections far too pessimistic; rerun
-  with at least 256 candidates and the D6 cache (branch `p1/MO-D6-bench`).
+- **Harness bug found and measured (2026-11-14):** both first E1 runs called the Numba kernel
+  with the raw panel, so its per-panel preparation (`prepare_panel`: session starts, id ranks,
+  20-session dollar-volume ranking) ran again for every config and every chunk. One 25-session
+  config-chunk takes **89.5 ms with the raw panel and 8.9 ms with a prepared panel at N = 300,
+  and 274.7 ms against 18.4 ms at N = 1,000** (preparing once costs 88 ms and 285 ms). Every
+  per-candidate cost and weekend projection from those runs is inflated 10 to 15 times; do not
+  cite them (they showed 20 to 247 h per weekend, and about 65 min for steps 1 to 4 at 256
+  candidates). The fix is to prepare once per chunk; the harness is being corrected and rerun.
+- **Indicators:** after the Numba pass one config's cold indicator build on 300 stocks and 25
+  sessions fell from about 20.8 s to 1.65 s. The earlier claim that the indicator build is the
+  cost floor was **not supported**: the preparation bug explains the measured costs.
+  Persisting indicators (B7) is a possible saving, but its value is unproven until the corrected
+  rerun.
 - **Threads:** the kernel scales about 10 times on 16 threads, but the end-to-end path
   was slower with 8 and 16 threads than with 1 (NumPy indicator work holds the GIL).
   Parallelize across week chunks with processes sharing memory-mapped arrays.

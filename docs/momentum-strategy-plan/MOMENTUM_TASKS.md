@@ -101,9 +101,9 @@ Checked on 2026-11-13 (`main`):
 |---|---|---|---|---|
 | 0 Contracts and setup | [momentum-tasks-0-contracts.md](momentum-tasks-0-contracts.md) | both | Project lead plus one rep from each stream | 0-A … 0-G |
 | A Data and universe | [momentum-tasks-A-data.md](momentum-tasks-A-data.md) | research-python | Data-minded, pandas/Parquet | A1 … A7 |
-| B Signal components | [momentum-tasks-B-signals.md](momentum-tasks-B-signals.md) | research-python | Beginner–intermediate; good first tasks (B1–B3 split across 3 people) | B1 … B6 |
+| B Signal components | [momentum-tasks-B-signals.md](momentum-tasks-B-signals.md) | research-python | Beginner–intermediate; good first tasks (B1–B3 split across 3 people) | B1 … B7 |
 | C Account simulator | [momentum-tasks-C-account.md](momentum-tasks-C-account.md) | research-python | Strongest systems/numerics person (owns the critical path) | C1 … C7 |
-| D Calibration | [momentum-tasks-D-calibration.md](momentum-tasks-D-calibration.md) | research-python | Statistics/ML | D1 … D8 |
+| D Calibration | [momentum-tasks-D-calibration.md](momentum-tasks-D-calibration.md) | research-python | Statistics/ML | D1 … D8, D6b, D9 |
 | E Evaluation, benchmarks, protocol | [momentum-tasks-E-evaluation.md](momentum-tasks-E-evaluation.md) | research-python + docs | Analysis/writing | E1 … E7 |
 | P1 Platform strategy | [momentum-tasks-P1-platform-strategy.md](momentum-tasks-P1-platform-strategy.md) | trading-platform (backend) | TypeScript | P1-1 … P1-6 |
 | P2 Platform execution | [momentum-tasks-P2-platform-execution.md](momentum-tasks-P2-platform-execution.md) | trading-platform (backend) | TypeScript, broker APIs | P2-1 … P2-7 |
@@ -158,7 +158,7 @@ P1-3 + P2-3 + P2-5 ─► end-to-end paper demo
 | **Nov 17** | First C4 + E1 benchmark (300 or reduced N, one early and one late calibration). **Freeze scope (0-F)** |
 | Nov 17–20 | Wave 2: D7 weekly calibrator, D8 walk-forward on development weeks, P1-3/P2-3 strategy and exits, parity test |
 | **Nov 21** | **Protocol freeze** (E5): universe procedure, formulas, exits, costs, weights, budgets, metrics, acceptance rules |
-| Nov 21–25 | Reserved-period run with checkpoints; paper demo stream; quote replay of finalists |
+| Nov 21–25 | Reserved-period run with checkpoints (first weekend run is time-boxed to `compute.max_wall_hours`, 36 h; later runs may run longer, see [config reference](momentum-config-reference.md#run-time-limits-first-weekend-run-then-long-runs-added-2026-11-14)); paper demo stream; quote replay of finalists |
 | Nov 25–28 | Bootstrap, charts, report, presentation rehearsal |
 | Nov 28–30 | Buffer |
 

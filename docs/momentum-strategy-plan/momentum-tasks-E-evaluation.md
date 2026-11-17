@@ -42,6 +42,26 @@ Existing code to build on: `evaluation/stats.py` (`paired_block_bootstrap`,
   replace it with measured numbers.
 - **Done when:** a one-page table with measured numbers and the projection
   exists; it goes to the lead for 0-F by **Nov 17**.
+- **Status (Nov 13):** `scripts/momentum/bench.py` in research-python (branch
+  `momentum-e1-bench`, uncommitted) runs steps 1-2 on synthetic bars with a proxy replay kernel and
+  captures the machine profile (feeds E6). Steps 3-4 report BLOCKED until C4 (`trade/account`) and A6
+  exist. Re-run after C4 lands; the proxy numbers are not C4 numbers.
+- **Status update (2026-11-13, evening):** the harness now runs on the real pieces (account
+  engine, B5 masks, A6 panels, Numba kernel; research-python `momentum-e1-real`). Two runs:
+  (1) a first full matrix with 64 candidates and 13-week windows (steps 1-2 deterministic, 19
+  trades; step 4 cache reuse 92%; 9 matrix cells measured, 1,000 x 10 needs 16 GB of panel and
+  4.6 GB RAM at one thread). **Its time projections (20 to 247 h per weekend with the cache) are
+  not trustworthy:** the harness passed the raw panel to the kernel, so `prepare_panel` ran for
+  every config and chunk (measured 89.5 ms vs 8.9 ms per config-chunk at N = 300, 274.7 vs 18.4 ms
+  at N = 1,000). (2) A rerun on `p1/MO-D6-bench` with the stand-in D6 cache and 256 candidates
+  (N = 300, 52-week windows) has the same bug: cold replay 1,549 s (13,312 config-chunks, 116 ms
+  each), validation 46 to 64 s per cutoff, 96.2% reuse and 17.8 s per new chunk across consecutive
+  weeks. Step 1 there had 0 trades, so its determinism check is weak. **Do not use either run's
+  times.** The harness is being fixed (prepare once per chunk, a separate `prepare s` stage); cite
+  the rerun after that. Also required: measure the Parquet to panel conversion, measure the
+  20-session history prefix cost per chunk, run steps 3-4 on the real pilot panel (`--panel-dir`) for real
+  signal density, and add a `search_replay_fraction` scenario for a surrogate. Label every
+  table "compute cost with stand-in selection" until D1-D5 exist. Pull numbers are paid-plan.
 
 ## E2 Policy comparison report
 

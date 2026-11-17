@@ -141,6 +141,38 @@ returns for a config. D7 and D8 integrate everything.
   night; (c) the 20-session warm-up prefix length belongs in the key or the code version;
   (d) indicator arrays are persisted separately by B7.
 
+## D6b Mask-hash deduplication and finer cache keys (added 2026-11-13)
+
+- **Owns:** `calibration/keys.py`, extensions to `calibration/cache.py`, tests
+- **Depends on:** D6, B5, B7 (the key spec is in [handoff/agents/r6-reuse.md](handoff/agents/r6-reuse.md))
+- **Why:** different configs often give identical signal masks, and identical masks with the same
+  account settings give identical returns. Replay each unique mask once.
+- **Work:** compute `mask_hash` (packed final mask plus the ATR array key) per config and chunk
+  before replay; store the return path under the mask hash; keep a `config_id` to `mask_hash` alias
+  table for audit; report the dedupe rate. Add an optional per-session key granularity (a config
+  switch) because every position closes the same session. Put the warm-up prefix length in the key.
+- **Done when:** two configs with identical masks replay once and return byte-identical paths; a
+  changed account setting, universe, ATR or code version misses; the dedupe rate is reported on 1,000
+  random configs; the cutoff guard still raises.
+
+## D9 Strategy registry and chunk-major scheduler (added 2026-11-13)
+
+- **Owns:** `calibration/strategies.py`, `calibration/scheduler.py`, tests
+- **Depends on:** 0-B, B5, B7, D6, D6b, D7
+- **Why:** to run several strategies (each with its own grid and budget) without repeating the panel
+  load or the indicator build.
+- **Work:** a `StrategySpec` (strategy id, grid domain and grid version from 0-B, `signal_mask`
+  function, account-settings overrides, config-ID namespace = strategy id plus grid version). A
+  registry loads the specs named in the protocol config. The scheduler iterates **chunk-major**:
+  open the panel chunk, build or map the shared indicator arrays once, then run every strategy's
+  candidates against it, so memory-mapped data is touched once per chunk. Strategies with identical
+  account settings share return paths through the mask hash; different settings never share.
+  Per-strategy search budgets and seeds come from config. Report work counters per strategy and shared.
+- **Done when:** two strategies that use the same indicators build them once (counter proves it);
+  identical configs across strategies hit the cache; a strategy with different exits misses; each
+  strategy's artifact is identical to running it alone; the scheduler resumes after a kill without
+  duplicating chunks.
+
 ## D7 Weekend calibrator (one cutoff → one artifact)
 
 - **Owns:** `calibration/weekly.py`, `calibration/artifact.py`, CLI subcommand

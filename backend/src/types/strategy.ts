@@ -29,7 +29,8 @@ export type StrategyType =
   | "minute_reversal"
   | "beginner_reversal"
   | "tutorial"
-  | "mcarrasco_reversal";
+  | "mcarrasco_reversal"
+  | "team3_reversal";
 
 /** Strategy lifecycle status */
 export type StrategyRunStatus = "idle" | "running" | "paused" | "stopped" | "error";
