@@ -38,7 +38,7 @@ import {
   imbalance,
   spreadTicks,
   isUsableQuote,
-} from '../../strategies/imbalanceForecast/imbalanceForecastStrategy';
+} from './imbalanceForecastStrategy';
 import { SymbolStateManager } from '../../core/state/symbolState';
 import { PortfolioStateManager } from '../../core/state/portfolioState';
 import { OrderStateManager } from '../../core/state/orderState';
@@ -70,7 +70,7 @@ function setup() {
   const strategy = new ImbalanceForecastStrategy({
     id: 'team3-test',
     name: 'Team 3 test',
-    type: 'imbalance_forecast',
+    type: 'market_making',
     symbols: ['SPY'],
     rollingWindowMs: 60_000,
     maxPositionSizeUsd: 10_000,
