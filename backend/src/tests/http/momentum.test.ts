@@ -26,6 +26,9 @@ jest.mock("../../config/env", () => ({
     logLevel: "error",
     momentumIngestToken: "ingest-secret",
     momentumArtifactMaxAgeHours: 216,
+    // performanceController builds the shared bar cache at import time.
+    barCache: "file",
+    marketDataDir: ".local/marketdata",
   },
 }));
 
