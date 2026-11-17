@@ -39,3 +39,12 @@ export function minutesSinceOpen(barTs: number): number {
 export function minutesUntilClose(barTs: number): number {
   return SESSION_CLOSE_MINUTE - newYorkMinute(barTs).minute;
 }
+
+const NEW_YORK_DAY = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
+});
+
+/** The New York calendar day of a bar's start time, e.g. "2026-10-06". Used to reset the session VWAP. */
+export function newYorkDay(barTs: number): string {
+  return NEW_YORK_DAY.format(barTs);
+}

@@ -6,7 +6,7 @@
  */
 
 import { createTeam3ReversalConfig, type Team3ReversalConfig } from '../../../strategies/team3Reversal/team3ReversalConfig';
-import type { BarView, EntryInput, ExitInput } from '../../../strategies/team3Reversal/filters/types';
+import type { BarView, EntryInput, ExitInput, VwapView } from '../../../strategies/team3Reversal/filters/types';
 
 export const MINUTE = 60_000;
 /** Tue 2026-10-06 12:00 ET, mid-session. */
@@ -33,6 +33,7 @@ export function entryInput(opts: {
   bar: BarView;
   symbol?: string;
   others?: Record<string, BarView[]>;
+  vwap?: VwapView | null;
   config?: Partial<Team3ReversalConfig>;
 }): EntryInput {
   const prev = opts.history[opts.history.length - 1];
@@ -44,6 +45,7 @@ export function entryInput(opts: {
     move,
     side: move > 0 ? 'sell' : 'buy',
     barsOf: (s) => opts.others?.[s] ?? [],
+    vwap: opts.vwap ?? null,
     config: createTeam3ReversalConfig({ id: 'test', ...opts.config }),
   };
 }
@@ -65,6 +67,12 @@ export function exitInput(opts: {
     entryPrice: opts.entryPrice,
     barsHeld: opts.barsHeld,
     barsOf: () => [],
+    vwap: null,
     config: createTeam3ReversalConfig({ id: 'test', ...opts.config }),
   };
+}
+
+/** A VWAP view with sensible defaults; override only what the test is about. */
+export function fakeVwap(over: Partial<VwapView> = {}): VwapView {
+  return { vwap: 100, sigma: 1, z: 0, sessionBars: 60, crossings: 0, ...over };
 }

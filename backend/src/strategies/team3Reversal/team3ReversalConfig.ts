@@ -30,6 +30,10 @@ export interface Team3ReversalConfig extends BaseStrategyConfig {
   useRelativeToSpy: boolean;
   useHoldUntilBack: boolean;
   useTimeOfDay: boolean;
+  useVwapRegime: boolean;
+  useVwapStretch: boolean;
+  /** Size each new entry by volatility (riskPerTradeUsd) instead of qtyPerTrade. */
+  useVolSizing: boolean;
 
   // ---- Knobs: the one number each filter is tuned by --------------------
   /** bigMove: fade only moves at least this many standard deviations from normal. */
@@ -42,6 +46,14 @@ export interface Team3ReversalConfig extends BaseStrategyConfig {
   holdMaxBars: number;
   /** timeOfDay: skip this many minutes after the open and before the close. */
   skipEdgeMinutes: number;
+  /** vwapRegime: fewest VWAP side-switches in the window to count the day as choppy. */
+  minVwapCrossings: number;
+  /** vwapRegime: how many recent session bars to count crossings over. */
+  vwapWindowBars: number;
+  /** vwapStretch: fade only when the close is at least this many VWAP sigmas from VWAP. */
+  minVwapZ: number;
+  /** volSizing: dollars a typical 1-minute move may cost per entry. Raise maxPositionQty to let it work. */
+  riskPerTradeUsd: number;
 }
 
 export const DEFAULT_TEAM3_REVERSAL_SYMBOLS = [
@@ -67,12 +79,19 @@ export const DEFAULT_TEAM3_REVERSAL_CONFIG: Omit<Team3ReversalConfig, "id" | "sy
   useRelativeToSpy: false,
   useHoldUntilBack: false,
   useTimeOfDay: false,
+  useVwapRegime: false,
+  useVwapStretch: false,
+  useVolSizing: false,
 
   bigMoveMinZ: 2,
   volumeMaxRatio: 3,
   benchmarkSymbol: "SPY",
   holdMaxBars: 15,
   skipEdgeMinutes: 15,
+  minVwapCrossings: 4,
+  vwapWindowBars: 60,
+  minVwapZ: 1.5,
+  riskPerTradeUsd: 25,
 };
 
 /** Merges defaults with overrides; a new ID is assigned unless one is given. */
@@ -117,6 +136,15 @@ export function validateTeam3ReversalConfig(config: Team3ReversalConfig): void {
   positiveInt(config.holdMaxBars, "holdMaxBars");
   if (!Number.isInteger(config.skipEdgeMinutes) || config.skipEdgeMinutes < 0) {
     throw new Error(`team3_reversal: skipEdgeMinutes must be a whole number >= 0 (got ${config.skipEdgeMinutes})`);
+  }
+  positiveInt(config.minVwapCrossings, "minVwapCrossings");
+  if (!Number.isInteger(config.vwapWindowBars) || config.vwapWindowBars < 2 || config.vwapWindowBars > 390) {
+    throw new Error(`team3_reversal: vwapWindowBars must be a whole number from 2 to 390 (got ${config.vwapWindowBars})`);
+  }
+  positiveNumber(config.minVwapZ, "minVwapZ");
+  positiveNumber(config.riskPerTradeUsd, "riskPerTradeUsd");
+  if (config.useVolSizing && config.lookbackBars < 5) {
+    throw new Error(`team3_reversal: useVolSizing needs lookbackBars >= 5 to measure volatility (got ${config.lookbackBars})`);
   }
   if (config.useRelativeToSpy && !config.symbols.includes(config.benchmarkSymbol)) {
     // The strategy only receives bars for its own symbols, so it could never see the benchmark.

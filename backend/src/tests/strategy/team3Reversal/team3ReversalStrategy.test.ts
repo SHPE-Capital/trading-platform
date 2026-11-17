@@ -159,6 +159,53 @@ describe('Team3ReversalStrategy entry filters', () => {
   });
 });
 
+describe('Team3ReversalStrategy VWAP view', () => {
+  it('hands filters the session VWAP built from regular-session bars only', () => {
+    const { filters, allows } = spyFilters(true, true);
+    const preMarket = Date.UTC(2026, 9, 6, 12, 0); // 8:00 ET
+    const { onBar } = harness(team({ useBigMove: true }, filters));
+    onBar(bar('SPY', 0, 500, preMarket)); // pre-market: not part of VWAP
+    onBar(bar('SPY', 0, 100));
+    onBar(bar('SPY', 1, 102));
+    const input = allows.mock.calls[allows.mock.calls.length - 1][0];
+    expect(input.vwap?.vwap).toBeCloseTo(101); // equal volume: mean of 100 and 102
+    expect(input.vwap?.sessionBars).toBe(2);
+  });
+});
+
+describe('Team3ReversalStrategy vol sizing', () => {
+  const sized = () => team({ useVolSizing: true, maxPositionQty: 10_000, riskPerTradeUsd: 25 });
+
+  it('does not trade until it has enough bars to measure volatility', () => {
+    const { onBar } = harness(sized());
+    const signals = [100, 101, 100, 101].map((c, i) => onBar(bar('SPY', i, c)));
+    expect(signals.every((s) => s === null)).toBe(true);
+  });
+
+  it('enters with more than one share and closes the whole position on the next fade', () => {
+    const { onBar, portfolioState } = harness(sized());
+    const closes = [100, 101, 100, 101, 100, 101, 100];
+    const signals = closes.map((c, i) => onBar(bar('SPY', i, c))).filter(Boolean) as StrategySignal[];
+    expect(signals.length).toBeGreaterThanOrEqual(2);
+    const [entry, exit] = signals;
+    expect(entry.qty).toBeGreaterThan(1);
+    expect(entry.meta).toMatchObject({ sizing: 'vol' });
+    expect(exit.qty).toBe(entry.qty);
+    expect(exit.direction.startsWith('close_')).toBe(true);
+    expect(Math.abs(portfolioState.getPosition('SPY')?.qty ?? 0)).toBeLessThanOrEqual(10_000);
+  });
+
+  it('never sizes past maxPositionQty', () => {
+    const { onBar } = harness(team({ useVolSizing: true, maxPositionQty: 3, riskPerTradeUsd: 10_000 }));
+    const signals = [100, 101, 100, 101, 100, 101].map((c, i) => onBar(bar('SPY', i, c))).filter(Boolean) as StrategySignal[];
+    expect(signals[0].qty).toBe(3);
+  });
+
+  it('rejects vol sizing with too short a lookback', () => {
+    expect(() => validateTeam3ReversalConfig(createTeam3ReversalConfig({ id: 'x', useVolSizing: true, lookbackBars: 3 }))).toThrow();
+  });
+});
+
 describe('Team3ReversalStrategy holdUntilBack exit rule', () => {
   it('holds the position, ignoring new signals, until the exit rule says close', () => {
     const rule = spyFilters(true, false);

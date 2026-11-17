@@ -14,8 +14,11 @@ import { volumeAllows } from "./volume";
 import { relativeToSpyAllows } from "./relativeToSpy";
 import { timeOfDayAllows } from "./timeOfDay";
 import { holdUntilBackShouldExit } from "./holdUntilBack";
+import { vwapRegimeAllows } from "./vwapRegime";
+import { vwapStretchAllows } from "./vwapStretch";
 
-type SwitchKey = "useBigMove" | "useVolume" | "useRelativeToSpy" | "useTimeOfDay";
+type SwitchKey =
+  | "useBigMove" | "useVolume" | "useRelativeToSpy" | "useTimeOfDay" | "useVwapRegime" | "useVwapStretch";
 
 export interface EntryFilterEntry {
   /** Short name used in logs and signal meta. */
@@ -32,6 +35,8 @@ export interface FilterSet {
 export const TEAM3_FILTERS: FilterSet = {
   entry: [
     { name: "timeOfDay", switchKey: "useTimeOfDay", allows: timeOfDayAllows },
+    { name: "vwapRegime", switchKey: "useVwapRegime", allows: vwapRegimeAllows },
+    { name: "vwapStretch", switchKey: "useVwapStretch", allows: vwapStretchAllows },
     { name: "bigMove", switchKey: "useBigMove", allows: bigMoveAllows },
     { name: "volume", switchKey: "useVolume", allows: volumeAllows },
     { name: "relativeToSpy", switchKey: "useRelativeToSpy", allows: relativeToSpyAllows },

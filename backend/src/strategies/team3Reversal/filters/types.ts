@@ -19,6 +19,23 @@ export interface BarView {
   volume: number;
 }
 
+/**
+ * This symbol's session VWAP picture after the bar that just closed (see ../vwap.ts).
+ * null until some volume has traded in today's regular session.
+ */
+export interface VwapView {
+  /** Volume-weighted average price since 9:30 ET today. */
+  vwap: number;
+  /** Volume-weighted standard deviation of typical price around VWAP. */
+  sigma: number;
+  /** (close - vwap) / sigma; null while sigma is 0. */
+  z: number | null;
+  /** Regular-session bars seen today, this one included. */
+  sessionBars: number;
+  /** Times the close switched sides of VWAP over the last vwapWindowBars session bars. */
+  crossings: number;
+}
+
 /** Everything an entry filter can look at when the baseline wants to trade. */
 export interface EntryInput {
   /** The symbol the baseline wants to trade. */
@@ -33,6 +50,8 @@ export interface EntryInput {
   side: "buy" | "sell";
   /** Another symbol's recent bars (oldest first, including its latest), e.g. barsOf("SPY"). */
   barsOf: (symbol: string) => readonly BarView[];
+  /** This symbol's session VWAP after this bar, or null before any volume today. */
+  vwap: VwapView | null;
   /** All settings, including this filter's knob. */
   config: Team3ReversalConfig;
 }
@@ -54,6 +73,7 @@ export interface ExitInput {
   /** Bars that have closed since we entered (1 on the first bar after entry). */
   barsHeld: number;
   barsOf: (symbol: string) => readonly BarView[];
+  vwap: VwapView | null;
   config: Team3ReversalConfig;
 }
 

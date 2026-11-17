@@ -10,6 +10,8 @@
  *   - The exit rule (holdUntilBack) changes how positions close: with it on,
  *     the strategy enters once, ignores new signals while holding, and closes
  *     the whole position when the rule says so.
+ *   - Vol sizing (useVolSizing) changes how many shares a new entry buys; a
+ *     trade against the current position closes all of it.
  *
  * With every switch off it trades exactly like Beginner Reversal.
  *
@@ -27,7 +29,9 @@ import type { MarketEventKind } from "../../types/market";
 import { validateTeam3ReversalConfig, type Team3ReversalConfig } from "./team3ReversalConfig";
 import { inRegularSession } from "./session";
 import { TEAM3_FILTERS, enabledEntryFilters, type FilterSet } from "./filters";
-import type { BarView } from "./filters/types";
+import type { BarView, VwapView } from "./filters/types";
+import { SessionVwapTracker } from "./vwap";
+import { volTargetQty } from "./sizing";
 
 interface OpenPosition {
   entryPrice: number;
@@ -37,7 +41,7 @@ interface OpenPosition {
 export class Team3ReversalStrategy extends BaseStrategy {
   readonly type: StrategyType = "team3_reversal";
   /** Bump whenever this folder's trading logic changes, filters included (CI enforces it). */
-  static readonly VERSION = 1;
+  static readonly VERSION = 2;
   readonly version = Team3ReversalStrategy.VERSION;
   /** Decide only when a bar arrives; quotes and trades never call evaluate(). */
   readonly triggers: readonly MarketEventKind[] = ["bar"];
@@ -46,6 +50,8 @@ export class Team3ReversalStrategy extends BaseStrategy {
   private readonly bars = new Map<string, BarView[]>();
   /** Entry details per symbol while holdUntilBack holds a position. */
   private readonly open = new Map<string, OpenPosition>();
+  /** Session VWAP per symbol, fed only regular-session bars. */
+  private readonly vwaps = new Map<string, SessionVwapTracker>();
   private readonly filters: FilterSet;
 
   /**
@@ -75,6 +81,7 @@ export class Team3ReversalStrategy extends BaseStrategy {
     };
     const earlier = history.slice(-this.teamConfig.lookbackBars);
     this.remember(symbol, history, bar);
+    const vwap = this.updateVwap(symbol, bar);
 
     // 2. The first bar is only a baseline to compare the next one against.
     if (!prev) return null;
@@ -86,7 +93,7 @@ export class Team3ReversalStrategy extends BaseStrategy {
 
     // 4. holdUntilBack: while a position is open, only the exit rule decides.
     if (this.teamConfig.useHoldUntilBack) {
-      if (position !== 0) return this.maybeExit(symbol, bar, earlier, position, prev.close, barsOf);
+      if (position !== 0) return this.maybeExit(symbol, bar, earlier, position, prev.close, barsOf, vwap);
       this.open.delete(symbol);
     }
 
@@ -98,33 +105,43 @@ export class Team3ReversalStrategy extends BaseStrategy {
     // 6. Entry filters that are switched on, in order; the first "no" blocks the trade.
     const active = enabledEntryFilters(this.filters, this.teamConfig);
     for (const filter of active) {
-      if (!filter.allows({ symbol, bar, history: earlier, move, side, barsOf, config: this.teamConfig })) {
+      if (!filter.allows({ symbol, bar, history: earlier, move, side, barsOf, vwap, config: this.teamConfig })) {
         logger.debug(`team3_reversal: ${symbol} ${side} blocked by ${filter.name}`);
         return null;
       }
     }
 
-    // 7. Position cap, same as the baseline.
-    const { qtyPerTrade, maxPositionQty } = this.teamConfig;
-    const after = position + (side === "buy" ? qtyPerTrade : -qtyPerTrade);
-    if (Math.abs(after) > maxPositionQty) {
-      logger.info(
-        `team3_reversal: ${symbol} wanted to ${side} ${qtyPerTrade} but holding ${position} would become ` +
-          `${after}, past the cap of ${maxPositionQty}. Skipped.`,
-      );
-      return null;
+    // 7. Size. Fixed: qtyPerTrade with the baseline's position cap. Vol sizing: see sizeByVolatility.
+    let qty: number;
+    if (this.teamConfig.useVolSizing) {
+      const sized = this.sizeByVolatility(symbol, side, position, earlier, bar);
+      if (sized === null) return null;
+      qty = sized;
+    } else {
+      const { qtyPerTrade, maxPositionQty } = this.teamConfig;
+      const after = position + (side === "buy" ? qtyPerTrade : -qtyPerTrade);
+      if (Math.abs(after) > maxPositionQty) {
+        logger.info(
+          `team3_reversal: ${symbol} wanted to ${side} ${qtyPerTrade} but holding ${position} would become ` +
+            `${after}, past the cap of ${maxPositionQty}. Skipped.`,
+        );
+        return null;
+      }
+      qty = qtyPerTrade;
     }
 
     if (this.teamConfig.useHoldUntilBack) this.open.set(symbol, { entryPrice: bar.close, barsHeld: 0 });
     return this.buildSignal({
       symbol,
       direction: this.directionFor(side, position),
-      qty: qtyPerTrade,
+      qty,
       triggerValue: move,
       triggerLabel: side === "sell" ? "bar_up_sell" : "bar_down_buy",
       meta: {
         prevClose: prev.close, close: bar.close, positionBefore: position,
         filtersOn: active.map((f) => f.name).join(",") || "none",
+        sizing: this.teamConfig.useVolSizing ? "vol" : "fixed",
+        vwap: vwap?.vwap ?? null, vwapZ: vwap?.z ?? null, vwapCrossings: vwap?.crossings ?? null,
       },
     });
   }
@@ -133,6 +150,7 @@ export class Team3ReversalStrategy extends BaseStrategy {
   private maybeExit(
     symbol: string, bar: BarView, earlier: BarView[], position: number, prevClose: number,
     barsOf: (s: string) => readonly BarView[],
+    vwap: VwapView | null,
   ): StrategySignal | null {
     // A position we did not open (e.g. after a restart) is treated as entered on the previous bar.
     const held = this.open.get(symbol) ?? { entryPrice: prevClose, barsHeld: 0 };
@@ -141,7 +159,7 @@ export class Team3ReversalStrategy extends BaseStrategy {
 
     const exit = this.filters.exit({
       symbol, bar, history: earlier, positionQty: position, entryPrice: held.entryPrice,
-      barsHeld: held.barsHeld, barsOf, config: this.teamConfig,
+      barsHeld: held.barsHeld, barsOf, vwap, config: this.teamConfig,
     });
     if (!exit) return null;
 
@@ -154,6 +172,39 @@ export class Team3ReversalStrategy extends BaseStrategy {
       triggerLabel: "hold_until_back_exit",
       meta: { entryPrice: held.entryPrice, close: bar.close, barsHeld: held.barsHeld, positionBefore: position },
     });
+  }
+
+  /**
+   * Vol sizing. A trade against the current position closes all of it. Otherwise
+   * buy volTargetQty shares, trimmed so |position| stays within maxPositionQty.
+   * Returns null (skip) when there is no room or not enough data to size.
+   */
+  private sizeByVolatility(
+    symbol: string, side: "buy" | "sell", position: number, earlier: BarView[], bar: BarView,
+  ): number | null {
+    const reducing = (side === "buy" && position < 0) || (side === "sell" && position > 0);
+    if (reducing) return Math.abs(position);
+    const target = volTargetQty(earlier, bar, this.teamConfig.riskPerTradeUsd);
+    const room = this.teamConfig.maxPositionQty - Math.abs(position);
+    const qty = Math.min(target, room);
+    if (qty <= 0) {
+      logger.debug(`team3_reversal: ${symbol} vol sizing gave ${target} shares with room ${room}. Skipped.`);
+      return null;
+    }
+    return qty;
+  }
+
+  /** Feeds a regular-session bar to the symbol's VWAP and returns the current view. */
+  private updateVwap(symbol: string, bar: BarView): VwapView | null {
+    let tracker = this.vwaps.get(symbol);
+    if (!tracker) {
+      tracker = new SessionVwapTracker();
+      this.vwaps.set(symbol, tracker);
+    }
+    // Outside the session there is no today's VWAP to show (and yesterday's would be stale).
+    if (!inRegularSession(bar.ts)) return null;
+    tracker.update(bar);
+    return tracker.view(this.teamConfig.vwapWindowBars);
   }
 
   /** Adds a bar to the symbol's history and drops the oldest past lookbackBars + 1. */
