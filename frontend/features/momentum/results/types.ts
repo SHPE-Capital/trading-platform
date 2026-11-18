@@ -2,7 +2,7 @@
  * features/momentum/results/types.ts
  *
  * Shape of the E2 policy-comparison JSON summary (scripts/momentum/report.py).
- * The momentum-tasks-E-evaluation.md packet lists the contents but not a wire
+ * The E2 packet (docs/momentum-strategy-plan/teammate-3-evaluation.md, T3-1) lists the contents but not a wire
  * schema, so this is the dashboard's contract: E2 should emit this, or an
  * adapter in client.ts maps its output onto it. Returns are fractions (0.01 = 1%).
  */

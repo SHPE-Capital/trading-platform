@@ -1,7 +1,7 @@
-# Stream F: Later ideas (learned components)
+# Later ideas (learned components, after Nov 30)
 
-Back to [MOMENTUM_TASKS.md](MOMENTUM_TASKS.md). Repo: **research-python** (and
-**trading-platform** for ONNX use). Written 2026-11-13.
+Back to [README.md](README.md). Repo: **research-python** (and **trading-platform** for
+ONNX use). Written 2026-11-13; not assigned to any teammate.
 
 **Nothing here is in the Nov 30 deliverable and nothing here may touch the frozen
 protocol.** The Nov 30 plan is rules plus statistics, with one small ML piece (the
@@ -29,10 +29,11 @@ Read from `research-python` (main, 2026-11-13):
 Because of this, the learned ideas are mostly **wiring and pre-registration**, not
 new infrastructure.
 
-## Seams to leave in the Nov 30 work (cheap, do now)
+## Seams in the Nov 30 work
 
-These make stream F additive instead of a rewrite. They cost almost nothing and
-change no results.
+These make the ideas below additive instead of a rewrite. Seams 1 to 3 exist in the
+account engine (`AccountConfig` ranking name, entry-score threshold, size multiplier, all
+off by default); 4 and 5 are still open.
 
 1. **Ranker hook (C4).** Ranking of simultaneous signals is a function
    `rank(candidates, state) -> order`, selected by `account.ranking`. The default

@@ -9,8 +9,8 @@ UNVERIFIED line without first running the spike.
 
 Spec: momentum plan §5 ("verify how protective orders are created, resized after
 partial fills, replaced, and canceled; if that cannot be implemented safely,
-deployment remains disabled"). Packet: `momentum-tasks-P2-platform-execution.md`
-P2-1.
+deployment remains disabled"). Packet: T4-2 in
+[teammate-4-platform.md](../momentum-strategy-plan/teammate-4-platform.md).
 
 ## 1. How to run the spike
 

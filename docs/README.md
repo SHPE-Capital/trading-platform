@@ -8,6 +8,7 @@ in [system architecture](architecture/design.md).
 | [Guides](guides/README.md) | Current setup, development, experiments, trading, troubleshooting and deployment procedures |
 | [Architecture](architecture/design.md) | Current process boundaries and links to risk, OMS, sizing, execution, backtest semantics, strategy policy and broker ledger |
 | [Strategies](strategies/overview.md) | Strategy-specific models and explanations; implementation workflow is [adding a strategy](guides/adding-a-strategy.md) |
+| [Momentum plan](momentum-strategy-plan/README.md) | Intraday momentum program: status, the four teammates' task packets, configuration and scope |
 | [Course](course/README.md) | Separate beginner teaching material; may repeat guide content |
 | [History](history/) | Dated findings and [archived implementation plans](history/implementation-plans/README.md); not maintained as operating instructions |
 
