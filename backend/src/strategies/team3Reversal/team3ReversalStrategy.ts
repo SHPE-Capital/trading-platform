@@ -17,8 +17,7 @@
  *
  * Inputs:  EvaluationContext (latest bar per symbol, current position).
  * Outputs: StrategySignal or null.
- *
- * Owner: team lead. Teammates change only their own file in filters/.
+ * * Owner: team lead. Teammates change only their own file in filters/.
  */
 
 import { BaseStrategy } from "../base/strategy";
