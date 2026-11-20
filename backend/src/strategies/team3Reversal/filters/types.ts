@@ -54,6 +54,7 @@ export interface EntryInput {
   vwap: VwapView | null;
   /** All settings, including this filter's knob. */
   config: Team3ReversalConfig;
+
 }
 
 /** Return true to let the trade through, false to block it. */

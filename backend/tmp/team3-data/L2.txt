@@ -1,0 +1,89 @@
+Backtest b85c5d22-9754-45e6-8c7a-2d1868de2452
+
+Settings
+  strategy = "team3_reversal"
+  version = 7
+  window = "out"
+  group = "core"
+  universe = "core"
+  excluded = null
+  diagnostic = null
+  symbols = ["SPY", "QQQ", "AAPL", "MSFT", "GOOGL", "AMZN"]
+  Strategy overrides
+    useSpyDivergence = true
+    maxHoldBars = 150
+  Effective strategy configuration
+    name = "Team 3 Reversal: baseline"
+    type = "team3_reversal"
+    rollingWindowMs = 60000
+    maxPositionSizeUsd = 10000
+    cooldownMs = 0
+    enabled = true
+    entryZ = 2
+    minEdgeBps = 15
+    stopZ = 3.5
+    maxHoldBars = 150
+    skipOpenMinutes = 15
+    lastEntryMinutesBeforeClose = 15
+    flattenMinutesBeforeClose = 5
+    tradeUsd = 5000
+    maxGrossUsd = 40000
+    lookbackBars = 30
+    useVwapRegime = false
+    useVolume = false
+    useRelativeToSpy = false
+    useVolSizing = false
+    useCostGate = false
+    minVwapCrossings = 4
+    vwapWindowBars = 60
+    volumeMaxRatio = 3
+    benchmarkSymbol = "SPY"
+    riskPerTradeUsd = 5
+    captureShare = 0.5
+    costFixedBps = 14
+    costCommissionPerShare = 0.005
+    useTurnEntry = false
+    usePartwayTarget = false
+    tpFraction = 0.5
+    useScaleOut = false
+    useCrowdSplit = false
+    rtsMinOwnShare = 0.5
+    rtsExcludeSymbols = ["SPY", "QQQ"]
+    useSpyDivergence = true
+    divMinZ = 1.5
+    divSpyZ = 1
+    divCrossMin = 1
+    divCrossMax = 2
+    useOwnQuietEntry = false
+    oqMinOwnShare = 0.945
+    oqMaxTrendBps = 47.1
+    symbols = ["SPY", "QQQ", "AAPL", "MSFT", "GOOGL", "AMZN"]
+  Full engine configuration was not saved in this dump.
+
+Performance
+  Total trades (engine) = 17
+  Completed strategy round trips = 17
+  Total net P&L = -$95.46
+  Net P&L / traded notional = -11.62 bps
+  Mean gross bps per round trip = -4.54 bps
+  Win rate = 58.8%
+  Payoff ratio (average win / average loss) = 0.32
+  Profit factor = 0.45
+  Daily Sharpe = -3.13
+  Maximum drawdown = $167.64
+  Maximum drawdown (%) = 0.17%
+  Commissions = $2.32
+  Trading days = 26
+  Profitable days = 30.8%
+  Worst day = -$73.53
+  Median bars to target = 48
+  Median entry z-score = 1.77
+
+Exit signals
+  target = 11, average gross 20.07 bps, average hold 47.3 bars
+  time = 6, average gross -49.64 bps, average hold 150 bars
+
+Entries blocked by filter
+  Unavailable. This dump does not record rejected entry candidates.
+
+Chart saved to tmp/team3-data/L2.png
