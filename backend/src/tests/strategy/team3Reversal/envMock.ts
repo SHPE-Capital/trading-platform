@@ -2,7 +2,7 @@
  * tests/strategy/team3Reversal/envMock.ts
  *
  * The env every engine-level Team 3 test runs with. Use it at the top of a test file:
- *   jest.mock('../../../config/env', () => require('./envMock'));
+ *   jest.mock('../../../config/env', () => jest.requireActual('./envMock'));
  */
 
 export const env = {

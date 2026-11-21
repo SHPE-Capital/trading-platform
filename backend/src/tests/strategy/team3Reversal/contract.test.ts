@@ -6,7 +6,7 @@
  * one of our assumptions, the matching test fails here, not as a mystery P&L.
  */
 
-jest.mock('../../../config/env', () => require('./envMock'));
+jest.mock('../../../config/env', () => jest.requireActual('./envMock'));
 
 import { BaseStrategy, type EvaluationContext } from '../../../strategies/base/strategy';
 import type { StrategySignal, StrategyType } from '../../../types/strategy';

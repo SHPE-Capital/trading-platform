@@ -6,7 +6,7 @@
  * Platform-contract checks live in contract.test.ts.
  */
 
-jest.mock('../../../config/env', () => require('./envMock'));
+jest.mock('../../../config/env', () => jest.requireActual('./envMock'));
 
 import { Team3ReversalStrategy } from '../../../strategies/team3Reversal/team3ReversalStrategy';
 import { createTeam3ReversalConfig, validateTeam3ReversalConfig } from '../../../strategies/team3Reversal/team3ReversalConfig';
