@@ -2,7 +2,8 @@
  * strategies/team3Reversal/filters/relativeToSpy.ts
  *
  * Filter: Relative to the market.  Switch: useRelativeToSpy  Knob: benchmarkSymbol
- * Owner: (your name here)
+ * Owner: (your name here)   Status: stub. Switching it on is refused until the
+ * registry in index.ts marks it "done".
  *
  * Idea in plain words: when the whole market moves, the move comes back less.
  * Compare this stock's move with the benchmark's (SPY's) move over the same
@@ -13,9 +14,9 @@
  *   - input.move: this stock's move.
  *   - input.barsOf(input.config.benchmarkSymbol): SPY's recent bars.
  *
- * Watch out: bars for different symbols arrive one at a time, so SPY's bar
- * for this minute may not have arrived yet. Find the SPY bar whose ts equals
- * input.bar.ts; if there isn't one, decide what to do and write it down.
+ * Timing (handled for you): barsOf(benchmark) already includes the benchmark's bar
+ * for this same minute, even though symbols are evaluated one at a time.
+ * Both lists are today's regular-session bars only.
  *
  * Steps: 1) write your rule as a comment, 2) code it below, 3) make
  * src/tests/strategy/team3Reversal/relativeToSpy.test.ts describe your rule.

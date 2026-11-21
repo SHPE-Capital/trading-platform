@@ -2,7 +2,8 @@
  * strategies/team3Reversal/filters/volume.ts
  *
  * Filter: Skip high-volume moves.   Switch: useVolume   Knob: volumeMaxRatio
- * Owner: (your name here)
+ * Owner: (your name here)   Status: stub. Switching it on is refused until the
+ * registry in index.ts marks it "done".
  *
  * Idea in plain words: a move on very high volume is more often news, and
  * news moves tend to keep going instead of coming back. Block the trade when
@@ -10,7 +11,7 @@
  * the recent bars.
  *
  * Useful tools:
- *   - input.bar.volume: this bar's volume. input.history: the earlier bars.
+ *   - input.bar.volume: this bar's volume. input.history: today's earlier session bars.
  *   - computeMean from "../../../services/indicators".
  *
  * Steps: 1) write your rule as a comment, 2) code it below, 3) make
