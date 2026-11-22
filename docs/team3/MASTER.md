@@ -21,6 +21,14 @@ What we assume from the platform and what we promise back, each row enforced by
 `contract.test.ts` against the real backtest engine. Only `contract/` touches
 platform code. Platform bugs we work around, for a later PR: [UPSTREAM.md](UPSTREAM.md).
 
+## Research: "Shallow code, deep reasons" ([research/README.md](research/README.md))
+Every rule is one line built from primitives we already have, and it earns its
+place only by naming the market mechanism that makes it pay. There are six
+mechanism categories (R1 liquidity, R2 regime, R3 costs, R4 exit geometry,
+R5 portfolio, R6 evidence). The README holds the merged experiment queue
+(at most 10 tuning configs), 7 mis-specifications to fix before tuning, and
+ranked one-line feature proposals. No backtest has run yet.
+
 ## Components
 
 Order is the order they run. Entry filters: the first one that says no blocks the trade.
