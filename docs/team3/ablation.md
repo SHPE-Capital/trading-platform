@@ -32,4 +32,12 @@ This file is the **trial ledger**. Every run goes in it, including diagnostics, 
 | D3 | 4 | Core | -215.21 | 419 | -1.08 | 49.4 | time 324 (−6.3), target 65 (+35.4), stop 22 (−33.4), close 8 (+3.4) | `e6bf3eb9-028e-4f6a-9be3-c5f120a63c40` |
 | D4 | 4 | Momentum | +812.94 | 370 | +4.70 | 55.4 | time 283 (−7.5), target 65 (+59.2), stop 11 (−35.2), close 11 (+18.7) | `68934a6c-0b91-40e8-97b6-3eaf55b9f3e3` |
 
+### Checks
+
+**65/65 target exits (2026-11-23):** Core (A03) and Momentum (A04) both end with 65 `target` exits. This is a coincidence, not shared or overwritten output:
+- distinct backtestIds; each saved `config.strategyConfig.symbols` is its own universe; saved orders cover disjoint symbols apart from SPY
+- gross target bps differ (+28.4 vs +52.2), and so do D2 vs D4 (66 vs 65 targets)
+- per symbol (runner `exitsBySymbol`), SPY trades in both universes and has an identical exit row in each (time 62, target 6, stop 5, close 1). Per-symbol state is independent and the gross caps never bound, so that's expected. The other five symbols differ one by one but both sum to 59: Core QQQ 13, MSFT 15, GOOGL 11, AMZN 11, AAPL 9; Momentum AMD 15, META 13, MU 12, TSLA 10, NVDA 9
+- rerunning both on 2026-11-23 reproduced them exactly (A03 `1872fd42-331a-4a8c-a488-460231ac8552`, A04 `b6efa90f-fca1-4677-85df-199d2b56d1bc`), which also shows the runs are deterministic
+
 Median bars to `target`: 13 (Core), 14 (Momentum). Cost runs' "gross" exit bps include entry slippage, so they read ~7 bps lower than the diagnostics.

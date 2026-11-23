@@ -117,6 +117,13 @@ async function main(): Promise<void> {
     b.avgBars += (Number(x.meta?.barsHeld) - b.avgBars) / b.n;
   }
   for (const b of Object.values(byReason)) { b.avgGrossBps = +b.avgGrossBps.toFixed(2); b.avgBars = +b.avgBars.toFixed(1); }
+  // Per-symbol exit counts: lets two runs' identical totals be told apart (shared-output check).
+  const exitsBySymbol: Record<string, Record<string, number>> = {};
+  for (const x of exits) {
+    const s = (exitsBySymbol[x.symbol] ??= {});
+    const r = String(x.meta?.reason);
+    s[r] = (s[r] ?? 0) + 1;
+  }
   const targetBars = exits.filter((x) => x.meta?.reason === "target").map((x) => Number(x.meta?.barsHeld)).sort((a, b) => a - b);
   const entries = signals.filter((x) => x.meta?.kind === "enter");
   const entryZ = entries.map((x) => Math.abs(Number(x.meta?.vwapZ)));
@@ -139,6 +146,7 @@ async function main(): Promise<void> {
     pctDaysProfitable: daily.length ? +((daily.filter((d) => d > 0).length / daily.length) * 100).toFixed(1) : null,
     engineSharpe: m.sharpeRatio ?? null,
     exitReasons: exits.length ? byReason : null,
+    exitsBySymbol: exits.length ? exitsBySymbol : null,
     medianTargetBars: targetBars.length ? targetBars[Math.floor(targetBars.length / 2)] : null,
     entriesPastStop: entries.length ? entryZ.filter((z) => z >= Number((strategyConfig as unknown as Record<string, unknown>).stopZ ?? Infinity)).length : null,
     medianEntryZ: entryZ.length ? +[...entryZ].sort((a, b) => a - b)[Math.floor(entryZ.length / 2)].toFixed(2) : null,
