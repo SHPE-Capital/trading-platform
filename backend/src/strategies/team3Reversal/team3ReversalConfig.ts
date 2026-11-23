@@ -81,6 +81,10 @@ export interface Team3ReversalConfig extends BaseStrategyConfig {
   // ---- R5 (team3/r5) ----
   // ---- end R5 ----
   // ---- RSPY (team3/rspy) ----
+  /** relativeToSpy: least share of the stock's lookbackBars return that is its own (beta-1 residual) to enter, in [0, 1]. */
+  rtsMinOwnShare: number;
+  /** relativeToSpy: symbols never traded while the switch is on (the benchmark and index ETFs). */
+  rtsExcludeSymbols: string[];
   // ---- end RSPY ----
   /** volSizing: dollars a typical 1-minute move may cost per entry. 5 keeps most sizes inside the $ caps (25 hit the cap almost always). */
   riskPerTradeUsd: number;
@@ -134,6 +138,8 @@ export const DEFAULT_TEAM3_REVERSAL_CONFIG: Omit<Team3ReversalConfig, "id" | "sy
   // ---- R5 (team3/r5) ----
   // ---- end R5 ----
   // ---- RSPY (team3/rspy) ----
+  rtsMinOwnShare: 0.5,
+  rtsExcludeSymbols: ["SPY", "QQQ"],
   // ---- end RSPY ----
 };
 
@@ -179,6 +185,8 @@ export function validateTeam3ReversalConfig(c: Team3ReversalConfig, filters: Fil
   // ---- R5 (team3/r5) ----
   // ---- end R5 ----
   // ---- RSPY (team3/rspy) ----
+  if (!(isNum(c.rtsMinOwnShare) && c.rtsMinOwnShare >= 0 && c.rtsMinOwnShare <= 1)) fail(`rtsMinOwnShare must be in [0, 1] (got ${c.rtsMinOwnShare})`);
+  if (!Array.isArray(c.rtsExcludeSymbols) || c.rtsExcludeSymbols.some((s) => typeof s !== "string")) fail("rtsExcludeSymbols must be a list of tickers");
   // ---- end RSPY ----
 
   // Session window: 390 minutes in a session
