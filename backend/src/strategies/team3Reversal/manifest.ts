@@ -58,6 +58,10 @@ export const team3ReversalManifest: StrategyManifest = {
     { key: "useRelativeToSpy", label: "Filter: relative to the market (stub)", kind: "boolean" },
     { key: "benchmarkSymbol", label: "Relative: benchmark symbol", kind: "text", hint: "Must also be in Symbols" },
     { key: "useVolSizing", label: "Sizing: volatility target", kind: "boolean" },
+    { key: "useCostGate", label: "Filter: edge x capture share beats costs", kind: "boolean" },
+    { key: "captureShare", label: "Cost gate: capture share (0-1]", kind: "number", min: 0.05, step: 0.05 },
+    { key: "costFixedBps", label: "Cost gate: fixed round trip (bps)", kind: "number", min: 0, step: 0.5 },
+    { key: "costCommissionPerShare", label: "Cost gate: commission per share ($)", kind: "number", min: 0, step: 0.001 },
     { key: "riskPerTradeUsd", label: "Vol sizing: $ risk per 1-min move", kind: "number", min: 1, step: 1 },
   ],
 };

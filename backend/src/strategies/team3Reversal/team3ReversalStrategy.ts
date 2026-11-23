@@ -1,7 +1,7 @@
 /**
  * strategies/team3Reversal/team3ReversalStrategy.ts
  *
- * Team 3 Reversal, VERSION 4: intraday VWAP reversion on 1-minute bars.
+ * Team 3 Reversal, VERSION 5: intraday VWAP reversion on 1-minute bars (V5 adds the useCostGate switch, off by default).
  *
  *   Enter  fade a session bar that leaves price >= entryZ sigmas from VWAP,
  *          when the way back to VWAP beats costs (minEdgeBps). One position per symbol.
@@ -31,14 +31,14 @@ import { readFrame, type MinuteFrame } from "./contract/frame";
 import { Team3Book, type Holding } from "./contract/book";
 import { toSignal, signedQty, type Decision } from "./contract/emit";
 import { SessionHistory } from "./history";
-import { entryIdea, exitReason, sessionWindow, type EntryIdea } from "./rules";
+import { costGate, entryIdea, exitReason, sessionWindow, type EntryIdea } from "./rules";
 import { capQty, grossUsd } from "./risk";
 import { fixedNotionalQty, volTargetQty } from "./sizing";
 
 export class Team3ReversalStrategy extends BaseStrategy {
   readonly type: StrategyType = "team3_reversal";
   /** Bump whenever this folder's trading logic changes, filters included (CI enforces it). */
-  static readonly VERSION = 4;
+  static readonly VERSION = 5;
   readonly version = Team3ReversalStrategy.VERSION;
   /** Decide only when a bar arrives; quotes and trades never call evaluate(). */
   readonly triggers: readonly MarketEventKind[] = ["bar"];
@@ -89,6 +89,7 @@ export class Team3ReversalStrategy extends BaseStrategy {
     if (!prev || window !== "open") return null;
     const idea = entryIdea(bar, prev, vwap, c);
     if (!idea) return null;
+    if (c.useCostGate && !costGate(idea.edgeBps, bar.close, c)) return this.skip(`${symbol} ${idea.side}: edge ${idea.edgeBps.toFixed(1)} bps fails the cost gate`);
     const earlier = today.slice(-(c.lookbackBars + 1), -1);
     const active = enabledEntryFilters(this.filters, c);
     const blockedBy = firstBlocking(active, {

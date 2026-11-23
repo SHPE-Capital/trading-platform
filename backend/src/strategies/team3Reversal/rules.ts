@@ -22,6 +22,18 @@ type WindowKnobs = Pick<Team3ReversalConfig, "skipOpenMinutes" | "lastEntryMinut
 type EntryKnobs = Pick<Team3ReversalConfig, "entryZ" | "minEdgeBps" | "stopZ">;
 type ExitKnobs = Pick<Team3ReversalConfig, "stopZ" | "maxHoldBars">;
 
+type CostKnobs = Pick<Team3ReversalConfig, "captureShare" | "costFixedBps" | "costCommissionPerShare">;
+
+/** Modeled round-trip cost in bps at this price: fixed slippage + spread, plus commission on both legs. */
+export function roundTripCostBps(price: number, c: CostKnobs): number {
+  return c.costFixedBps + ((2 * c.costCommissionPerShare) / price) * 10_000;
+}
+
+/** Cost-aware gate (R3): the part of the stretch we expect to capture must beat the round trip. */
+export function costGate(edgeBps: number, price: number, c: CostKnobs): boolean {
+  return c.captureShare * edgeBps > roundTripCostBps(price, c);
+}
+
 /** Where a session bar sits in the trading day. Exits are allowed in every window. */
 export function sessionWindow(barTs: number, c: WindowKnobs): SessionWindow {
   const left = minutesUntilClose(barTs);

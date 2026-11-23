@@ -1,4 +1,4 @@
-import { entryIdea, exitReason, sessionWindow } from '../../../strategies/team3Reversal/rules';
+import { costGate, entryIdea, exitReason, roundTripCostBps, sessionWindow } from '../../../strategies/team3Reversal/rules';
 import { createTeam3ReversalConfig } from '../../../strategies/team3Reversal/team3ReversalConfig';
 import { MINUTE, OPEN_ET, fakeBar, fakeVwap } from './helpers';
 
@@ -57,5 +57,22 @@ describe('exitReason: the first reason that applies wins', () => {
     ['no z: only stale/close/time apply', short, 'no_entries', null, null],
   ] as const)('%s', (_name, holding, window, z, expected) => {
     expect(exitReason(holding, window, z, c)).toBe(expected);
+  });
+});
+
+describe('costGate (R3): captureShare x edge must beat the round trip', () => {
+  it('round trip = fixed bps + commission on both legs at this price', () => {
+    expect(roundTripCostBps(100, c)).toBeCloseTo(14 + 1);      // $0.01 per share round trip on $100 = 1 bps
+    expect(roundTripCostBps(500, c)).toBeCloseTo(14.2);
+  });
+  it('at captureShare 0.5 a $500 stock needs more than 28.4 bps of edge', () => {
+    expect(costGate(28.5, 500, c)).toBe(true);
+    expect(costGate(28.3, 500, c)).toBe(false);
+    expect(costGate(28.4, 500, c)).toBe(false);                 // strictly greater
+  });
+  it('a higher capture share lowers the bar', () => {
+    const c6 = { ...c, captureShare: 0.6 };
+    expect(costGate(24, 500, c6)).toBe(true);                   // 14.4 > 14.2
+    expect(costGate(24, 500, c)).toBe(false);                   // 12 < 14.2
   });
 });

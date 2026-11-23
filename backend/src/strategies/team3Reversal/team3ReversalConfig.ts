@@ -53,6 +53,8 @@ export interface Team3ReversalConfig extends BaseStrategyConfig {
   useRelativeToSpy: boolean;
   /** Size each entry by volatility (riskPerTradeUsd) instead of tradeUsd. Still capped. */
   useVolSizing: boolean;
+  /** costGate (R3): enter only if captureShare x edge to VWAP (bps) beats the round-trip cost (bps). */
+  useCostGate: boolean;
 
   // ---- Knobs: the number each component is tuned by ---------------------
   /** vwapRegime: fewest VWAP side-switches in the window to count the day as choppy. */
@@ -63,6 +65,12 @@ export interface Team3ReversalConfig extends BaseStrategyConfig {
   volumeMaxRatio: number;
   /** relativeToSpy: the market symbol to compare against. Must be in `symbols`. */
   benchmarkSymbol: string;
+  /** costGate: share of the stretch back to VWAP we expect to capture (0-1]. */
+  captureShare: number;
+  /** costGate: price-independent part of a round trip, bps: 2 x (slippage 5 + half spread 2), as in the protocol. */
+  costFixedBps: number;
+  /** costGate: commission per share, both legs counted, turned into bps at the entry price. */
+  costCommissionPerShare: number;
   /** volSizing: dollars a typical 1-minute move may cost per entry. 5 keeps most sizes inside the $ caps (25 hit the cap almost always). */
   riskPerTradeUsd: number;
 }
@@ -95,12 +103,16 @@ export const DEFAULT_TEAM3_REVERSAL_CONFIG: Omit<Team3ReversalConfig, "id" | "sy
   useVolume: false,
   useRelativeToSpy: false,
   useVolSizing: false,
+  useCostGate: false,
 
   minVwapCrossings: 4,
   vwapWindowBars: 60,
   volumeMaxRatio: 3,
   benchmarkSymbol: "SPY",
   riskPerTradeUsd: 5,
+  captureShare: 0.5,
+  costFixedBps: 14,
+  costCommissionPerShare: 0.005,
 };
 
 /** Merges defaults with overrides; a new ID is assigned unless one is given. */
@@ -132,6 +144,9 @@ export function validateTeam3ReversalConfig(c: Team3ReversalConfig, filters: Fil
   positive(c.stopZ, "stopZ");
   if (c.stopZ <= c.entryZ) fail(`stopZ must be greater than entryZ (got ${c.stopZ} <= ${c.entryZ})`);
   positiveInt(c.maxHoldBars, "maxHoldBars");
+  if (!(c.captureShare > 0 && c.captureShare <= 1)) fail(`captureShare must be in (0, 1] (got ${c.captureShare})`);
+  atLeast0(c.costFixedBps, "costFixedBps");
+  atLeast0(c.costCommissionPerShare, "costCommissionPerShare");
 
   // Session window: 390 minutes in a session
   wholeAtLeast0(c.skipOpenMinutes, "skipOpenMinutes");
