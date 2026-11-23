@@ -123,7 +123,12 @@ S2, 2026-11-23, code VERSION 7, IS only. One step at a time, each judged against
 | F1 | Momentum | `2a628992-074b-4673-aabe-06555b13792a` | **+107.16** | 32 | **+7.14** | 46.9 | target 10 (+59.4), time 22 (−6.2) | +54.84, 1.000, +31.75 / +77.94 | +18.85, 0.976, halves +9.77 (0.75) / +27.92 (0.99) | **First positive net.** But only 32 trades on 18 days, and the top 2 days carry 73% of the gross. |
 | F1 | Core | `9756c285-ffa2-4dcf-9fb4-3c53a97ba6cd` | −44.64 | 14 | −6.57 | 42.9 | time 11 (−7.8), target 3 (+31.4) | +93.88, 1.000 | — | Same direction per trade (−15.32 → −6.57 bps), still negative; 14 trades. |
 
-**Reading.** Per trade, this is the first rule whose edge clearly exceeds the round trip on Momentum. It's also the most-searched result in the project: 1 of 1,309 surveyed groups, with a trade count too small for the halves or a bootstrap to carry much weight. Against V4 the bootstrap is uninformative, because a rule that barely trades beats a losing one by default. Treat it as a **hypothesis for Stage 3**, not evidence.
+| F2 | Momentum | `952a5479-db3d-42d7-8f3e-f4f0b6de8708` | −307.55 | 104 | −6.21 | 46.2 | target 39 (+38.1), time 62 (−20.6), close 2, stop 1 | +41.88, 0.999, +8.13 (0.73) / +75.64 | +5.89, **0.703**, halves −13.85 (0.20) / +25.62 (0.97): disagree | `useOwnQuietEntry` (survey candidate 2: own share > 0.945, day move ≤ 47.1 bps). Parity Mom `7ffef46a-…`, Core `cb7d5998-…` = A04/A03. **Not better than C3** per trade (−5.25) or by bootstrap. Iteration stopped here (lead: stop when gains are marginal). |
+| F2 | Core | `d349db3d-6d57-4be0-9978-4eb847a4b8af` | −1,213.82 | 176 | −14.40 | 33.5 | time 122 (−14.6), target 44 (+18.5), close 6, stop 4 | +57.34, 1.000 | — | Core edge about zero, as the survey warned. |
+
+Configs used: **21 of ~30** (S5: F1, F2).
+
+**Reading.** Per trade, F1 is the first rule whose edge clearly exceeds the round trip on Momentum. It's also the most-searched result in the project: 1 of 1,309 surveyed groups, with a trade count too small for the halves or a bootstrap to carry much weight. Against V4 the bootstrap is uninformative, because a rule that barely trades beats a losing one by default. Treat it as a **hypothesis for Stage 3**, not evidence.
 
 ### Checks
 

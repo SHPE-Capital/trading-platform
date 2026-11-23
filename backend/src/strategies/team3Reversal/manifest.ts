@@ -81,6 +81,7 @@ export const team3ReversalManifest: StrategyManifest = {
     // ---- end RSPY ----
     // ---- S5 ----
     { key: "useSpyDivergence", label: "Entry: stock stretched while SPY stretched the other way (S5)", kind: "boolean" },
+    { key: "useOwnQuietEntry", label: "Entry: stock-specific stretch on a quiet day (S5)", kind: "boolean" },
     // ---- end S5 ----
     { key: "riskPerTradeUsd", label: "Vol sizing: $ risk per 1-min move", kind: "number", min: 1, step: 1 },
   ],

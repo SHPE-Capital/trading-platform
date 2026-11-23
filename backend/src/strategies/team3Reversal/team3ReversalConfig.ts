@@ -108,6 +108,15 @@ export interface Team3ReversalConfig extends BaseStrategyConfig {
   divSpyZ: number;
   divCrossMin: number;
   divCrossMax: number;
+  /**
+   * ownQuiet (S5 candidate 2): replace the baseline entry. Enter when the stock is stretched
+   * (divMinZ <= |z| < stopZ, edge >= 0), its own share of the lookbackBars move (beta 1 vs SPY)
+   * is > oqMinOwnShare, and today's move so far |close - first session open| / open <= oqMaxTrendBps.
+   * Side from z; the benchmark is never traded. Bins fixed by strategy-survey.md; not tuned.
+   */
+  useOwnQuietEntry: boolean;
+  oqMinOwnShare: number;
+  oqMaxTrendBps: number;
   // ---- end S5 ----
   /** volSizing: dollars a typical 1-minute move may cost per entry. 5 keeps most sizes inside the $ caps (25 hit the cap almost always). */
   riskPerTradeUsd: number;
@@ -175,6 +184,9 @@ export const DEFAULT_TEAM3_REVERSAL_CONFIG: Omit<Team3ReversalConfig, "id" | "sy
   divSpyZ: 1,
   divCrossMin: 1,
   divCrossMax: 2,
+  useOwnQuietEntry: false,
+  oqMinOwnShare: 0.945,
+  oqMaxTrendBps: 47.1,
   // ---- end S5 ----
 };
 
@@ -235,6 +247,11 @@ export function validateTeam3ReversalConfig(c: Team3ReversalConfig, filters: Fil
     if (!(c.divCrossMin >= 0 && c.divCrossMax >= c.divCrossMin)) fail("divCrossMin/divCrossMax must satisfy 0 <= min <= max");
     if (c.useTurnEntry) fail("useSpyDivergence replaces the entry; it can't be combined with useTurnEntry");
     if (!c.symbols.includes(c.benchmarkSymbol)) fail("useSpyDivergence needs benchmarkSymbol in symbols");
+  }
+  if (c.useOwnQuietEntry) {
+    if (c.useSpyDivergence || c.useTurnEntry) fail("useOwnQuietEntry replaces the entry; use one entry mode at a time");
+    if (!(c.oqMinOwnShare >= 0) || !(c.oqMaxTrendBps >= 0)) fail("oqMinOwnShare and oqMaxTrendBps must be >= 0");
+    if (!c.symbols.includes(c.benchmarkSymbol)) fail("useOwnQuietEntry needs benchmarkSymbol in symbols");
   }
   // ---- end S5 ----
 

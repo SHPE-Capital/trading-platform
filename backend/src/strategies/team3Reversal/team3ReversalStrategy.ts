@@ -31,7 +31,7 @@ import { readFrame, type MinuteFrame } from "./contract/frame";
 import { Team3Book, type Holding } from "./contract/book";
 import { toSignal, signedQty, type Decision } from "./contract/emit";
 import { SessionHistory } from "./history";
-import { costGate, entryIdea, spyDivergenceIdea, exitReason, sessionWindow, type EntryIdea } from "./rules";
+import { costGate, entryIdea, ownQuietIdea, spyDivergenceIdea, exitReason, sessionWindow, type EntryIdea } from "./rules";
 import { capQty, grossUsd } from "./risk";
 import { crowdSize, crowdSplitQty, fixedNotionalQty, volTargetQty } from "./sizing";
 
@@ -91,10 +91,12 @@ export class Team3ReversalStrategy extends BaseStrategy {
     // 5. ENTER: flat, in the trading window, stretched from VWAP with edge > costs, filters agree
     const prev = today[today.length - 2];
     if (!prev || window !== "open") return null;
-    if (c.useSpyDivergence && symbol === c.benchmarkSymbol) return null;
+    if ((c.useSpyDivergence || c.useOwnQuietEntry) && symbol === c.benchmarkSymbol) return null;
     const idea = c.useSpyDivergence
       ? spyDivergenceIdea(bar, prev, vwap, this.history.vwap(c.benchmarkSymbol, c.vwapWindowBars), c)
-      : entryIdea(bar, prev, vwap, c);
+      : c.useOwnQuietEntry
+        ? ownQuietIdea(today, this.history.today(c.benchmarkSymbol), vwap, c)
+        : entryIdea(bar, prev, vwap, c);
     if (!idea) return null;
     if (c.useCostGate && !costGate(idea.edgeBps, bar.close, c)) return this.skip(`${symbol} ${idea.side}: edge ${idea.edgeBps.toFixed(1)} bps fails the cost gate`);
     const earlier = today.slice(-(c.lookbackBars + 1), -1);

@@ -75,6 +75,33 @@ export function spyDivergenceIdea(bar: BarView, prev: BarView, vwap: VwapView | 
   return { side, move: (bar.close - prev.close) / prev.close, z: vwap.z, edgeBps };
 }
 
+type OwnQuietKnobs = Pick<Team3ReversalConfig, "divMinZ" | "stopZ" | "oqMinOwnShare" | "oqMaxTrendBps" | "lookbackBars">;
+
+/**
+ * S5 candidate 2 (strategy-survey.md): a stretch that is mostly the stock's own move (beta-1 residual
+ * share over lookbackBars) on a day that has gone nowhere so far. `today` and `spyToday` are the
+ * session bars up to and including `bar`. Side fades z.
+ */
+export function ownQuietIdea(today: readonly BarView[], spyToday: readonly BarView[], vwap: VwapView | null, c: OwnQuietKnobs): EntryIdea | null {
+  const n = today.length;
+  if (!vwap || vwap.z === null || n < 2) return null;
+  const bar = today[n - 1], prev = today[n - 2];
+  const az = Math.abs(vwap.z);
+  if (az < c.divMinZ || az >= c.stopZ) return null;
+  const start = today[Math.max(0, n - 1 - c.lookbackBars)];
+  const spyAt = (ts: number) => { for (let i = spyToday.length - 1; i >= 0; i--) { if (spyToday[i].ts === ts) return spyToday[i].close; if (spyToday[i].ts < ts) break; } return null; };
+  const s0 = spyAt(start.ts), s1 = spyAt(bar.ts);
+  if (s0 === null || s1 === null || start.close <= 0) return null;
+  const total = bar.close / start.close - 1;
+  if (total === 0) return null;
+  const own = Math.abs(total - (s1 / s0 - 1)) / Math.abs(total);
+  const trendBps = (Math.abs(bar.close - today[0].open) / today[0].open) * 10_000;
+  if (!(own > c.oqMinOwnShare) || trendBps > c.oqMaxTrendBps) return null;
+  const side: Side = vwap.z > 0 ? "sell" : "buy";
+  const edgeBps = (Math.abs(bar.close - vwap.vwap) / bar.close) * 10_000;
+  return { side, move: (bar.close - prev.close) / prev.close, z: vwap.z, edgeBps };
+}
+
 export function entryIdea(bar: BarView, prev: BarView, vwap: VwapView | null, c: EntryKnobs): EntryIdea | null {
   if (c.useTurnEntry) return turnEntryIdea(bar, prev, vwap, c);
   if (!vwap || vwap.z === null || bar.close === prev.close) return null;
