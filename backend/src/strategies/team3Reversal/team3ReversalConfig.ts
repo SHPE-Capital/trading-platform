@@ -71,6 +71,17 @@ export interface Team3ReversalConfig extends BaseStrategyConfig {
   costFixedBps: number;
   /** costGate: commission per share, both legs counted, turned into bps at the entry price. */
   costCommissionPerShare: number;
+  // ==== Stage 2 per-goal blocks (fields): each session adds lines ONLY between its own markers ====
+  // ---- R1 (team3/r1) ----
+  // ---- end R1 ----
+  // ---- R2 (team3/r2) ----
+  // ---- end R2 ----
+  // ---- R4 (team3/r4) ----
+  // ---- end R4 ----
+  // ---- R5 (team3/r5) ----
+  // ---- end R5 ----
+  // ---- RSPY (team3/rspy) ----
+  // ---- end RSPY ----
   /** volSizing: dollars a typical 1-minute move may cost per entry. 5 keeps most sizes inside the $ caps (25 hit the cap almost always). */
   riskPerTradeUsd: number;
 }
@@ -113,6 +124,17 @@ export const DEFAULT_TEAM3_REVERSAL_CONFIG: Omit<Team3ReversalConfig, "id" | "sy
   captureShare: 0.5,
   costFixedBps: 14,
   costCommissionPerShare: 0.005,
+  // ==== Stage 2 per-goal blocks (defaults): each session adds lines ONLY between its own markers ====
+  // ---- R1 (team3/r1) ----
+  // ---- end R1 ----
+  // ---- R2 (team3/r2) ----
+  // ---- end R2 ----
+  // ---- R4 (team3/r4) ----
+  // ---- end R4 ----
+  // ---- R5 (team3/r5) ----
+  // ---- end R5 ----
+  // ---- RSPY (team3/rspy) ----
+  // ---- end RSPY ----
 };
 
 /** Merges defaults with overrides; a new ID is assigned unless one is given. */
@@ -147,6 +169,17 @@ export function validateTeam3ReversalConfig(c: Team3ReversalConfig, filters: Fil
   if (!(c.captureShare > 0 && c.captureShare <= 1)) fail(`captureShare must be in (0, 1] (got ${c.captureShare})`);
   atLeast0(c.costFixedBps, "costFixedBps");
   atLeast0(c.costCommissionPerShare, "costCommissionPerShare");
+  // ==== Stage 2 per-goal blocks (validation): each session adds lines ONLY between its own markers ====
+  // ---- R1 (team3/r1) ----
+  // ---- end R1 ----
+  // ---- R2 (team3/r2) ----
+  // ---- end R2 ----
+  // ---- R4 (team3/r4) ----
+  // ---- end R4 ----
+  // ---- R5 (team3/r5) ----
+  // ---- end R5 ----
+  // ---- RSPY (team3/rspy) ----
+  // ---- end RSPY ----
 
   // Session window: 390 minutes in a session
   wholeAtLeast0(c.skipOpenMinutes, "skipOpenMinutes");

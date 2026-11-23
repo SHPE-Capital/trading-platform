@@ -62,6 +62,17 @@ export const team3ReversalManifest: StrategyManifest = {
     { key: "captureShare", label: "Cost gate: capture share (0-1]", kind: "number", min: 0.05, step: 0.05 },
     { key: "costFixedBps", label: "Cost gate: fixed round trip (bps)", kind: "number", min: 0, step: 0.5 },
     { key: "costCommissionPerShare", label: "Cost gate: commission per share ($)", kind: "number", min: 0, step: 0.001 },
+    // ==== Stage 2 per-goal blocks (params): each session adds lines ONLY between its own markers ====
+    // ---- R1 (team3/r1) ----
+    // ---- end R1 ----
+    // ---- R2 (team3/r2) ----
+    // ---- end R2 ----
+    // ---- R4 (team3/r4) ----
+    // ---- end R4 ----
+    // ---- R5 (team3/r5) ----
+    // ---- end R5 ----
+    // ---- RSPY (team3/rspy) ----
+    // ---- end RSPY ----
     { key: "riskPerTradeUsd", label: "Vol sizing: $ risk per 1-min move", kind: "number", min: 1, step: 1 },
   ],
 };
