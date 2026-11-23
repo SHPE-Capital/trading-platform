@@ -28,7 +28,22 @@ mechanism categories (R1 liquidity, R2 regime, R3 costs, R4 exit geometry,
 R5 portfolio, R6 evidence). The README holds the merged experiment queue,
 7 mis-specifications to fix before tuning, and ranked one-line feature
 proposals. The S0 diagnostics have run (see [S0 results](#s0-diagnostic-results-in-sample-only)).
-**The rules for iterating are in [Iteration rules](#iteration-rules) below. They override any older wording in research/.**
+**The rules for iterating are in [Testing rules](#testing-rules) and [Iteration rules](#iteration-rules) below. They override any older wording in research/.**
+
+## Testing rules
+
+The short, binding list. Every Stage 2 row follows it, and where anything else in the repo disagrees, this wins.
+
+1. **Universes.** Momentum is the main universe. Core is the control. Every row runs the **same config on both**, and the two are **never tuned separately**.
+2. **Keep rule.** A row can only be proposed for the baseline if **all five** hold, measured against the current baseline on the in-sample days:
+   1. net P&L improves on **Momentum**;
+   2. the **paired day-bootstrap share ≥ 0.8** (`runtime/team3Bootstrap.ts <baselineId> <rowId>`, Momentum, `all.shareBBeatsA`);
+   3. the row's **mechanism check moves** in the predicted direction ([table](#mechanism-checks-measurable-before-a-row-runs));
+   4. **both in-sample halves agree**: the bootstrap's `firstHalf` and `secondHalf` mean differences are both > 0 (`halvesAgree` and positive);
+   5. **Core doesn't contradict it**: Core's effect has the same sign, or is flat.
+3. **Budget.** About **20 configs in total**, and **R3 gets 4**. **Every run goes in the ledger** ([ablation.md](ablation.md)), including diagnostics and failed runs.
+4. **Out-of-sample.** The OOS days (**2026-10-16 → 2026-11-13**) are **never run before Stage 3**. No runs, plots or peeks. `team3Bootstrap.ts` refuses OOS runs.
+5. **Promotion.** **Agents never promote a change to the baseline. The human decides.** An agent reports whether a row passes the keep rule and stops.
 
 ## Iteration rules
 
@@ -48,13 +63,9 @@ Notion, so **this section is the source of truth.** Change it here first.
 - **Core is the control.** Every row runs on both universes with the same config. The two are never tuned separately.
 
 ### Keep rule
-Change **one thing per row**, compared against the *current* baseline. The change becomes part of the baseline only if all four hold:
-1. Net P&L improves on **Momentum** (IS).
-2. The row's **mechanism check** moves in the predicted direction (see the table below). For example, the reversion share rises above 18%.
-3. **Core doesn't contradict it** (same sign of effect, or flat).
-4. The **paired day-bootstrap** (row minus baseline, same IS days) beats the baseline in most resamples, *and* the effect holds in **both halves** of the IS window.
+Change **one thing per row**, compared against the *current* baseline. The five conditions are in [Testing rules](#testing-rules), rule 2: net up on Momentum, bootstrap share ≥ 0.8, mechanism check moves (for example, the reversion share rises above Momentum's 17.6%), both IS halves agree, Core doesn't contradict. Passing makes a row *eligible*. The human decides whether it joins the baseline (Testing rules, rule 5).
 
-Rule 4 depends on the bootstrap tool, which doesn't exist yet. It's built in the groundwork task (see [What's left](#whats-left)). **No row can be kept before that tool exists.**
+The bootstrap tool exists (`runtime/team3Bootstrap.ts`, built in groundwork).
 
 ### Order
 **R3 → R1 → R2 → R5 → R4**, set by the S0 diagnostics. Within each R, the setting rows and that goal's feature run together, next to each other.
@@ -143,12 +154,14 @@ A `stub` filter's switch is refused by config validation. Flip its `status` to
 ## What's left
 In order. Each step gates the next.
 1. [ ] **Groundwork (before R3):**
-   - [ ] Paired day-bootstrap tool (row minus baseline on the same days, from the saved `equity_curve`), plus the two-halves check. The keep rule depends on it.
+   - [x] Paired day-bootstrap tool (row minus baseline on the same days, from the saved `equity_curve`), plus the two-halves check: `runtime/team3Bootstrap.ts`.
    - [ ] Runner metric: β of per-trade P&L to SPY (for relativeToSpy).
    - [ ] Runner metric: max DD and worst same-minute cluster loss (for crowd split).
-   - [ ] Fix the IS day count (32 vs 33), and check the 65/65 target exits.
+   - [x] Fix the IS day count (it's 32; a phantom day came from the engine, UPSTREAM #10), and check the 65/65 target exits (a coincidence).
+   - [x] Trial ledger in [ablation.md](ablation.md) with every required column; A00/A03 Core summaries re-saved.
+   - [x] Testing rules written down (above).
    - [ ] Lead confirms the budget split and the stopping threshold above.
-2. [ ] **Stage 1:** fix M1–M7 under a new VERSION, then rerun the anchor A01 (Momentum + Core, IS).
+2. [x] **Stage 1:** fix M1–M7 under a new VERSION (VERSION 4), then rerun the anchors (A03 Core, A04 Momentum, IS).
 3. [ ] **R3** (4 configs), then apply the **stopping rule** check after R3 + the relativeToSpy filter.
 4. [ ] **R1** (3).
 5. [ ] **R2:** lock the [relativeToSpy spec](components/relative-to-spy.md#spec-locked-before-the-batch) first, then run the filter, then the new signal only if the filter is kept (3), then the other R2 rows (2).
