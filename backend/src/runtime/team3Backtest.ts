@@ -43,11 +43,12 @@ const ET_DAY = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }
 async function main(): Promise<void> {
   const ownerId = process.env.BACKTEST_CLI_OWNER_ID;
   if (!ownerId) throw new Error("BACKTEST_CLI_OWNER_ID is required (your app_users.id)");
-  const group = (process.env.TEAM3_GROUP ?? "core").toLowerCase();
-  const windowKey = (process.env.TEAM3_WINDOW ?? "in").toLowerCase();
+  // Empty values (e.g. `TEAM3_GROUP=` in .env) mean "use the default".
+  const group = (process.env.TEAM3_GROUP?.trim() || "core").toLowerCase();
+  const windowKey = (process.env.TEAM3_WINDOW?.trim() || "in").toLowerCase();
   if (!GROUPS[group]) throw new Error(`TEAM3_GROUP must be one of ${Object.keys(GROUPS).join(", ")}`);
   if (!WINDOWS[windowKey]) throw new Error(`TEAM3_WINDOW must be one of ${Object.keys(WINDOWS).join(", ")}`);
-  const overrides = JSON.parse(process.env.TEAM3_CONFIG ?? "{}") as Record<string, unknown>;
+  const overrides = JSON.parse(process.env.TEAM3_CONFIG?.trim() || "{}") as Record<string, unknown>;
 
   const strategyConfig = {
     ...team3ReversalManifest.defaultConfig,
