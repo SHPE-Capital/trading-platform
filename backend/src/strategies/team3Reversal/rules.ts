@@ -58,6 +58,23 @@ export interface EntryIdea {
  * entryZ sigmas from VWAP on that same side (but short of stopZ: a trade entered past
  * its own stop would be stopped on the next bar), and the way back to VWAP beats minEdgeBps.
  */
+type DivergenceKnobs = Pick<Team3ReversalConfig, "divMinZ" | "divSpyZ" | "divCrossMin" | "divCrossMax" | "stopZ">;
+
+/**
+ * S5 candidate 1 (strategy-survey.md): the stock is stretched from its VWAP while SPY is stretched
+ * the opposite way, on a day the stock has crossed VWAP only 1-2 times in the window. Side fades z.
+ */
+export function spyDivergenceIdea(bar: BarView, prev: BarView, vwap: VwapView | null, spy: VwapView | null, c: DivergenceKnobs): EntryIdea | null {
+  if (!vwap || vwap.z === null || !spy || spy.z === null) return null;
+  const az = Math.abs(vwap.z);
+  if (az < c.divMinZ || az >= c.stopZ) return null;
+  if (Math.abs(spy.z) < c.divSpyZ || Math.sign(spy.z) === Math.sign(vwap.z)) return null;
+  if (vwap.crossings < c.divCrossMin || vwap.crossings > c.divCrossMax) return null;
+  const side: Side = vwap.z > 0 ? "sell" : "buy";
+  const edgeBps = (Math.abs(bar.close - vwap.vwap) / bar.close) * 10_000;
+  return { side, move: (bar.close - prev.close) / prev.close, z: vwap.z, edgeBps };
+}
+
 export function entryIdea(bar: BarView, prev: BarView, vwap: VwapView | null, c: EntryKnobs): EntryIdea | null {
   if (c.useTurnEntry) return turnEntryIdea(bar, prev, vwap, c);
   if (!vwap || vwap.z === null || bar.close === prev.close) return null;

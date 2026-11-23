@@ -79,6 +79,9 @@ export const team3ReversalManifest: StrategyManifest = {
     // ---- RSPY (team3/rspy) ----
     { key: "rtsMinOwnShare", label: "Relative to SPY: min own share of move (0-1)", kind: "number", min: 0, step: 0.05 },
     // ---- end RSPY ----
+    // ---- S5 ----
+    { key: "useSpyDivergence", label: "Entry: stock stretched while SPY stretched the other way (S5)", kind: "boolean" },
+    // ---- end S5 ----
     { key: "riskPerTradeUsd", label: "Vol sizing: $ risk per 1-min move", kind: "number", min: 1, step: 1 },
   ],
 };

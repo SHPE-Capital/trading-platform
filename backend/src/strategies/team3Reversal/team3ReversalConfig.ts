@@ -96,6 +96,19 @@ export interface Team3ReversalConfig extends BaseStrategyConfig {
   /** relativeToSpy: symbols never traded while the switch is on (the benchmark and index ETFs). */
   rtsExcludeSymbols: string[];
   // ---- end RSPY ----
+  // ---- S5 (formed strategy, from the S4 survey) ----
+  /**
+   * spyDivergence (S5 candidate 1): replace the baseline entry. Enter when the stock is stretched
+   * (divMinZ <= |z| < stopZ, any edge >= 0), SPY is stretched >= divSpyZ the OPPOSITE way this minute,
+   * and the stock's VWAP crossings over vwapWindowBars are in [divCrossMin, divCrossMax]. Side from z.
+   * The benchmark itself is never traded. Bins fixed by strategy-survey.md; not tuned.
+   */
+  useSpyDivergence: boolean;
+  divMinZ: number;
+  divSpyZ: number;
+  divCrossMin: number;
+  divCrossMax: number;
+  // ---- end S5 ----
   /** volSizing: dollars a typical 1-minute move may cost per entry. 5 keeps most sizes inside the $ caps (25 hit the cap almost always). */
   riskPerTradeUsd: number;
 }
@@ -156,6 +169,13 @@ export const DEFAULT_TEAM3_REVERSAL_CONFIG: Omit<Team3ReversalConfig, "id" | "sy
   rtsMinOwnShare: 0.5,
   rtsExcludeSymbols: ["SPY", "QQQ"],
   // ---- end RSPY ----
+  // ---- S5 ----
+  useSpyDivergence: false,
+  divMinZ: 1.5,
+  divSpyZ: 1,
+  divCrossMin: 1,
+  divCrossMax: 2,
+  // ---- end S5 ----
 };
 
 /** Merges defaults with overrides; a new ID is assigned unless one is given. */
@@ -207,6 +227,16 @@ export function validateTeam3ReversalConfig(c: Team3ReversalConfig, filters: Fil
   if (!(isNum(c.rtsMinOwnShare) && c.rtsMinOwnShare >= 0 && c.rtsMinOwnShare <= 1)) fail(`rtsMinOwnShare must be in [0, 1] (got ${c.rtsMinOwnShare})`);
   if (!Array.isArray(c.rtsExcludeSymbols) || c.rtsExcludeSymbols.some((s) => typeof s !== "string")) fail("rtsExcludeSymbols must be a list of tickers");
   // ---- end RSPY ----
+  // ---- S5 ----
+  if (c.useSpyDivergence) {
+    positive(c.divMinZ, "divMinZ");
+    positive(c.divSpyZ, "divSpyZ");
+    if (c.divMinZ >= c.stopZ) fail("divMinZ must be below stopZ");
+    if (!(c.divCrossMin >= 0 && c.divCrossMax >= c.divCrossMin)) fail("divCrossMin/divCrossMax must satisfy 0 <= min <= max");
+    if (c.useTurnEntry) fail("useSpyDivergence replaces the entry; it can't be combined with useTurnEntry");
+    if (!c.symbols.includes(c.benchmarkSymbol)) fail("useSpyDivergence needs benchmarkSymbol in symbols");
+  }
+  // ---- end S5 ----
 
   // Session window: 390 minutes in a session
   wholeAtLeast0(c.skipOpenMinutes, "skipOpenMinutes");
