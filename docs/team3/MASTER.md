@@ -104,7 +104,8 @@ After the **R3 budget and the relativeToSpy filter rows** are done: if Momentum'
 - Reversion to VWAP: ≈16% of trades on Core (65/419), ≈18% on Momentum (65/370). 75% end on the 30-bar time stop.
 - Net: A00 −$37.8k, A00m −$48.4k, A03 −$3.0k, A04 −$1.6k.
 - Decision: Momentum is the main universe.
-- Open: the docs say 32 IS days but the runs report 33. Fix the count, since it feeds R6's Sharpe error. Also confirm the matching 65/65 target exits aren't a shared-output bug.
+- IS day count: **32** (the docs were right). The runs reported 33 because the engine stamps its final equity point with the wall clock, adding a phantom ~$0 day ([UPSTREAM #10](UPSTREAM.md)). Fixed in `contract/daily.ts`; daily Sharpe and % days profitable were recomputed. R6's Sharpe SE (±2.8 IS) is unchanged.
+- Open: confirm the matching 65/65 target exits aren't a shared-output bug.
 
 ### What the paper can claim
 Firmly: cost and trade-count reductions vs Beginner Reversal, and the direction of each component's effect with CIs. **Not** a significant Sharpe or general profitability. State the number of configs tried.

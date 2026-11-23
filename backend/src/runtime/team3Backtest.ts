@@ -27,6 +27,7 @@ import { createTickSource } from "../adapters/alpaca/historicalData";
 import { buildBacktestStrategies } from "../core/backtest/strategyFactory";
 import { insertBacktestResult, insertBacktestOrders, insertBacktestFills } from "../adapters/supabase/repositories";
 import { protocolBacktestConfig } from "../strategies/team3Reversal/contract/protocol";
+import { dailyPnl } from "../strategies/team3Reversal/contract/daily";
 import { STRATEGY_DEFINITIONS, configProblem } from "../config/strategyDefaults";
 import type { BaseStrategyConfig, StrategySignal } from "../types/strategy";
 import { logger } from "../utils/logger";
@@ -40,7 +41,6 @@ const WINDOWS: Record<string, { startDate: string; endDate: string }> = {
   out: { startDate: "2026-10-16T00:00:00Z", endDate: "2026-11-13T23:59:59Z" },
 };
 
-const ET_DAY = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" });
 
 async function main(): Promise<void> {
   const ownerId = process.env.BACKTEST_CLI_OWNER_ID;
@@ -93,11 +93,9 @@ async function main(): Promise<void> {
   const tradedNotional = fills.reduce((s, f) => s + Math.abs(f.notional), 0) / 2;
   const costs = fills.reduce((s, f) => s + (f.commission ?? 0), 0);
 
-  // Daily P&L from the last equity point of each ET trading day.
-  const lastByDay = new Map<string, number>();
-  for (const p of curve) lastByDay.set(ET_DAY.format(new Date(p.ts)), p.equity);
-  const dayEquity = [start, ...lastByDay.values()];
-  const daily = dayEquity.slice(1).map((e, i) => e - dayEquity[i]);
+  // Daily P&L from the last equity point of each ET trading day (contract/daily.ts: the
+  // engine's wall-clock final snapshot is folded into the last real day, not counted as a day).
+  const daily = dailyPnl(curve, start, WINDOWS[windowKey]).map((d) => d.pnl);
   const mean = daily.reduce((a, b) => a + b, 0) / (daily.length || 1);
   const sd = Math.sqrt(daily.reduce((a, b) => a + (b - mean) ** 2, 0) / Math.max(daily.length - 1, 1));
   const sharpeDaily = sd > 0 ? (mean / sd) * Math.sqrt(252) : 0;
