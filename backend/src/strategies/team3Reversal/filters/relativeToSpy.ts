@@ -2,7 +2,7 @@
  * strategies/team3Reversal/filters/relativeToSpy.ts
  *
  * Filter: Relative to the market.  Switch: useRelativeToSpy  Knob: benchmarkSymbol
- * Owner: (your name here)   Status: stub. Switching it on is refused until the
+ * Owner: Alex Rivera (PR #78; rule below is his 1-minute version)   Status: stub. Switching it on is refused until the
  * registry in index.ts marks it "done".
  *
  * Idea in plain words: when the whole market moves, the move comes back less.

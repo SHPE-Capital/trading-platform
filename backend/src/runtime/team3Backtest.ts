@@ -13,6 +13,7 @@
  *   TEAM3_WINDOW           in (default) | out          (ablation.md header)
  *   TEAM3_CONFIG           JSON overrides vs the strategy defaults, e.g. {"useVwapRegime":true}
  *   TEAM3_STRATEGY         team3_reversal (default) | beginner_reversal (the A00 reference) | any catalog type
+ *   TEAM3_EXCLUDE          comma list of the group's symbols to leave out, e.g. SPY,QQQ (Q2.5)
  *   TEAM3_DIAGNOSTIC       zero_cost: no slippage, spread or commission. Measures the GROSS edge.
  *                          Diagnostic only: never report it as an ablation row.
  *
@@ -26,16 +27,15 @@ import { SupabaseBarCache } from "../adapters/supabase/barCacheRepository";
 import { createTickSource } from "../adapters/alpaca/historicalData";
 import { buildBacktestStrategies } from "../core/backtest/strategyFactory";
 import { insertBacktestResult, insertBacktestOrders, insertBacktestFills } from "../adapters/supabase/repositories";
-import { TEAM3_WINDOWS, protocolBacktestConfig } from "../strategies/team3Reversal/contract/protocol";
+import { TEAM3_GROUPS, TEAM3_WINDOWS, protocolBacktestConfig, universeOf } from "../strategies/team3Reversal/contract/protocol";
+import { mechanismMetrics } from "./team3Metrics";
+import { pairRoundTrips, type MetricBar } from "./team3Metrics/trades";
 import { dailyPnl } from "../strategies/team3Reversal/contract/daily";
 import { STRATEGY_DEFINITIONS, configProblem } from "../config/strategyDefaults";
 import type { BaseStrategyConfig, StrategySignal } from "../types/strategy";
 import { logger } from "../utils/logger";
 
-const GROUPS: Record<string, string[]> = {
-  core: ["SPY", "QQQ", "AAPL", "MSFT", "GOOGL", "AMZN"],
-  momentum: ["SPY", "NVDA", "AMD", "MU", "TSLA", "META"],
-};
+const GROUPS: Record<string, string[]> = TEAM3_GROUPS;
 const WINDOWS: Record<string, { startDate: string; endDate: string }> = TEAM3_WINDOWS;
 
 
@@ -55,10 +55,16 @@ async function main(): Promise<void> {
   const diagnostic = process.env.TEAM3_DIAGNOSTIC?.trim() || "";
   if (diagnostic && diagnostic !== "zero_cost") throw new Error("TEAM3_DIAGNOSTIC must be zero_cost or empty");
 
+  const exclude = (process.env.TEAM3_EXCLUDE?.trim() || "").split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
+  const notInGroup = exclude.filter((s) => !GROUPS[group].includes(s));
+  if (notInGroup.length) throw new Error(`TEAM3_EXCLUDE: ${notInGroup.join(",")} not in ${group}`);
+  const symbols = GROUPS[group].filter((s) => !exclude.includes(s));
+  if (!symbols.length) throw new Error("TEAM3_EXCLUDE leaves no symbols");
+
   const strategyConfig = {
     ...definition.defaultConfig,
     ...overrides,
-    symbols: GROUPS[group],
+    symbols,
     type,
   } as unknown as BaseStrategyConfig;
   const problem = configProblem(type, strategyConfig as unknown as Record<string, unknown>);
@@ -69,10 +75,20 @@ async function main(): Promise<void> {
 
   // Record every signal (meta included) so the row can report exit reasons and hold times.
   const signals: StrategySignal[] = [];
+  // Every bar each symbol showed the strategy, for the Stage 2 mechanism metrics (team3Metrics/).
+  const barsBySymbol = new Map<string, MetricBar[]>();
   const engine = new BacktestEngine(new BacktestLoader({ cache: new SupabaseBarCache() }), { tickSource: createTickSource });
   const result = await engine.run(config, () => buildBacktestStrategies(config).map((st) => {
     const evaluate = st.evaluate.bind(st);
-    st.evaluate = (ctx) => { const sig = evaluate(ctx); if (sig) signals.push(sig); return sig; };
+    st.evaluate = (ctx) => {
+      const b = ctx.symbolState.get(ctx.symbol)?.latestBar;
+      if (b) {
+        const list = barsBySymbol.get(ctx.symbol) ?? [];
+        if (!list.length || list[list.length - 1].ts < b.ts) list.push({ ts: b.ts, open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume });
+        barsBySymbol.set(ctx.symbol, list);
+      }
+      const sig = evaluate(ctx); if (sig) signals.push(sig); return sig;
+    };
     return st;
   }));
   if (result.status !== "completed") throw new Error(`backtest ${result.status}: ${result.error_message ?? ""}`);
@@ -92,7 +108,8 @@ async function main(): Promise<void> {
 
   // Daily P&L from the last equity point of each ET trading day (contract/daily.ts: the
   // engine's wall-clock final snapshot is folded into the last real day, not counted as a day).
-  const daily = dailyPnl(curve, start, WINDOWS[windowKey]).map((d) => d.pnl);
+  const dailyRows = dailyPnl(curve, start, WINDOWS[windowKey]);
+  const daily = dailyRows.map((d) => d.pnl);
   const mean = daily.reduce((a, b) => a + b, 0) / (daily.length || 1);
   const sd = Math.sqrt(daily.reduce((a, b) => a + (b - mean) ** 2, 0) / Math.max(daily.length - 1, 1));
   const sharpeDaily = sd > 0 ? (mean / sd) * Math.sqrt(252) : 0;
@@ -127,7 +144,7 @@ async function main(): Promise<void> {
 
   const row = {
     strategy: type, version: definition.algorithmVersion, diagnostic: diagnostic || null,
-    group, window: windowKey, config: overrides,
+    group, universe: universeOf(symbols), excluded: exclude.length ? exclude : null, window: windowKey, config: overrides,
     netPnl: +netPnl.toFixed(2),
     trades: m.totalTrades,
     avgBpsPerTrade: tradedNotional > 0 ? +((netPnl / tradedNotional) * 1e4).toFixed(2) : null,
@@ -147,6 +164,9 @@ async function main(): Promise<void> {
     medianTargetBars: targetBars.length ? targetBars[Math.floor(targetBars.length / 2)] : null,
     entriesPastStop: entries.length ? entryZ.filter((z) => z >= Number((strategyConfig as unknown as Record<string, unknown>).stopZ ?? Infinity)).length : null,
     medianEntryZ: entryZ.length ? +[...entryZ].sort((a, b) => a - b)[Math.floor(entryZ.length / 2)].toFixed(2) : null,
+    mechanism: type === "team3_reversal"
+      ? mechanismMetrics({ signals, roundTrips: pairRoundTrips(signals), barsBySymbol, daily: dailyRows, config: strategyConfig as unknown as Record<string, unknown> })
+      : null,
     backtestId: result.id,
     events: result.event_count,
   };
