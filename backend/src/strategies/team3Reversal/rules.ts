@@ -19,7 +19,7 @@ export type SessionWindow = "warmup" | "open" | "no_entries" | "flatten";
 export type ExitReason = "stale" | "close" | "stop" | "target" | "time";
 
 type WindowKnobs = Pick<Team3ReversalConfig, "skipOpenMinutes" | "lastEntryMinutesBeforeClose" | "flattenMinutesBeforeClose">;
-type EntryKnobs = Pick<Team3ReversalConfig, "entryZ" | "minEdgeBps" | "stopZ">;
+type EntryKnobs = Pick<Team3ReversalConfig, "entryZ" | "minEdgeBps" | "stopZ"> & Partial<Pick<Team3ReversalConfig, "useTurnEntry">>;
 type ExitKnobs = Pick<Team3ReversalConfig, "stopZ" | "maxHoldBars">;
 
 type CostKnobs = Pick<Team3ReversalConfig, "captureShare" | "costFixedBps" | "costCommissionPerShare">;
@@ -59,12 +59,28 @@ export interface EntryIdea {
  * its own stop would be stopped on the next bar), and the way back to VWAP beats minEdgeBps.
  */
 export function entryIdea(bar: BarView, prev: BarView, vwap: VwapView | null, c: EntryKnobs): EntryIdea | null {
+  if (c.useTurnEntry) return turnEntryIdea(bar, prev, vwap, c);
   if (!vwap || vwap.z === null || bar.close === prev.close) return null;
   const move = (bar.close - prev.close) / prev.close;
   const side: Side = move > 0 ? "sell" : "buy";
   const stretched = (side === "sell" ? vwap.z >= c.entryZ : vwap.z <= -c.entryZ) && Math.abs(vwap.z) < c.stopZ;
   const edgeBps = (Math.abs(bar.close - vwap.vwap) / bar.close) * 10_000;
   return stretched && edgeBps >= c.minEdgeBps ? { side, move, z: vwap.z, edgeBps } : null;
+}
+
+/**
+ * Turn entry (R1, useTurnEntry): same stretch, stop and edge tests, but the side comes from z
+ * (above VWAP -> sell, below -> buy) and the bar must move back toward VWAP vs the previous close.
+ * Docs: docs/team3/components/turn-entry.md
+ */
+export function turnEntryIdea(bar: BarView, prev: BarView, vwap: VwapView | null, c: EntryKnobs): EntryIdea | null {
+  if (!vwap || vwap.z === null || vwap.z === 0) return null;
+  const move = (bar.close - prev.close) / prev.close;
+  const side: Side = vwap.z > 0 ? "sell" : "buy";
+  const turning = side === "sell" ? bar.close < prev.close : bar.close > prev.close;
+  const stretched = Math.abs(vwap.z) >= c.entryZ && Math.abs(vwap.z) < c.stopZ;
+  const edgeBps = (Math.abs(bar.close - vwap.vwap) / bar.close) * 10_000;
+  return turning && stretched && edgeBps >= c.minEdgeBps ? { side, move, z: vwap.z, edgeBps } : null;
 }
 
 export interface HoldingView {

@@ -64,6 +64,7 @@ export const team3ReversalManifest: StrategyManifest = {
     { key: "costCommissionPerShare", label: "Cost gate: commission per share ($)", kind: "number", min: 0, step: 0.001 },
     // ==== Stage 2 per-goal blocks (params): each session adds lines ONLY between its own markers ====
     // ---- R1 (team3/r1) ----
+    { key: "useTurnEntry", label: "Entry: wait for the turn back toward VWAP", kind: "boolean" },
     // ---- end R1 ----
     // ---- R2 (team3/r2) ----
     // ---- end R2 ----
