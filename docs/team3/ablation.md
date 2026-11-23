@@ -141,6 +141,13 @@ Configs used: **21 of ~30** (S5: F1, F2).
 
 **Try count:** 21 → 24.
 
+**Amendment (lead, 2026-11-23, after the evaluation in [signal-eval.md](results/signal-eval.md); a rule change made after seeing the data).**
+- No candidate qualified under the pre-registered rule.
+- The lead relaxed the trade minimum to **≥ 30 simulated Momentum trades**, and required a **legitimately new idea**: not F1 plus one more condition.
+- **F3** = |z| > 1.947 AND crossings60 in 1–2 AND SPY neutral (|zSPY| < 1). Simulated: Momentum 31 trades, +4.75 bps, halves +7.34 / +3.05; Core +5.09.
+- **F4 and F5 are removed.**
+- Other slots stay unspent.
+
 ### Checks
 
 **65/65 target exits (2026-11-23):** Core (A03) and Momentum (A04) both end with 65 `target` exits. This is a coincidence, not shared or overwritten output:
