@@ -80,9 +80,9 @@ All tools run on **daily P&L** rebuilt from the saved `equity_curve` (last equit
 - **Replace "best combination" (`AGENT_GUIDE.md:88`) with R6-E7.** The 2×2 factorial estimates both main effects and their interaction from the same 4 runs. Each effect uses all runs (Czitrom 1999), and nothing is "picked".
 - **Stub components** (Volume, Relative to SPY): if they are not done by Nov 22, leave them out rather than rushing them in. Each one adds a trial.
 - **Knob budget (superseded 2026-11-23, see [MASTER Iteration rules](../MASTER.md#iteration-rules)):**
-  - The original plan was 2 knobs, N ≤ 10, tuned on Core IS only. It's replaced by: at most **2 values per knob**, about **20 configs split by goal** (R3 4, R1 3, R2-rts 3, R2 2, R5 3, R4 2, reserve 3), with **Momentum as the main universe and Core as the control** (same config, never tuned separately).
+  - The original plan was 2 knobs, N ≤ 10, tuned on Core IS only. It's replaced by: at most **2 values per knob**, about **25 configs split by goal** (R3 4, R1 3, R2 2, R2-rts filter 2, R4 2+1, R5 2, combining + new signal 5, reserve 5; MASTER, updated 2026-11-23), with **Momentum as the main universe and Core as the control** (same config, never tuned separately).
   - OOS gets **zero** tuning and is untouched until Stage 3.
-  - The luck-only IS best Sharpe rises with N. Recompute it at the final N in the ledger and write that number into the paper as the IS bar (it was about 4.5 at N = 10).
+  - The luck-only IS best Sharpe rises with N. Recompute it at the final N in the ledger and write that number into the paper as the IS bar (it was about 4.5 at N = 10; about 5.6 at N = 25, T = 32).
   - In the table above, "Core IS" in R6-E1/E4/E7 now means "Momentum IS, with Core as control", and R6-E1's OOS half waits for Stage 3.
 
 **Minimal protocol edits (recommendations only, for the lead):**
