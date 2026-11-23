@@ -27,12 +27,12 @@ describe('pairRoundTrips: enter + next exit per symbol', () => {
     const trips = pairRoundTrips([
       sig('AAPL', 1, 'short', { kind: 'enter', close: 101, vwapZ: 2.2, edgeBps: 30, qtyWanted: 10 }),
       sig('MSFT', 2, 'long', { kind: 'enter', close: 50, vwapZ: -2.1, edgeBps: 20, qtyWanted: 12 }),
-      sig('AAPL', 5, 'close_short', { kind: 'exit', reason: 'target', barsHeld: 4, pnlBpsGross: 40 }),
+      sig('AAPL', 5, 'close_short', { kind: 'exit', reason: 'target', barsHeld: 4, pnlBpsGross: 40, entryPrice: 100.9 }),
       sig('MSFT', 9, 'close_long', { kind: 'exit', reason: 'time', barsHeld: 7, pnlBpsGross: -5 }),
       sig('AAPL', 10, 'short', { kind: 'enter', close: 102, vwapZ: 2.5, edgeBps: 35, qtyWanted: 9 }),
     ]);
     expect(trips).toHaveLength(2);
-    expect(trips[0]).toMatchObject({ symbol: 'AAPL', side: 'sell', entryTs: 1, exitTs: 5, reason: 'target', pnlBpsGross: 40, qtyWanted: 10 });
+    expect(trips[0]).toMatchObject({ symbol: 'AAPL', side: 'sell', entryTs: 1, exitTs: 5, reason: 'target', pnlBpsGross: 40, qtyWanted: 10, entryFill: 100.9 });
     expect(trips[1]).toMatchObject({ symbol: 'MSFT', side: 'buy', reason: 'time', barsHeld: 7 });
   });
   it('mechanismMetrics is empty while every goal file is a stub', () => {

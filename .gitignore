@@ -84,3 +84,6 @@ desktop.ini
 
 # Local stack state, generated Supabase workdir, DB safety copies
 .local/
+
+# Team 3 offline analysis dumps (large; regenerate with TEAM3_DUMP)
+backend/tmp/

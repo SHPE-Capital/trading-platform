@@ -1,7 +1,7 @@
 /**
  * strategies/team3Reversal/team3ReversalStrategy.ts
  *
- * Team 3 Reversal, VERSION 6: intraday VWAP reversion on 1-minute bars (V5 added useCostGate; V6 adds Rivera's relativeToSpy rule (still a stub) and the Stage 2 per-goal config blocks; all off by default).
+ * Team 3 Reversal, VERSION 7: intraday VWAP reversion on 1-minute bars. V7 merges the Stage 2 switches (useTurnEntry, usePartwayTarget, useScaleOut, useCrowdSplit, useRelativeToSpy); all off by default, so the default is still the V4 baseline.
  *
  *   Enter  fade a session bar that leaves price >= entryZ sigmas from VWAP,
  *          when the way back to VWAP beats costs (minEdgeBps). One position per symbol.
@@ -38,7 +38,7 @@ import { crowdSize, crowdSplitQty, fixedNotionalQty, volTargetQty } from "./sizi
 export class Team3ReversalStrategy extends BaseStrategy {
   readonly type: StrategyType = "team3_reversal";
   /** Bump whenever this folder's trading logic changes, filters included (CI enforces it). */
-  static readonly VERSION = 6;
+  static readonly VERSION = 7;
   readonly version = Team3ReversalStrategy.VERSION;
   /** Decide only when a bar arrives; quotes and trades never call evaluate(). */
   readonly triggers: readonly MarketEventKind[] = ["bar"];
