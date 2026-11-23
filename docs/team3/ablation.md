@@ -192,6 +192,46 @@ Lead decision: hold longer, testing only the in-sample winners, F1 and F3 (the f
 
 **Try count:** 22 → 26, or 28 if both neighbour checks run.
 
+### L series (results, 2026-11-23)
+
+Code VERSION 8. In-sample only, each row run once per universe, all with dumps.
+
+**Columns:**
+- **Mechanism (Δ, blocked):** matched on symbol + entry time against the parent's dump.
+  - **Δ** = the summed change in gross bps on the parent's time-stopped trades.
+  - **Blocked** = how many of the parent's trades the longer hold blocks, with their gross bps.
+  - Target and stop exits happen before bar 30, so they're unchanged.
+- **Fixed-entry sweep:** what the offline sweep predicted for that H.
+- **Boot vs parent:** Δ $/day, the share of draws where the row beats its parent, and the halves.
+- **vs V4** (one-ID form): every row reads 1.000 on both universes.
+
+| ID | Universe | Config | backtestId | Net $ | Trades | Net bps/trade | Win % | Sharpe (daily) | Max DD $ | Avg bars | Exits (n, avg gross bps) | Boot vs parent (Δ $/day, share; halves) | Mechanism (Δ, blocked) | Fixed-entry sweep (trades, net bps) | Verdict |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| L1 | Mom | F1 + `"maxHoldBars":50` | `bd53044c-192f-4c9f-be33-7cb6c212650f` | +95.84 | 29 | +7.02 | 55.2 | 1.52 | 171.3 | 35.0 | target 14 (+50.8), time 15 (−20.3) | vs F1 −0.35, 0.465; −0.19 (0.44) / −0.52 (0.49) | −30.6; 3 blocked (+21.4) | 32, +6.1 | **Fails**: bps/trade ↓, share < 0.8, mechanism ✗ |
+| L1 | Core | same | `31e1b324-ec8d-463d-bb61-30b716c61a5e` | +13.80 | 13 | +2.18 | 46.2 | 0.78 | 59.6 | 40.2 | time 8 (−1.5), target 5 (+27.6) | vs F1 +1.83, 0.943 | +119.7; 1 blocked (+2.2) | 14, −0.5 | Core better |
+| L2 | Mom | F1 + `"maxHoldBars":150` | `839972a3-6c88-44cc-bedf-cec91726456e` | **+194.75** | 29 | **+14.27** | 69.0 | 3.35 | 229.3 | 72.5 | target 19 (+46.0), time 7 (−29.5), close 3 (−18.5) | vs F1 +2.74, **0.884**, CI [−1.84, 7.28]; +4.23 (0.97) / +1.25 (0.64), agree | +175.1; 3 blocked (+21.4) ✓ | 32, +12.0 | **Passes the true test** |
+| L2 | Core | same | `e85ff2d5-d689-42aa-8ddd-d78a2f5e9b57` | +11.17 | 13 | +1.77 | 61.5 | 0.41 | 88.1 | 78.6 | target 9 (+28.5), time 4 (−34.5) | vs F1 +1.74, 0.818; +3.13 / +0.35 | (Core) | 14, −2.4 | Core agrees (−6.57 → +1.77) |
+| L3 | Mom | F3 + `"maxHoldBars":45` | `2025ac41-2ac3-41ea-a333-c392abc50046` | +58.52 | 30 | +4.14 | 56.7 | 1.15 | 135.2 | 35.2 | time 18 (−22.3), target 10 (+82.3), stop 2 (−55.7) | vs F3 −0.33, 0.485; halves disagree | +68.7; 1 blocked (+77.6) ✗ | 31, +4.8 | **Fails** |
+| L3 | Core | same | `e8fbe9e2-139a-4788-832e-98619377788a` | +60.25 | 28 | +4.46 | 46.4 | 1.22 | 149.7 | 37.4 | time 21 (−5.3), target 7 (+62.5) | vs F3 −0.34, 0.423 | −37.1; 1 blocked (−8.2) | 29, +5.0 | Core worse |
+| L4 | Mom | F3 + `"maxHoldBars":90` | `5db5cd37-ace1-4d15-9473-281a2b36b371` | +104.19 | 30 | +7.37 | 56.7 | 2.16 | 159.3 | 57.1 | time 11 (−42.9), target 15 (+71.8), close 2 (−47.9), stop 2 (−55.7) | vs F3 +1.09, 0.680; −3.32 (0.21) / +5.50 (0.99), disagree | +157.3; 1 blocked (+77.6) ✓ | 31, +7.8 | **Fails**: share < 0.8, halves disagree |
+| L4 | Core | same | `1247aa91-e9b8-41bd-afd3-d11e45d76a55` | +106.11 | 28 | +7.85 | 50.0 | 2.25 | 146.8 | 68.0 | target 10 (+55.3), time 17 (−12.5), close 1 (+88.5) | vs F3 +1.09, 0.730; +4.98 (0.98) / −2.80 (0.06), disagree | +65.4; 1 blocked (−8.2) | 29, +8.5 | |
+| L5 (neighbour of L2) | Mom | F1 + `"maxHoldBars":120` | `a17afd1b-a6a6-4232-9864-923de2b72bca` | +138.51 | 29 | +10.15 | 69.0 | 1.80 | 229.3 | 64.6 | target 18 (+47.6), time 9 (−36.0), close 2 (−24.8) | vs F1 +0.98, 0.639; +5.28 (0.99) / −3.32 (0.37), disagree | +46.8; 3 blocked (+21.4) | 32, +7.9 | **Fails**: share < 0.8, halves disagree |
+| L5 | Core | same | `06fd500d-3cd4-4556-9be4-3bc8c9d1c265` | +9.94 | 13 | +1.57 | 61.5 | 0.38 | 84.7 | 69.3 | target 9 (+28.5), time 4 (−34.4) | vs F1 +1.71, 0.820 | +112.5; 1 blocked (+2.2) | 14, −0.7 | |
+
+**Reading.**
+- **The one pass doesn't survive its neighbour.**
+  - L2 (F1, hold 150) passes all five checks.
+  - L5, the pre-registered neighbour at 120, still improves bps/trade (+7.14 → +10.15), but its share is 0.64 and its second half turns negative.
+  - So L2's gain rests on a few F1 trades that happen to revert between bars 120 and 150. That's a fragile peak, not a plateau. L6 isn't run, since no other row passed.
+- **Longer holds keep the trades; they change the exits.**
+  - Real trade counts fell by only 1–3 against the fixed-entry sweep. F1 and F3 trade too rarely for a longer hold to block much.
+  - The real bps/trade track the sweep's direction on every row.
+- **F3 doesn't gain from holding longer.**
+  - L3 (45) is flat to worse.
+  - L4 (90) lifts both universes (Momentum +4.75 → +7.37, Core +5.09 → +7.85). But the halves split in opposite directions on the two universes, and neither share reaches 0.8.
+- **Core moves with F1 on every hold** (−6.57 → about +1.6 to +2.2), but on 13 trades.
+- **Configs used: 27 of ~30** (22 + L1–L5); 3 stay in reserve.
+
 ### Checks
 
 **65/65 target exits (2026-11-23):** Core (A03) and Momentum (A04) both end with 65 `target` exits. This is a coincidence, not shared or overwritten output:

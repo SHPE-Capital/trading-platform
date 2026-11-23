@@ -36,3 +36,13 @@ Stage 3 runs once, out-of-sample (2026-10-16 → 11-13), on configs frozen and l
 - **Offline evaluation** ([signal-eval.md](signal-eval.md)): the engine-feasible simulator reproduces F1, F2 and V4 exactly. No survey group met the pre-registered rule. Under a relaxed trade minimum, the lead picked **F3** (|z| > 1.947, 1–2 VWAP crossings, SPY within 1σ).
 - **F3:** Momentum **+$69** (+4.75 bps/trade, 31 trades); Core **+$71** (+5.09, 29 trades). It's the only signal positive on both universes.
 - **Trials:** 22 strategy configs. The paper's honest story doesn't change: the tuned parts make losses and costs smaller; small condition sets beat costs in-sample on about 30 trades, and only the out-of-sample run can tell whether that's real.
+
+## 6. Addendum: hold length (L series, 2026-11-23)
+- **Offline sweep** ([hold-sweep.md](hold-sweep.md)), with entries fixed and parity exact at 30.
+  - Many time-stopped trades do reach VWAP later: 114 of V4 Momentum's 283 do before the close.
+  - But the ones that don't drift further, so V4 and C3 don't improve at any hold from 35 to 180.
+- **Backtests on the working candidates** (F1, F3), pre-registered from the sweep:
+  - F1 at 150 bars passes the true test (Momentum +$195, +14.27 bps/trade, share 0.88; Core +1.77).
+  - Its pre-registered neighbour at 120 fails (share 0.64, the halves disagree), so the gain is a fragile peak.
+  - F3 at 45 and at 90 fails.
+- **Trials:** 27 strategy configs; 3 stay in reserve.
