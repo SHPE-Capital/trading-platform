@@ -22,6 +22,8 @@ export interface RoundTrip {
   qtyWanted: number | null;
   /** Entry bar close (signal-level; the fill is the next bar's open). */
   entryClose: number;
+  /** Real entry fill (exit meta entryPrice): next bar's open plus costs. Fill vs entryClose = cost of waiting a bar. */
+  entryFill?: number | null;
   entryZ: number | null;
   edgeBps: number | null;
   reason: string;
@@ -60,6 +62,7 @@ export function pairRoundTrips(signals: readonly StrategySignal[]): RoundTrip[] 
         qty: Math.abs(e.qty),
         qtyWanted: num(e.meta?.qtyWanted),
         entryClose: Number(e.meta?.close),
+        entryFill: num(s.meta?.entryPrice),
         entryZ: num(e.meta?.vwapZ),
         edgeBps: num(e.meta?.edgeBps),
         reason: String(s.meta?.reason),

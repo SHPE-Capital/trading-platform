@@ -14,6 +14,8 @@
  *   TEAM3_CONFIG           JSON overrides vs the strategy defaults, e.g. {"useVwapRegime":true}
  *   TEAM3_STRATEGY         team3_reversal (default) | beginner_reversal (the A00 reference) | any catalog type
  *   TEAM3_EXCLUDE          comma list of the group's symbols to leave out, e.g. SPY,QQQ (Q2.5)
+ *   TEAM3_DUMP             directory: write <backtestId>.trades.json (round trips + every symbol's bars) for offline analysis
+ *   TEAM3_COST_SCALE       diagnostic: multiply slippage, half spread and commission by this (e.g. 0.5). Never an ablation row.
  *   TEAM3_DIAGNOSTIC       zero_cost: no slippage, spread or commission. Measures the GROSS edge.
  *                          Diagnostic only: never report it as an ablation row.
  *
@@ -21,6 +23,8 @@
  * applies (drawdown stop at -$5,000, .env caps), which the protocol forbids.
  */
 
+import fs from "node:fs";
+import path from "node:path";
 import { BacktestEngine } from "../core/backtest/backtestEngine";
 import { BacktestLoader } from "../core/backtest/backtestLoader";
 import { SupabaseBarCache } from "../adapters/supabase/barCacheRepository";
@@ -72,6 +76,12 @@ async function main(): Promise<void> {
 
   const config = protocolBacktestConfig(strategyConfig, WINDOWS[windowKey], definition.algorithmVersion);
   if (diagnostic === "zero_cost") config.fillModel = { slippageBps: 0, halfSpreadBps: 0, commissionPerShare: 0 };
+  const costScale = process.env.TEAM3_COST_SCALE?.trim() ? Number(process.env.TEAM3_COST_SCALE) : null;
+  if (costScale !== null) {
+    if (!(costScale >= 0) || diagnostic) throw new Error("TEAM3_COST_SCALE must be >= 0 and not combined with TEAM3_DIAGNOSTIC");
+    // Protocol costs: slippage 5 bps, half spread 2 bps (fill model default), $0.005/share.
+    config.fillModel = { slippageBps: 5 * costScale, halfSpreadBps: 2 * costScale, commissionPerShare: 0.005 * costScale };
+  }
 
   // Record every signal (meta included) so the row can report exit reasons and hold times.
   const signals: StrategySignal[] = [];
@@ -143,7 +153,7 @@ async function main(): Promise<void> {
   const entryZ = entries.map((x) => Math.abs(Number(x.meta?.vwapZ)));
 
   const row = {
-    strategy: type, version: definition.algorithmVersion, diagnostic: diagnostic || null,
+    strategy: type, version: definition.algorithmVersion, diagnostic: diagnostic || (costScale !== null ? `cost_scale_${costScale}` : null),
     group, universe: universeOf(symbols), excluded: exclude.length ? exclude : null, window: windowKey, config: overrides,
     netPnl: +netPnl.toFixed(2),
     trades: m.totalTrades,
@@ -171,6 +181,18 @@ async function main(): Promise<void> {
     events: result.event_count,
   };
   console.log("TEAM3_ROW " + JSON.stringify(row));
+
+  const dumpDir = process.env.TEAM3_DUMP?.trim();
+  if (dumpDir) {
+    fs.mkdirSync(dumpDir, { recursive: true });
+    const file = path.join(dumpDir, `${result.id}.trades.json`);
+    fs.writeFileSync(file, JSON.stringify({
+      backtestId: result.id, row, symbols, config: strategyConfig,
+      roundTrips: pairRoundTrips(signals),
+      bars: Object.fromEntries([...barsBySymbol].map(([s, bs]) => [s, bs.map((b) => [b.ts, b.open, b.high, b.low, b.close, b.volume])])),
+    }));
+    logger.info("runtime/team3Backtest: dump written", { file });
+  }
 
   // Save after printing: the summary row (backtestId) must land; orders/fills are best effort,
   // because very active strategies (beginner_reversal) can exceed what one upload accepts.
