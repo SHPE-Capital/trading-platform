@@ -26,7 +26,7 @@ import { SupabaseBarCache } from "../adapters/supabase/barCacheRepository";
 import { createTickSource } from "../adapters/alpaca/historicalData";
 import { buildBacktestStrategies } from "../core/backtest/strategyFactory";
 import { insertBacktestResult, insertBacktestOrders, insertBacktestFills } from "../adapters/supabase/repositories";
-import { protocolBacktestConfig } from "../strategies/team3Reversal/contract/protocol";
+import { TEAM3_WINDOWS, protocolBacktestConfig } from "../strategies/team3Reversal/contract/protocol";
 import { dailyPnl } from "../strategies/team3Reversal/contract/daily";
 import { STRATEGY_DEFINITIONS, configProblem } from "../config/strategyDefaults";
 import type { BaseStrategyConfig, StrategySignal } from "../types/strategy";
@@ -36,10 +36,7 @@ const GROUPS: Record<string, string[]> = {
   core: ["SPY", "QQQ", "AAPL", "MSFT", "GOOGL", "AMZN"],
   momentum: ["SPY", "NVDA", "AMD", "MU", "TSLA", "META"],
 };
-const WINDOWS: Record<string, { startDate: string; endDate: string }> = {
-  in: { startDate: "2026-09-01T00:00:00Z", endDate: "2026-10-15T23:59:59Z" },
-  out: { startDate: "2026-10-16T00:00:00Z", endDate: "2026-11-13T23:59:59Z" },
-};
+const WINDOWS: Record<string, { startDate: string; endDate: string }> = TEAM3_WINDOWS;
 
 
 async function main(): Promise<void> {
@@ -157,7 +154,13 @@ async function main(): Promise<void> {
 
   // Save after printing: the summary row (backtestId) must land; orders/fills are best effort,
   // because very active strategies (beginner_reversal) can exceed what one upload accepts.
-  await insertBacktestResult(result, ownerId);
+  // The curve is stored slim (ts, isoTs, equity, cash, initialCapital): every reader only draws
+  // ts/equity, and full snapshots (positions per point) hit the DB statement timeout on A00.
+  // Same shape as slimEquityCurve on origin/JC (UPSTREAM.md #11).
+  const slimCurve = curve.map((p) => ({
+    ts: p.ts, isoTs: p.isoTs ?? new Date(p.ts).toISOString(), equity: p.equity, cash: p.cash, initialCapital: p.initialCapital,
+  }));
+  await insertBacktestResult({ ...result, equity_curve: slimCurve as unknown as typeof curve }, ownerId);
   try {
     await insertBacktestOrders(result.id, result.orders ?? []);
     await insertBacktestFills(result.id, result.fills ?? []);

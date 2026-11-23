@@ -76,7 +76,7 @@ At most **2 values per knob**. Feature rows count. Diagnostic (D) and validation
 A goal can't borrow from the next goal. Unused slots go to the reserve. *(The split is proposed; the lead confirms or edits it before R3 starts.)*
 
 ### Trial ledger
-The ledger is [ablation.md](ablation.md). **Every row goes in it**, including diagnostics, features and failed runs. Each row records: window and dates, config (vs defaults), VERSION, backtestId, budget goal, mechanism-check value, and reportable yes/no. Never edit a row; supersede it. The paper states the real number of configs tried.
+The ledger is [ablation.md](ablation.md). **Every row goes in it**, including diagnostics, features and failed runs. Each row records: ID, R goal, window/dates, universe, config diff vs baseline, VERSION, backtestId, reportable yes/no, net P&L, trades, bps/trade, reversion share, and exit mix (plus win %, payoff, PF, Sharpe, max DD). Never edit a row; supersede it. The paper states the real number of configs tried.
 
 ### Out-of-sample ban
 - **No OOS day (2026-10-16 → 2026-11-13) is used before Stage 3.** That covers runs, plots, peeks, "just checking" and diagnostics. One OOS look on a feature leaks into every later decision, and then relativeToSpy or any other feature can't be claimed as evidence.

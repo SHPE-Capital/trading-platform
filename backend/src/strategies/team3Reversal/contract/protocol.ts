@@ -39,6 +39,15 @@ export const TEAM3_PROTOCOL = {
   } satisfies Partial<RiskConfig>,
 };
 
+/**
+ * Research windows (docs/team3/ablation.md header). IS = 32 trading days, OOS = 21.
+ * OOS is locked until Stage 3 (MASTER.md, Testing rules).
+ */
+export const TEAM3_WINDOWS: Record<"in" | "out", { startDate: string; endDate: string }> = {
+  in: { startDate: "2026-09-01T00:00:00Z", endDate: "2026-10-15T23:59:59Z" },
+  out: { startDate: "2026-10-16T00:00:00Z", endDate: "2026-11-13T23:59:59Z" },
+};
+
 /** A BacktestConfig for a Team 3 run under the protocol. */
 export function protocolBacktestConfig(
   strategyConfig: BaseStrategyConfig, window: { startDate: string; endDate: string }, strategyVersion?: number,
