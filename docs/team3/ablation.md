@@ -114,6 +114,17 @@ S2, 2026-11-23, code VERSION 7, IS only. One step at a time, each judged against
 
 **Final S2 stack = C3** (`useRelativeToSpy`, `rtsMinOwnShare` 0.7, `useCrowdSplit`). New configs spent: 3 (C3, C3b, C4); C1/C2 reproduce R1-01/RS-02 and aren't counted. The best stack still loses money: Momentum −$496, −5.25 bps/trade, gross +8.98 against ~14.2 round-trip cost.
 
+### S5 formed strategy: F1 SPY divergence (from the S4 survey)
+
+`useSpyDivergence` (code VERSION 7 + S5 block; **VERSION bump needed**). Entry, replacing the baseline's: 1.5 ≤ |z| < 3.5, edge ≥ 0, **SPY stretched ≥ 1σ the opposite way** this minute, and **1–2 VWAP crossings** in the last 60 bars. Side from z, SPY not traded, baseline exits. Bins are taken unchanged from [strategy-survey.md](results/strategy-survey.md), candidate 1; nothing was tuned. Parity with the switch off: Mom `c2ed2883-035c-4eb5-9ae4-5094f7551cd5` = A04, Core `bcc56d58-626c-47d6-90b5-43b084cbb206` = A03.
+
+| ID | Universe | backtestId | Net $ | Trades | Net bps/trade | Win % | Exits (n, avg gross bps) | Boot vs V4 (Δ $/day, share, halves) | Boot vs C3 | Notes |
+|---|---|---|---|---|---|---|---|---|---|---|
+| F1 | Momentum | `2a628992-074b-4673-aabe-06555b13792a` | **+107.16** | 32 | **+7.14** | 46.9 | target 10 (+59.4), time 22 (−6.2) | +54.84, 1.000, +31.75 / +77.94 | +18.85, 0.976, halves +9.77 (0.75) / +27.92 (0.99) | **First positive net.** But only 32 trades on 18 days, and the top 2 days carry 73% of the gross. |
+| F1 | Core | `9756c285-ffa2-4dcf-9fb4-3c53a97ba6cd` | −44.64 | 14 | −6.57 | 42.9 | time 11 (−7.8), target 3 (+31.4) | +93.88, 1.000 | — | Same direction per trade (−15.32 → −6.57 bps), still negative; 14 trades. |
+
+**Reading.** Per trade, this is the first rule whose edge clearly exceeds the round trip on Momentum. It's also the most-searched result in the project: 1 of 1,309 surveyed groups, with a trade count too small for the halves or a bootstrap to carry much weight. Against V4 the bootstrap is uninformative, because a rule that barely trades beats a losing one by default. Treat it as a **hypothesis for Stage 3**, not evidence.
+
 ### Checks
 
 **65/65 target exits (2026-11-23):** Core (A03) and Momentum (A04) both end with 65 `target` exits. This is a coincidence, not shared or overwritten output:
