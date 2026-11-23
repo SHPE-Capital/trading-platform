@@ -12,6 +12,9 @@ Rules: [MASTER, Testing rules](../MASTER.md#testing-rules) and [Parallel Stage 2
 
 | ID | Config vs baseline | Mechanism check and predicted direction | Definitions |
 |---|---|---|---|
+| R5-V1/V2 | `{}` (switch off) on Momentum / Core | parity: net, trades, exit mix identical to A04 / A03 | n/a |
+| R5-01 | `{"useVolSizing":true,"riskPerTradeUsd":5}` | `capBindShare` ↓ vs baseline (baseline fixed sizing ≈ 0, so the real test is that it stays low, i.e. sizes mostly inside the caps) and `symbolPnlStdUsd` ↓ vs baseline | cap binds = entry qty < qtyWanted |
+| R5-02 | `{"useCrowdSplit":true}` | `clusterDayMaxDdUsd` ↓ vs baseline (also expect `worstClusterLossUsd` less negative) | **Cluster** = ≥ 3 same-side entries with the same signal minute. **Cluster day** = ET day with ≥ 1 cluster, taken from that run's own entries (crowd split doesn't change which entries fire). **Cluster-day max DD** = max drawdown of the equity path made of only cluster days' daily P&L, in date order. Trade $ = qty × entry close × gross bps (before exit costs). |
 
 ## Results
 
