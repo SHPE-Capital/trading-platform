@@ -70,6 +70,7 @@ export const team3ReversalManifest: StrategyManifest = {
     // ---- R4 (team3/r4) ----
     // ---- end R4 ----
     // ---- R5 (team3/r5) ----
+    { key: "useCrowdSplit", label: "Sizing: split size across same-way stretched symbols", kind: "boolean" },
     // ---- end R5 ----
     // ---- RSPY (team3/rspy) ----
     // ---- end RSPY ----

@@ -79,6 +79,8 @@ export interface Team3ReversalConfig extends BaseStrategyConfig {
   // ---- R4 (team3/r4) ----
   // ---- end R4 ----
   // ---- R5 (team3/r5) ----
+  /** crowdSplit: divide the wanted size by how many symbols are stretched the same way this minute (min 1 share). */
+  useCrowdSplit: boolean;
   // ---- end R5 ----
   // ---- RSPY (team3/rspy) ----
   // ---- end RSPY ----
@@ -132,6 +134,7 @@ export const DEFAULT_TEAM3_REVERSAL_CONFIG: Omit<Team3ReversalConfig, "id" | "sy
   // ---- R4 (team3/r4) ----
   // ---- end R4 ----
   // ---- R5 (team3/r5) ----
+  useCrowdSplit: false,
   // ---- end R5 ----
   // ---- RSPY (team3/rspy) ----
   // ---- end RSPY ----
@@ -177,6 +180,7 @@ export function validateTeam3ReversalConfig(c: Team3ReversalConfig, filters: Fil
   // ---- R4 (team3/r4) ----
   // ---- end R4 ----
   // ---- R5 (team3/r5) ----
+  if (typeof c.useCrowdSplit !== "boolean") fail("useCrowdSplit must be true or false");
   // ---- end R5 ----
   // ---- RSPY (team3/rspy) ----
   // ---- end RSPY ----
