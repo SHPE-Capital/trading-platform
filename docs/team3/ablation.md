@@ -130,6 +130,17 @@ Configs used: **21 of ~30** (S5: F1, F2).
 
 **Reading.** Per trade, F1 is the first rule whose edge clearly exceeds the round trip on Momentum. It's also the most-searched result in the project: 1 of 1,309 surveyed groups, with a trade count too small for the halves or a bootstrap to carry much weight. Against V4 the bootstrap is uninformative, because a rule that barely trades beats a losing one by default. Treat it as a **hypothesis for Stage 3**, not evidence.
 
+### Signal series F3–F5: pre-registration (2026-11-23, before any run)
+
+**F3–F5 selection rule.**
+- **Candidates:** the 26 flagged set (b) groups in [strategy-survey.md](results/strategy-survey.md), minus F1 and F2, minus the crowded-minute groups (dropped earlier as one-off episodes).
+- **Score:** engine-feasible simulated net bps/trade on Momentum (one position per symbol, next-open fill, protocol costs), from `runtime/team3Analysis/evaluate.ts`.
+- **To qualify:** ≥ 60 simulated Momentum trades, best day ≤ 30% of the edge sum, both halves ≥ 0, and Core of the same sign.
+- **Pick:** the top 3, with **at most 2 containing "SPY opposite"**.
+- **Before ranking:** the evaluator must reproduce the F1 and F2 engine runs.
+
+**Try count:** 21 → 24.
+
 ### Checks
 
 **65/65 target exits (2026-11-23):** Core (A03) and Momentum (A04) both end with 65 `target` exits. This is a coincidence, not shared or overwritten output:
