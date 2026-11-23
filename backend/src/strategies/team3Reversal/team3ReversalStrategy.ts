@@ -33,7 +33,7 @@ import { toSignal, signedQty, type Decision } from "./contract/emit";
 import { SessionHistory } from "./history";
 import { costGate, entryIdea, exitReason, sessionWindow, type EntryIdea } from "./rules";
 import { capQty, grossUsd } from "./risk";
-import { fixedNotionalQty, volTargetQty } from "./sizing";
+import { crowdSize, crowdSplitQty, fixedNotionalQty, volTargetQty } from "./sizing";
 
 export class Team3ReversalStrategy extends BaseStrategy {
   readonly type: StrategyType = "team3_reversal";
@@ -99,7 +99,9 @@ export class Team3ReversalStrategy extends BaseStrategy {
     if (blockedBy) return this.skip(`${symbol} ${idea.side} blocked by ${blockedBy}`);
 
     // 6. SIZE: fixed dollars (or vol), capped per symbol and in gross, shorts included
-    const want = c.useVolSizing ? volTargetQty(earlier, bar, c.riskPerTradeUsd) : fixedNotionalQty(c.tradeUsd, bar.close);
+    const base = c.useVolSizing ? volTargetQty(earlier, bar, c.riskPerTradeUsd) : fixedNotionalQty(c.tradeUsd, bar.close);
+    const crowd = c.useCrowdSplit ? crowdSize(c.symbols.map((s) => this.history.vwap(s, c.vwapWindowBars)?.z ?? null), idea.side, c.entryZ) : 1;
+    const want = c.useCrowdSplit ? crowdSplitQty(base, crowd) : base;
     const gross = grossUsd(this.book.exposures(), frame.priceOf);
     const qty = capQty({ want, price: bar.close, symbolUsd: 0, grossUsd: gross }, { maxSymbolUsd: c.maxPositionSizeUsd, maxGrossUsd: c.maxGrossUsd });
     if (qty <= 0) return this.skip(`${symbol} ${idea.side}: no room (wanted ${want}, gross $${gross.toFixed(0)})`);
@@ -108,7 +110,7 @@ export class Team3ReversalStrategy extends BaseStrategy {
     return this.send(bar, {
       kind: "enter", symbol, side: idea.side, qty, trigger: idea.z,
       meta: { ...this.entryMeta(prev, bar, idea, vwap), filtersOn: active.map((f) => f.name).join(",") || "none",
-        sizing: c.useVolSizing ? "vol" : "fixed", qtyWanted: want, grossUsdBefore: gross },
+        sizing: c.useVolSizing ? "vol" : "fixed", qtyWanted: want, grossUsdBefore: gross, ...(c.useCrowdSplit ? { crowd, qtyBase: base } : {}) },
     });
   }
 
