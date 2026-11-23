@@ -12,6 +12,10 @@ Rules: [MASTER, Testing rules](../MASTER.md#testing-rules) and [Parallel Stage 2
 
 | ID | Config vs baseline | Mechanism check and predicted direction | Definitions |
 |---|---|---|---|
+| RS-V1, RS-V2 | parity: all switches off (`{}`), Momentum and Core | must equal A04 / A03 exactly (net, trades) | none |
+| RS-V3 | exclusion-only reference: `TEAM3_EXCLUDE=SPY` (Momentum), `TEAM3_EXCLUDE=SPY,QQQ` (Core), config `{}` (= R2 Q2.5) | reference for the RS rows | none |
+| RS-01 | `{"useRelativeToSpy":true,"rtsMinOwnShare":0.5}` | reversion share up (> 17.6% Mom / 15.5% Core); |beta| of per-trade gross bps on SPY holding-window bps down vs baseline | own share = abs(ret(stock) - ret(SPY)) / abs(ret(stock)) over the bar's history window (up to lookbackBars=30 earlier session bars) to this bar, beta 1; SPY missing at either end blocks; SPY, QQQ not traded. Metric `mechanism.rspy`: `beta` = OLS slope of pnlBpsGross on SPY bps entryTs->exitTs (signal closes); `betaSideAdj` uses SPY bps signed by trade side (reported, not the pre-registered check) |
+| RS-02 | `{"useRelativeToSpy":true,"rtsMinOwnShare":0.7}` | same as RS-01, stronger | same |
 
 ## Results
 
