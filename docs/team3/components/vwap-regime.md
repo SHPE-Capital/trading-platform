@@ -31,4 +31,4 @@ VWAP-deviation regime classification (SSRN 6438039). **(citation unverified: no 
 `vwapRegime.test.ts`: blocks with no VWAP, blocks with few crossings, allows with enough. `vwap.test.ts`: VWAP math, daily reset, crossing count.
 
 ## Ablation rows
-(fill in after testing)
+- **R2-02** (`useVwapRegime=true`, 4 / 60, VERSION 6 code vs V4 baseline, in-sample): Momentum net −1,647.82 → −1,166.47, trades 370 → 144, bps/trade −9.52 → −17.26, bootstrap share 0.887 (CI [−8.25, 40.74]), halves disagree (−22.49 / +52.57 $/day). Core −3,048.74 → −1,755.27, share 1.00. Time stops on trend days 65 → 18 (Mom), 93 → 32 (Core), as predicted. **Fails the keep rule** (halves). The filter removes trades instead of picking better ones. See [ledger-r2.md](../results/ledger-r2.md).
