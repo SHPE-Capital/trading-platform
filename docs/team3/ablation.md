@@ -16,7 +16,7 @@ This file is the **trial ledger**. Every run goes in it, including diagnostics, 
 
 **Columns.** `Goal` = the R budget bucket (R3, R1, R2-rts, R2, R5, R4, reserve), or `—` for S0/S1 anchors and D/V rows, which don't count toward the ~20. `Config vs baseline` is the change against the current baseline (VERSION 4 defaults, A03 Core / A04 Momentum). `Rep` = reportable as a result (diagnostics: no). `Rev %` = reversion share = `target` exits ÷ trades (the R3/R1 mechanism check). `Exit mix` = count by exit reason (avg gross bps where logged). Window `IS` = 2026-09-01 → 2026-10-15 (32 trading days). Sharpe = runner `sharpeDaily` over the 32 days.
 
-**Stage 2 configs used: 4 of ~25** (R3 4/4: done). Goals after R3 run in parallel; their rows are in [`results/ledger-<goal>.md`](results/) until the combining step merges them here.
+**Stage 2 configs used: 16 of ~30** (R3 4, R1 3, R2 2, R4 3 incl. 1 reserve, R5 2, rspy 2). The parallel goals' rows are merged below in [Stage 2 (parallel goal sessions)](#stage-2-parallel-goal-sessions); full rows stay in [`results/ledger-<goal>.md`](results/).
 
 | ID | Date run | Goal | Window (dates) | Universe | Config vs baseline | VER | backtestId | Rep | Net P&L $ | Trades | Avg bps/trade | Rev % | Exit mix | Win % | Payoff | PF | Sharpe | Max DD $ (%) | Compared to | Notes |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -42,6 +42,8 @@ This file is the **trial ledger**. Every run goes in it, including diagnostics, 
 | A12 | 2026-11-23 | R3 | IS 09-01 → 10-15 | Core | `useCostGate` on, `captureShare` 0.6 | 5 | `814e5952-edb2-4923-a7d8-403c9a6565c2` | yes | -2,750.48 | 376 | -15.35 | 13.3 | time 298 (−13.1), target 50 (+34.2), stop 20 (−42.1), close 8 (−3.4) | 27.7 | — | 0.27 | -19.60 | 2,783.45 (2.78%) | A03 | Q3.2 (R3, feature #2). Boot vs A03: +$9.32/day, share 1.000, CI [6.90, 11.88]; halves +10.49 / +8.15. Control: same sign. |
 | V3 | 2026-11-23 | — (V) | IS 09-01 → 10-15 | Core | none (VERSION 6 defaults: every switch off) | 6 | `9f566a33-bde5-4578-8474-be15536f684e` | no | -3,048.74 | 419 | -15.32 | 15.5 | time 324, target 65, stop 22, close 8 | 27.2 | — | 0.26 | -21.46 | 3,085.70 (3.08%) | A03 | V6 parity (Rivera's merge, Stage 2 config blocks): identical to A03. |
 | V4 | 2026-11-23 | — (V) | IS 09-01 → 10-15 | Momentum | none (VERSION 6 defaults: every switch off) | 6 | `b180610a-1361-4b80-a7a1-a0fdc6d8fa5e` | no | -1,647.82 | 370 | -9.52 | 17.6 | time 283, target 65, close 11, stop 11 | 37.3 | — | 0.59 | -10.24 | 1,745.12 (1.74%) | A04 | V6 parity: identical to A04. The bootstrap's one-id form picked A04 for it by itself (Δ = 0). |
+| V5 | 2026-11-23 | — (V) | IS 09-01 → 10-15 | Core | none (VERSION 7 defaults: every switch off, all five Stage 2 branches merged) | 7 | `5a7cd486-dc60-4159-a1dd-88049fb61bb0` | no | -3,048.74 | 419 | -15.32 | 15.5 | time 324, target 65, stop 22, close 8 | 27.2 | — | 0.26 | -21.46 | 3,085.70 (3.08%) | A03 | V7 parity (combining-step merge): identical to A03. |
+| V6 | 2026-11-23 | — (V) | IS 09-01 → 10-15 | Momentum | none (VERSION 7 defaults: every switch off, all five Stage 2 branches merged) | 7 | `bab63751-fcad-4088-ad02-6c3019d66cb2` | no | -1,647.82 | 370 | -9.52 | 17.6 | time 283, target 65, close 11, stop 11 | 37.3 | — | 0.59 | -10.24 | 1,745.12 (1.74%) | A04 | V7 parity: identical to A04. |
 
 ¹ A01/A02 ran before the runner logged exit reasons. The counts come from D1/D2. Exit decisions depend on bars only, not on fill costs, so a cost run and its zero-cost twin exit identically; D3 = A03 and D4 = A04 confirm it. Gross bps per reason differ between the twins (cost runs include entry slippage, about 7 bps lower), so only the counts are carried over.
 
@@ -57,6 +59,41 @@ R3 (costs) batch, 2026-11-23: 4 configs × 2 universes, VERSION 5, IS only, agai
 | A11/A12 Q3.2 | cost gate 0.6 | +$242 | → −8.88 | 17.2 | 1.000 | agree | +$298 | 13.3 | fails: mechanism |
 
 **Reading.** Every row passes 4 of the 5 conditions: net up on Momentum, share ≥ 0.8, halves agree, Core agrees. All fail the mechanism check, because the reversion share falls instead of rising. The gain comes from **trading less**: 370 → 305–338 trades, about 14 bps saved on each trade dropped. The trades that remain don't revert more often. All four rows are one knob in practice: the cost gate is a price-aware edge threshold (0.6 ≈ 23.7 bps, 0.5 ≈ 28.4), and the results are monotonic in that threshold (23.7 < 25 < 28.4 < 35). The best value (35) sits at the edge of the tested range, so the optimum isn't bracketed. Every row still loses money: the best is −8.21 bps/trade, about +6 gross against ~14 cost.
+
+### Stage 2 (parallel goal sessions)
+
+Five sessions (R1, R2, R4, R5, rspy), 2026-11-23, code VERSION 6 plus each goal's block (merged as VERSION 7), IS only, each row against the frozen V4 baseline (A03 Core / A04 Momentum). Source ledgers: [r1](results/ledger-r1.md), [r2](results/ledger-r2.md), [r4](results/ledger-r4.md), [r5](results/ledger-r5.md), [rspy](results/ledger-rspy.md). Bootstrap share and halves (Δ $/day) are vs the row's own universe baseline. Keep = all five conditions, judged on the Momentum row; the Core row is the control. Nothing promoted.
+
+| ID | Universe | Config vs baseline | backtestId | Net $ | Trades | bps/trade | Rev % | Boot share | Halves (1st / 2nd) | Keep |
+|---|---|---|---|---|---|---|---|---|---|---|
+| R1-01 | Momentum | `entryZ` 2.5 | `2ffd7d2f-94ed-4a3d-93de-0e3cba195811` | -421.22 | 136 | -6.65 | 14.7 | 1.000 | +22.02 / +54.64 | **fail** (mechanism: rev ↓) |
+| R1-01 | Core | `entryZ` 2.5 | `fd8216a4-7195-4981-bc6f-03b6dae0dc47` | -1,560.94 | 193 | -17.02 | 15.0 | 1.000 | +33.33 / +59.66 | Core agrees |
+| R1-02 | Momentum | `entryZ` 1.5 | `bd4a5174-5c0a-4b97-9dcb-47297f61892c` | -4,863.24 | 820 | -12.66 | 17.0 | 0.000 | −110.61 / −90.35 | **fail** (only Core holds) |
+| R1-02 | Core | `entryZ` 1.5 | `5440b283-53d4-4ac9-b20b-2f89c723800e` | -5,834.05 | 880 | -13.96 | 17.0 | 0.000 | −75.91 / −98.17 | Core agrees (negative) |
+| R1-03 | Momentum | `useTurnEntry` | `dcc2c7f1-f247-4f29-9f09-40d21b8d50b1` | -943.92 | 222 | -9.11 | 10.4 | 0.9945 | +7.47 / +36.53 | **fail** (mechanism split: adverse5 ↓, rev ↓) |
+| R1-03 | Core | `useTurnEntry` | `fd66a000-5649-44d8-b3c9-143a7ee519ab` | -1,996.94 | 276 | -15.21 | 8.3 | 1.000 | +23.23 / +42.51 | Core agrees |
+| R2-01 | Momentum −SPY | `TEAM3_EXCLUDE=SPY` (universe row) | `89339dc1-7a0c-4c9d-9913-6a88ce2f8404` | -1,108.59 | 296 | -7.97 | 19.9 | 1.00 | +16.56 / +17.14 | **PASS** (mechanism marginal) |
+| R2-01 | Core −SPY,QQQ | `TEAM3_EXCLUDE=SPY,QQQ` | `42fdfe7c-1a5a-4453-8504-02efb32f4a35` | -1,969.73 | 270 | -15.07 | 17.0 | 1.00 | +36.05 / +31.39 | Core agrees |
+| R2-02 | Momentum | `useVwapRegime` | `204d264f-32d7-4dd3-8faa-f8aad8865f8d` | -1,166.47 | 144 | -17.26 | 23.6 | 0.887 | −22.49 / +52.57 | **fail** (halves) |
+| R2-02 | Core | `useVwapRegime` | `1afe1572-9552-4de2-a334-bc0c4c514fa8` | -1,755.27 | 187 | -19.79 | 23.0 | 1.00 | +25.71 / +55.13 | Core agrees |
+| R4-01 | Momentum | `stopZ` 100 (stop off) | `a63dc5c0-6de7-4c6f-b141-21a6a8a3f17f` | -1,561.09 | 364 | -9.17 | 18.4 | 0.973 | +1.93 / +3.49 | **PASS** (CI touches 0) |
+| R4-01 | Core | `stopZ` 100 | `1ec24eb7-5bcb-4e5a-bc4c-2493a5049275` | -2,914.99 | 405 | -15.16 | 16.3 | 0.951 | +4.96 / +3.40 | Core same sign (its mechanism contradicts) |
+| R4-02 | Momentum | `usePartwayTarget`, `tpFraction` 0.5 | `fe45ee9e-b317-43de-bb68-133fe59bbd56` | -2,054.18 | 400 | -10.97 | 56.0 | 0.041 | −19.29 / −6.11 | **fail** |
+| R4-02 | Core | same | `8a230d6b-b9e7-4c88-90a3-d923788b0588` | -3,228.56 | 451 | -15.07 | 57.4 | 0.146 | −12.35 / +1.11 | Core same sign (negative) |
+| R4-03 | Momentum | `useScaleOut`, `tpFraction` 0.5 (reserve slot) | `f46a5b1c-7d54-4b6f-9d66-b9fd7b834e3d` | -1,730.77 | 370 trips | -10.00 | 54.1 | 0.248 | −5.17 / −0.02 | **fail** |
+| R4-03 | Core | same | `972c3a53-7458-471a-a120-a544a7de105b` | -3,037.19 | 419 trips | -15.26 | 55.4 | 0.538 | −5.64 / +6.36 | Core flat |
+| R5-01 | Momentum | `useVolSizing`, `riskPerTradeUsd` 5 | `0e098f15-8020-4abb-8a0f-c0c8dbe7a5e3` | -2,573.53 | 370 | -11.73 | 17.6 | 0.000 | −30.38 / −27.48 | **fail** (all 5) |
+| R5-01 | Core | same | `b4e14b25-92e6-4073-b7e9-d6752c65f038` | -4,972.06 | 419 | -15.48 | 15.5 | 0.000 | −44.88 / −75.33 | Core agrees (negative) |
+| R5-02 | Momentum | `useCrowdSplit` | `97caa151-ca62-41b9-94a0-db5e98dbdb0f` | -1,038.37 | 370 | -8.05 | 17.6 | 0.995 | +8.43 / +29.66 | **PASS** (~25% less notional) |
+| R5-02 | Core | same | `d0207c12-ffbe-4d88-89b1-7b946ff769d6` | -1,995.27 | 419 | -14.53 | 15.5 | 1.000 | +29.55 / +36.29 | Core agrees |
+| RS-01 | Momentum | `useRelativeToSpy`, `rtsMinOwnShare` 0.5 | `1c945ce4-7b31-4d59-a2ef-a965da7bd3e9` | -1,037.56 | 286 | -7.73 | 19.9 | 1.00 | +13.97 / +24.17 | **PASS** (vs exclusion-only ref: share 0.849, halves disagree) |
+| RS-01 | Core | same | `f6589210-732f-4999-aa4f-c87dcca374a4` | -1,800.74 | 247 | -15.07 | 16.6 | 1.00 | +40.22 / +37.78 | Core agrees |
+| RS-02 | Momentum | `useRelativeToSpy`, `rtsMinOwnShare` 0.7 | `87633870-7774-47c2-89b8-1c6d72dd8652` | -912.10 | 258 | -7.55 | 19.8 | 0.9999 | +15.25 / +30.74 | **PASS** (vs ref: share 0.866, halves disagree) |
+| RS-02 | Core | same | `1cd15a22-8185-4f93-8ec5-77123c40d660` | -1,426.88 | 217 | -13.58 | 19.4 | 1.00 | +46.81 / +54.56 | Core agrees |
+
+**V and D rows (don't count toward the budget):** R1-V1, R1-V2; R2-D1, R2-D2 (baseline reruns), R2-D3, R2-D4 (zero-cost twins of R2-01: gross −0.77 Core, +6.26 Momentum); R4-V1…R4-V4; R5-V1, R5-V2; RS-V1, RS-V2 (parity), RS-V3 (exclusion-only reference, = R2-01). Every parity row reproduces A03/A04 exactly. VERSION 7 parity: V5/V6 above.
+
+**Reading.** Five rows pass the keep rule against the baseline: R2-01, R4-01, R5-02, RS-01, RS-02. Every one still loses money; each loses less than the baseline by trading less, betting smaller, or dropping the index names. RS-02 already contains R2-01's exclusion, so they aren't stacked. Why each row fails or passes weakly: [why-individual.md](results/why-individual.md).
 
 ### Checks
 
