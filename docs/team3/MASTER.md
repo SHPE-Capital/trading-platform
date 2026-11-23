@@ -105,7 +105,7 @@ After the **R3 budget and the relativeToSpy filter rows** are done: if Momentum'
 - Net: A00 −$37.8k, A00m −$48.4k, A03 −$3.0k, A04 −$1.6k.
 - Decision: Momentum is the main universe.
 - IS day count: **32** (the docs were right). The runs reported 33 because the engine stamps its final equity point with the wall clock, adding a phantom ~$0 day ([UPSTREAM #10](UPSTREAM.md)). Fixed in `contract/daily.ts`; daily Sharpe and % days profitable were recomputed. R6's Sharpe SE (±2.8 IS) is unchanged.
-- Open: confirm the matching 65/65 target exits aren't a shared-output bug.
+- 65/65 target exits (Core and Momentum): **a coincidence, not shared output.** Distinct backtestIds, saved configs hold the right symbol lists, orders are disjoint except SPY, and gross target bps differ (+28.4 vs +52.2). Per symbol, SPY (in both universes) has 6 targets in each with an identical exit row, as expected. The other five symbols happen to sum to 59 in both (Core QQQ 13, MSFT 15, GOOGL 11, AMZN 11, AAPL 9; Momentum AMD 15, META 13, MU 12, TSLA 10, NVDA 9). Reruns reproduced A03 and A04 exactly. See [ablation.md](ablation.md#checks).
 
 ### What the paper can claim
 Firmly: cost and trade-count reductions vs Beginner Reversal, and the direction of each component's effect with CIs. **Not** a significant Sharpe or general profitability. State the number of configs tried.
