@@ -12,6 +12,9 @@
  *   TEAM3_GROUP            core (default) | momentum   (AGENT_GUIDE.md §2)
  *   TEAM3_WINDOW           in (default) | out          (ablation.md header)
  *   TEAM3_CONFIG           JSON overrides vs the strategy defaults, e.g. {"useVwapRegime":true}
+ *   TEAM3_STRATEGY         team3_reversal (default) | beginner_reversal (the A00 reference) | any catalog type
+ *   TEAM3_DIAGNOSTIC       zero_cost: no slippage, spread or commission. Measures the GROSS edge.
+ *                          Diagnostic only: never report it as an ablation row.
  *
  * Why not runtime/backtest.ts: it passes no riskConfig, so the platform default
  * applies (drawdown stop at -$5,000, .env caps), which the protocol forbids.
@@ -24,9 +27,8 @@ import { createTickSource } from "../adapters/alpaca/historicalData";
 import { buildBacktestStrategies } from "../core/backtest/strategyFactory";
 import { insertBacktestResult, insertBacktestOrders, insertBacktestFills } from "../adapters/supabase/repositories";
 import { protocolBacktestConfig } from "../strategies/team3Reversal/contract/protocol";
-import { team3ReversalManifest } from "../strategies/team3Reversal/manifest";
-import { Team3ReversalStrategy } from "../strategies/team3Reversal/team3ReversalStrategy";
-import type { BaseStrategyConfig } from "../types/strategy";
+import { STRATEGY_DEFINITIONS, configProblem } from "../config/strategyDefaults";
+import type { BaseStrategyConfig, StrategySignal } from "../types/strategy";
 import { logger } from "../utils/logger";
 
 const GROUPS: Record<string, string[]> = {
@@ -50,23 +52,34 @@ async function main(): Promise<void> {
   if (!WINDOWS[windowKey]) throw new Error(`TEAM3_WINDOW must be one of ${Object.keys(WINDOWS).join(", ")}`);
   const overrides = JSON.parse(process.env.TEAM3_CONFIG?.trim() || "{}") as Record<string, unknown>;
 
+  const type = process.env.TEAM3_STRATEGY?.trim() || "team3_reversal";
+  const definition = STRATEGY_DEFINITIONS[type];
+  if (!definition) throw new Error(`unknown TEAM3_STRATEGY ${type}`);
+  const diagnostic = process.env.TEAM3_DIAGNOSTIC?.trim() || "";
+  if (diagnostic && diagnostic !== "zero_cost") throw new Error("TEAM3_DIAGNOSTIC must be zero_cost or empty");
+
   const strategyConfig = {
-    ...team3ReversalManifest.defaultConfig,
+    ...definition.defaultConfig,
     ...overrides,
     symbols: GROUPS[group],
-    type: team3ReversalManifest.type,
+    type,
   } as unknown as BaseStrategyConfig;
-  const problem = team3ReversalManifest.validate?.(strategyConfig as unknown as Record<string, unknown>);
+  const problem = configProblem(type, strategyConfig as unknown as Record<string, unknown>);
   if (problem) throw new Error(`invalid config: ${problem}`);
 
-  const config = protocolBacktestConfig(strategyConfig, WINDOWS[windowKey], Team3ReversalStrategy.VERSION);
+  const config = protocolBacktestConfig(strategyConfig, WINDOWS[windowKey], definition.algorithmVersion);
+  if (diagnostic === "zero_cost") config.fillModel = { slippageBps: 0, halfSpreadBps: 0, commissionPerShare: 0 };
+
+  // Record every signal (meta included) so the row can report exit reasons and hold times.
+  const signals: StrategySignal[] = [];
   const engine = new BacktestEngine(new BacktestLoader({ cache: new SupabaseBarCache() }), { tickSource: createTickSource });
-  const result = await engine.run(config, () => buildBacktestStrategies(config));
+  const result = await engine.run(config, () => buildBacktestStrategies(config).map((st) => {
+    const evaluate = st.evaluate.bind(st);
+    st.evaluate = (ctx) => { const sig = evaluate(ctx); if (sig) signals.push(sig); return sig; };
+    return st;
+  }));
   if (result.status !== "completed") throw new Error(`backtest ${result.status}: ${result.error_message ?? ""}`);
 
-  await insertBacktestResult(result, ownerId);
-  await insertBacktestOrders(result.id, result.orders ?? []);
-  await insertBacktestFills(result.id, result.fills ?? []);
 
   // ---- ablation columns -------------------------------------------------
   const m = result.metrics;
@@ -95,8 +108,23 @@ async function main(): Promise<void> {
     if (peak - p.equity > maxDd) { maxDd = peak - p.equity; maxDdPct = maxDd / peak; }
   }
 
+  // Team 3 only: exit-reason mix, hold times and signal-level gross bps (close vs real entry fill, before exit costs).
+  const exits = signals.filter((x) => x.meta?.kind === "exit");
+  const byReason: Record<string, { n: number; avgGrossBps: number; avgBars: number }> = {};
+  for (const x of exits) {
+    const r = String(x.meta?.reason);
+    const b = (byReason[r] ??= { n: 0, avgGrossBps: 0, avgBars: 0 });
+    b.n += 1;
+    b.avgGrossBps += (Number(x.meta?.pnlBpsGross) - b.avgGrossBps) / b.n;
+    b.avgBars += (Number(x.meta?.barsHeld) - b.avgBars) / b.n;
+  }
+  for (const b of Object.values(byReason)) { b.avgGrossBps = +b.avgGrossBps.toFixed(2); b.avgBars = +b.avgBars.toFixed(1); }
+  const targetBars = exits.filter((x) => x.meta?.reason === "target").map((x) => Number(x.meta?.barsHeld)).sort((a, b) => a - b);
+  const entries = signals.filter((x) => x.meta?.kind === "enter");
+  const entryZ = entries.map((x) => Math.abs(Number(x.meta?.vwapZ)));
+
   const row = {
-    version: Team3ReversalStrategy.VERSION,
+    strategy: type, version: definition.algorithmVersion, diagnostic: diagnostic || null,
     group, window: windowKey, config: overrides,
     netPnl: +netPnl.toFixed(2),
     trades: m.totalTrades,
@@ -112,10 +140,24 @@ async function main(): Promise<void> {
     worstDay: daily.length ? +Math.min(...daily).toFixed(2) : null,
     pctDaysProfitable: daily.length ? +((daily.filter((d) => d > 0).length / daily.length) * 100).toFixed(1) : null,
     engineSharpe: m.sharpeRatio ?? null,
+    exitReasons: exits.length ? byReason : null,
+    medianTargetBars: targetBars.length ? targetBars[Math.floor(targetBars.length / 2)] : null,
+    entriesPastStop: entries.length ? entryZ.filter((z) => z >= Number((strategyConfig as unknown as Record<string, unknown>).stopZ ?? Infinity)).length : null,
+    medianEntryZ: entryZ.length ? +[...entryZ].sort((a, b) => a - b)[Math.floor(entryZ.length / 2)].toFixed(2) : null,
     backtestId: result.id,
     events: result.event_count,
   };
   console.log("TEAM3_ROW " + JSON.stringify(row));
+
+  // Save after printing: the summary row (backtestId) must land; orders/fills are best effort,
+  // because very active strategies (beginner_reversal) can exceed what one upload accepts.
+  await insertBacktestResult(result, ownerId);
+  try {
+    await insertBacktestOrders(result.id, result.orders ?? []);
+    await insertBacktestFills(result.id, result.fills ?? []);
+  } catch (err) {
+    logger.warn("runtime/team3Backtest: summary saved, but orders/fills were not", { id: result.id, err: String(err) });
+  }
   logger.info("runtime/team3Backtest: saved", { id: result.id });
 }
 

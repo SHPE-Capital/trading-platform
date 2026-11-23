@@ -1,7 +1,7 @@
 # Volatility-Targeted Sizing
 
 **Type:** sizing  ·  **File:** `sizing.ts` (used in `team3ReversalStrategy.ts`, step 7)
-**Switch:** `useVolSizing`  ·  **Knobs:** `riskPerTradeUsd` = 25 (also uses `lookbackBars`; capped by `maxPositionSizeUsd`, `maxGrossUsd`)  ·  **Added in VERSION:** 2 · **Fixed in VERSION 3:** session-only returns
+**Switch:** `useVolSizing`  ·  **Knobs:** `riskPerTradeUsd` = 5 (was 25 until VERSION 4: at 25 a typical 1-min σ of ~0.05% sized ~$50k, so every trade hit the $10k cap) (also uses `lookbackBars`; capped by `maxPositionSizeUsd`, `maxGrossUsd`)  ·  **Added in VERSION:** 2 · **Fixed in VERSION 3:** session-only returns
 
 ## Main idea
 Decide how many dollars a typical 1-minute move may cost us, then buy fewer shares of jumpy stocks and more of calm ones.
@@ -27,7 +27,7 @@ Shares, rounded down:
 $$ qty = \left\lfloor \frac{riskPerTradeUsd}{\sigma \times price} \right\rfloor $$
 
 ## Source
-Hood & Raughtigan (2024), *Volatility Targeting Is Trendy* (SSRN 4773781). Took: inverse-volatility sizing. Note: they find its alpha comes mostly from trend exposure, which our reversal strategy doesn't have. So we claim risk normalization only. Further reading: Moreira & Muir (2017); Harvey et al. (2018).
+Hood & Raughtigan (2024), *Volatility Targeting Is Trendy* (SSRN 4773781; paper confirmed via secondary coverage, SSRN page not opened: check the ID). Took: inverse-volatility sizing. Note: they find its alpha comes mostly from trend exposure, which our reversal strategy doesn't have. So we claim risk normalization only. Further reading: Moreira & Muir (2017); Harvey et al. (2018).
 
 ## Tests
 `volSizing.test.ts`: needs enough history, zero vol → 0, calm > jumpy, matches the formula. `team3ReversalStrategy.test.ts` (vol sizing, real engine): sized by vol and capped by $ per symbol; config rejects a short lookback.

@@ -25,7 +25,7 @@ The trade is allowed when:
 $$ \text{crossings in last } vwapWindowBars \text{ bars} \ \ge\ minVwapCrossings $$
 
 ## Source
-VWAP-deviation regime classification (SSRN 6438039). Took: rules-only (no ML) classification into rotational vs trend. Changed: we use a crossing count as the rule, since the paper gives no implementation detail.
+VWAP-deviation regime classification (SSRN 6438039). **(citation unverified: no record of SSRN 6438039 found on 2026-11-22; confirm or replace before the paper)** Took: rules-only (no ML) classification into rotational vs trend. Changed: we use a crossing count as the rule, since the paper gives no implementation detail.
 
 ## Tests
 `vwapRegime.test.ts`: blocks with no VWAP, blocks with few crossings, allows with enough. `vwap.test.ts`: VWAP math, daily reset, crossing count.
