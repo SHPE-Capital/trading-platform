@@ -159,6 +159,39 @@ Parity with `useConditionEntry` off: Mom `7e745d10-…` = A04, Core `54554839-�
 
 Configs used: **22 of ~30** (F3). F3 is the only signal positive on both universes in-sample, on about 30 trades per universe, picked under a rule relaxed after the data had been seen.
 
+### L series: maxHoldBars on the working candidates (pre-registration, 2026-11-23, before any run)
+
+Lead decision: hold longer, testing only the in-sample winners, F1 and F3 (the final candidates). V4 and C3 appear in the offline sweep for context only. The rule was fixed in the plan before the sweep ran; the values below are read off [hold-sweep.md](results/hold-sweep.md), which is offline and spends 0 configs.
+
+**Rule, per parent (F1, F3):**
+- **L-mid:** the H in (30, 60] with the best sweep Momentum net bps.
+- **L-long:** the H in (60, 180] with the best sweep Momentum net bps.
+- An H qualifies only if Core's sweep net at that H isn't below Core's at 30.
+
+**Rows:**
+
+| Row | Config | Picked because |
+|---|---|---|
+| L1 | F1 + `"maxHoldBars":50` | 35, 40 and 45 fail the Core check |
+| L2 | F1 + `"maxHoldBars":150` | 180 fails Core |
+| L3 | F3 + `"maxHoldBars":45` | 60 fails Core |
+| L4 | F3 + `"maxHoldBars":90` | best long H; 120 (the lead's offline test) is reported next to it |
+
+**Neighbour checks (conditional):** L5 and L6 each rerun a passing L row at the next grid H toward 30, and only if that row passes.
+
+**Each row:**
+- runs once per universe, in-sample, with `TEAM3_DUMP`;
+- is bootstrapped against its parent (F1 `2a628992`/`9756c285`, F3 `f27874dd`/`d47f1ca0`, two-ID form, same universe) and against V4 (one-ID form).
+
+**True test vs the parent:** all five must hold.
+1. Net bps/trade goes up.
+2. Bootstrap share ≥ 0.8.
+3. Both halves agree.
+4. Core doesn't contradict.
+5. The mechanism holds: matched on symbol + entry time, the time-stop losses removed are larger than the winners lost, and the real trade count against the fixed-entry sweep is reported.
+
+**Try count:** 22 → 26, or 28 if both neighbour checks run.
+
 ### Checks
 
 **65/65 target exits (2026-11-23):** Core (A03) and Momentum (A04) both end with 65 `target` exits. This is a coincidence, not shared or overwritten output:
