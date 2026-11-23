@@ -41,7 +41,7 @@ The short, binding list. Every Stage 2 row follows it, and where anything else i
    3. the row's **mechanism check moves** in the predicted direction ([table](#mechanism-checks-measurable-before-a-row-runs));
    4. **both in-sample halves agree**: the bootstrap's `firstHalf` and `secondHalf` mean differences are both > 0 (`halvesAgree` and positive);
    5. **Core doesn't contradict it**: Core's effect has the same sign, or is flat.
-3. **Budget.** About **25 configs in total** (raised from 20 on 2026-11-23; the extra 5 are reserve), and **R3 gets 4**. **Every run goes in the ledger** ([ablation.md](ablation.md)), including diagnostics and failed runs.
+3. **Budget.** About **30 configs in total** (raised from 20 to 25 on 2026-11-23, the extra 5 being reserve; then to 30 the same day, 5 more for the combining step), and **R3 gets 4**. **Every run goes in the ledger** ([ablation.md](ablation.md)), including diagnostics and failed runs.
 4. **Out-of-sample.** The OOS days (**2026-10-16 → 2026-11-13**) are **never run before Stage 3**. No runs, plots or peeks. `team3Bootstrap.ts` refuses OOS runs.
 5. **Promotion.** **Agents never promote a change to the baseline. The human decides.** An agent reports whether a row passes the keep rule and stops.
 
@@ -70,7 +70,7 @@ The bootstrap tool exists (`runtime/team3Bootstrap.ts`, built in groundwork).
 ### Order
 R3 ran first (done). The rest runs **in parallel** under [Parallel Stage 2](#parallel-stage-2) below: R1, R2, R4, R5 and the relativeToSpy **filter**, each as an on/off test against the frozen V4 baseline. What stays in order: the combining step after every session reports, then the relativeToSpy **new-signal** version on the combined stack, then Stage 3 once.
 
-### Budget: ~25 configs, split by goal
+### Budget: ~30 configs, split by goal
 At most **2 values per knob**. Feature rows count. Diagnostic (D) and validation (V) rows don't count, but they still go in the ledger. The same config run twice (runs are deterministic) counts once.
 
 | Goal | Configs | Covers |
@@ -81,11 +81,13 @@ At most **2 values per knob**. Feature rows count. Diagnostic (D) and validation
 | R2 relativeToSpy filter | 2 | filter at cutoffs 0.5 and 0.7 |
 | R4 exits | 2 (+1) | `stopZ` off (Q2.6), partway target; **+1 from the reserve, pre-registered:** scale-out-half runs only if the partway target fails the keep rule |
 | R5 portfolio | 2 | `useVolSizing` (`riskPerTradeUsd` 5), crowd split |
-| Combining + relativeToSpy new signal | 5 | one config per winner added, then the new-signal version and its retune |
-| Reserve | 5 | only by a lead decision written in the ledger |
-| **Total** | **25** | |
+| Combining + relativeToSpy new signal | 10 (5 + 5 more, lead 2026-11-23) | one config per winner added, then the new-signal version and its retune |
+| Reserve | 5 (1 used by R4-03; 4 unused) | only by a lead decision written in the ledger |
+| **Total** | **~30** | |
 
-A goal can't borrow from another goal. Unused slots go to the reserve. **Each extra config is another chance to keep something that only worked by luck**, and 21 OOS days can't fully separate real effects from lucky ones. So the paper states the real N, and the luck-only best IS Sharpe at that N (R6 formula: about **5.6 annualized at N = 25, T = 32**) is the bar an IS Sharpe is read against.
+The combining step judges each step with a size-neutral **"true test"**: net bps/trade must improve, plus bootstrap share ≥ 0.8, halves agree, Core doesn't contradict, and the step's mechanism moves. The net-$ keep rule alone rewards rows that just bet smaller or trade less.
+
+A goal can't borrow from another goal. Unused slots go to the reserve. **Each extra config is another chance to keep something that only worked by luck**, and 21 OOS days can't fully separate real effects from lucky ones. So the paper states the real N, and the luck-only best IS Sharpe at that N (R6 formula: about **5.6 annualized at N = 25, T = 32**; recompute at N = 30) is the bar an IS Sharpe is read against.
 
 ### Trial ledger
 The ledger is [ablation.md](ablation.md). **Every row goes in it**, including diagnostics, features and failed runs. Each row records: ID, R goal, window/dates, universe, config diff vs baseline, VERSION, backtestId, reportable yes/no, net P&L, trades, bps/trade, reversion share, and exit mix (plus win %, payoff, PF, Sharpe, max DD). Never edit a row; supersede it. The paper states the real number of configs tried.
