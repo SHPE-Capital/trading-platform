@@ -16,7 +16,7 @@ This file is the **trial ledger**. Every run goes in it, including diagnostics, 
 
 **Columns.** `Goal` = the R budget bucket (R3, R1, R2-rts, R2, R5, R4, reserve), or `—` for S0/S1 anchors and D/V rows, which don't count toward the ~20. `Config vs baseline` is the change against the current baseline (VERSION 4 defaults, A03 Core / A04 Momentum). `Rep` = reportable as a result (diagnostics: no). `Rev %` = reversion share = `target` exits ÷ trades (the R3/R1 mechanism check). `Exit mix` = count by exit reason (avg gross bps where logged). Window `IS` = 2026-09-01 → 2026-10-15 (32 trading days). Sharpe = runner `sharpeDaily` over the 32 days.
 
-**Stage 2 configs used: 16 of ~30** (R3 4, R1 3, R2 2, R4 3 incl. 1 reserve, R5 2, rspy 2). The parallel goals' rows are merged below in [Stage 2 (parallel goal sessions)](#stage-2-parallel-goal-sessions); full rows stay in [`results/ledger-<goal>.md`](results/).
+**Stage 2 configs used: 19 of ~30** (R3 4, R1 3, R2 2, R4 3 incl. 1 reserve, R5 2, rspy 2, combining 3 of 10: C3, C3b, C4). The parallel goals' rows are merged below in [Stage 2 (parallel goal sessions)](#stage-2-parallel-goal-sessions); full rows stay in [`results/ledger-<goal>.md`](results/). The combining step is in [S2 combination](#s2-combination).
 
 | ID | Date run | Goal | Window (dates) | Universe | Config vs baseline | VER | backtestId | Rep | Net P&L $ | Trades | Avg bps/trade | Rev % | Exit mix | Win % | Payoff | PF | Sharpe | Max DD $ (%) | Compared to | Notes |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -94,6 +94,25 @@ Five sessions (R1, R2, R4, R5, rspy), 2026-11-23, code VERSION 6 plus each goal'
 **V and D rows (don't count toward the budget):** R1-V1, R1-V2; R2-D1, R2-D2 (baseline reruns), R2-D3, R2-D4 (zero-cost twins of R2-01: gross −0.77 Core, +6.26 Momentum); R4-V1…R4-V4; R5-V1, R5-V2; RS-V1, RS-V2 (parity), RS-V3 (exclusion-only reference, = R2-01). Every parity row reproduces A03/A04 exactly. VERSION 7 parity: V5/V6 above.
 
 **Reading.** Five rows pass the keep rule against the baseline: R2-01, R4-01, R5-02, RS-01, RS-02. Every one still loses money; each loses less than the baseline by trading less, betting smaller, or dropping the index names. RS-02 already contains R2-01's exclusion, so they aren't stacked. Why each row fails or passes weakly: [why-individual.md](results/why-individual.md).
+
+### S2 combination
+
+S2, 2026-11-23, code VERSION 7, IS only. One step at a time, each judged against the stack so far (Momentum main, Core control) with the size-neutral **true test** ([MASTER, Budget](MASTER.md#budget-30-configs-split-by-goal)): net bps/trade improves AND bootstrap share ≥ 0.8 AND halves agree AND Core doesn't contradict AND the step's mechanism moves. Start = V4 baseline (Momentum −1,647.82, 370 trades, −9.52 bps, gross +4.70; Core −3,048.74, 419, −15.32, gross −1.08). V7 parity: Core `5a7cd486-dc60-4159-a1dd-88049fb61bb0`, Momentum `bab63751-fcad-4088-ad02-6c3019d66cb2` (= A03/A04). V4 zero-cost twins: Core `cbb3b46d-3d57-4b0d-b859-6d2a258d195e`, Momentum `2af1685c-5af1-47f2-bb21-aede6fcdfab6`. Bootstrap: `runtime/team3Bootstrap.ts`, Δ $/day. Write-up: [results/combination.md](results/combination.md).
+
+| ID | Universe | Config | backtestId (cost) | Net $ | Trades | bps/trade | Zero-cost gross bps (id) | vs | Boot Δ $/day, share | Halves (1st / 2nd) | Keep | Notes |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| C1 | Momentum | `{"entryZ":2.5}` (= R1-01, not counted) | `2333278a-2b44-4135-a458-47907cbe802b` | -421.22 | 136 | -6.65 | +7.55 (`4e6e54c0-22d9-4587-b743-d69163709b19`) | V4 | (R1-01: share 1.000) | (R1-01: +22.02 / +54.64) | **REJECT** | Rev 14.7% (↓ from 17.6): R1 mechanism fails. |
+| C1 | Core | same | `70fdc41c-14ff-43dd-a8c4-b713140cd751` | -1,560.94 | 193 | -17.02 | −2.78 (`e7394291-5851-47a9-882c-694c8af0e63e`) | V4 | — | — | Core contradicts | Size-neutral measures worse: bps −15.32 → −17.02, gross −1.08 → −2.78. Stack stays at V4. |
+| C2 | Momentum | `{"useRelativeToSpy":true,"rtsMinOwnShare":0.7}` (= RS-02, not counted) | `af6fecf6-909f-463a-abe6-e0a91108be12` | -912.10 | 258 | -7.55 | +6.67 (`96dc4098-801b-436c-8ee3-05aac16aa919`) | V4 | (RS-02: share 0.9999) | (RS-02: +15.25 / +30.74) | **KEEP** | Rev 19.8% (↑). |
+| C2 | Core | same | `285fff58-f4f9-44fa-800b-210839e70d6d` | -1,426.88 | 217 | -13.58 | +0.71 (`030c4a94-b361-4791-9f39-dd6813ea94c8`) | V4 | (RS-02: 1.00) | (RS-02: +46.81 / +54.56) | Core agrees | Core gross turns positive. |
+| C3 | Momentum | C2 + `"useCrowdSplit":true` | `990a5e75-c896-48db-b7b4-daa97e865ce4` | -495.93 | 258 | -5.25 | +8.98 (`3b41d04d-aa4d-4b92-bdc4-93f64fab37d9`) | C2 | +13.01, 0.977, CI [0.2, 28.08] | +6.73 (0.846) / +19.28 (0.957) | **KEEP** | vs V4: +36.00, 1.000, halves +21.98 / +50.02. Crowd-split mechanism (cluster-day DD) not measurable: rspy leaves 0 clusters. Avg notional/trade 4,681 → 3,661. |
+| C3 | Core | same | `4a40e3df-cd9d-46a5-a8ff-7df21f3b28f3` | -1,020.26 | 217 | -12.06 | +2.23 (`e0c5f5eb-a55d-46d3-a35c-3ee042150d9f`) | C2 | +12.71, 1.000 | agree | Core agrees | vs V4: +63.39, 1.000. Notional 4,842 → 3,899. |
+| C3b | Momentum | C2 + `"tradeUsd":3950` (size-matched control for C3) | `09bcf657-b709-4073-9124-a5bcb4edd772` | -702.72 | 258 | -7.43 | — | — | C3 vs C3b: +6.46, 0.879, CI [−3.77, 18.32] | +5.41 (0.812) / +7.51 (0.780) | control | About half of C3's $ gain over C2 is just smaller bets; the reallocation adds real per-dollar edge on Momentum. |
+| C3b | Core | same | `1409458d-a6ff-4e88-993f-40c5e9e3c9bd` | -1,106.17 | 217 | -13.59 | — | — | C3 vs C3b: +2.68, 0.758 | +5.52 / −0.15 (disagree) | control | Reallocation effect weak on Core. |
+| C4 | Momentum | C3 + `"stopZ":100` | `07dfbd56-9909-4b50-8e1b-b65dac410bb8` | -450.00 | 256 | -4.80 | — | C3 | +1.44, 0.828 | +1.73 / +1.14 | **REJECT** | Passes on Momentum alone, but Core contradicts. |
+| C4 | Core | same | `454accb9-1e05-4d4d-a4b6-247c0e360415` | -1,068.04 | 211 | -12.86 | — | C3 | −1.49, 0.106 | — | Core contradicts | Core bps worse (−12.06 → −12.86); p5 trade −73.5 → −78.0. |
+
+**Final S2 stack = C3** (`useRelativeToSpy`, `rtsMinOwnShare` 0.7, `useCrowdSplit`). New configs spent: 3 (C3, C3b, C4); C1/C2 reproduce R1-01/RS-02 and aren't counted. The best stack still loses money: Momentum −$496, −5.25 bps/trade, gross +8.98 against ~14.2 round-trip cost.
 
 ### Checks
 
