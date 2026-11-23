@@ -52,7 +52,7 @@ Every row uses the standard protocol and only `team3ReversalConfig.ts` fields, p
 
 All tools run on **daily P&L** rebuilt from the saved `equity_curve` (last equity per day, differenced).
 
-1. **T1. Paired day-bootstrap CI of a row's improvement.** Take `d[i] = pnlRow[i] − pnlComparedTo[i]` on the same days, then:
+1. **T1. Paired day-bootstrap CI of a row's improvement.** *Built 2026-11-23: `npx ts-node src/runtime/team3Bootstrap.ts <baselineId> <rowId>` (logic in `contract/bootstrap.ts`, tests in `bootstrap.test.ts`). It uses iid day resampling, 10,000 draws and a fixed seed, and reports share B > A, a 95% CI and both IS halves. It refuses OOS runs before Stage 3. The stationary-bootstrap variant below is not built.* Take `d[i] = pnlRow[i] − pnlComparedTo[i]` on the same days, then:
    `const ci=(d:number[],B=1e4)=>{const m=Array.from({length:B},()=>d.reduce(s=>s+d[(Math.random()*d.length)|0],0)/d.length).sort((a,b)=>a-b);return[m[B*.025|0],m[B*.975|0]];}`
    - Guards against calling noise an improvement. Pairing cancels the shared market-day noise, which is exactly what the one-change ablation needs.
    - Source: Efron & Tibshirani (1993). For day-to-day dependence, use the stationary bootstrap with mean block ≈ 2–3 days (Politis & Romano 1994).

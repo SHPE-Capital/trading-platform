@@ -41,4 +41,13 @@ This file is the **trial ledger**. Every run goes in it, including diagnostics, 
 - per symbol (runner `exitsBySymbol`), SPY trades in both universes and has an identical exit row in each (time 62, target 6, stop 5, close 1). Per-symbol state is independent and the gross caps never bound, so that's expected. The other five symbols differ one by one but both sum to 59: Core QQQ 13, MSFT 15, GOOGL 11, AMZN 11, AAPL 9; Momentum AMD 15, META 13, MU 12, TSLA 10, NVDA 9
 - rerunning both on 2026-11-23 reproduced them exactly (A03 `1872fd42-331a-4a8c-a488-460231ac8552`, A04 `b6efa90f-fca1-4677-85df-199d2b56d1bc`), which also shows the runs are deterministic
 
+**Paired day-bootstrap smoke test (2026-11-23, `runtime/team3Bootstrap.ts`, 10,000 draws, seed 20261123):** M1 (VERSION 3 → 4), B vs A on the same 32 IS days. Halves: 09-01 → 09-23 and 09-24 → 10-15 (16 days each).
+
+| Pair | Mean Δ $/day | Share B > A | 95% CI $/day | 1st half (Δ, share) | 2nd half (Δ, share) | Halves agree |
+|---|---|---|---|---|---|---|
+| Core: A03 vs A01 | +3.31 | 0.9995 | [0.28, 7.58] | +4.65, 0.965 | +1.97, 0.991 | yes |
+| Momentum: A04 vs A02 | +0.83 | 0.782 | [−1.07, 3.06] | +1.51, 0.726 | +0.14, 0.595 | yes |
+
+M1 is a correction (Stage 1), not a Stage 2 row, so the keep rule doesn't apply to it. The numbers are only a check that the tool runs on real data.
+
 Median bars to `target`: 13 (Core), 14 (Momentum). Cost runs' "gross" exit bps include entry slippage, so they read ~7 bps lower than the diagnostics.

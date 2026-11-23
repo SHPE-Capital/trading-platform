@@ -98,7 +98,7 @@ Each would follow the AGENT_GUIDE checklist (switch, `status: "stub"` until it h
 | 5 | **Crowd split** | `want / count(symbols stretched past entryZ on the same side this minute)` | a cluster is one market bet; also removes alphabetical rationing | R5 | sizing |
 | 6 | **Partway target** | `short ? z <= c.exitZ : z >= -c.exitZ`, paired with an edge gate measured to `exitZ` | take the most likely part of the reversion | R4 | baseline exit |
 
-**Evaluation tool (R6):** a paired day-bootstrap CI on daily P&L (row minus its "Compared to" row, same days), rebuilt from the saved `equity_curve`. It needs no engine change.
+**Evaluation tool (R6, built: `runtime/team3Bootstrap.ts`):** a paired day-bootstrap CI on daily P&L (row minus its "Compared to" row, same days), rebuilt from the saved `equity_curve`. It needs no engine change.
 
 ## What the paper can honestly claim (R6)
 
