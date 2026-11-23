@@ -73,6 +73,8 @@ export interface Team3ReversalConfig extends BaseStrategyConfig {
   costCommissionPerShare: number;
   // ==== Stage 2 per-goal blocks (fields): each session adds lines ONLY between its own markers ====
   // ---- R1 (team3/r1) ----
+  /** turnEntry (R1): enter on the bar that turns back toward VWAP while still stretched; side from z. */
+  useTurnEntry: boolean;
   // ---- end R1 ----
   // ---- R2 (team3/r2) ----
   // ---- end R2 ----
@@ -126,6 +128,7 @@ export const DEFAULT_TEAM3_REVERSAL_CONFIG: Omit<Team3ReversalConfig, "id" | "sy
   costCommissionPerShare: 0.005,
   // ==== Stage 2 per-goal blocks (defaults): each session adds lines ONLY between its own markers ====
   // ---- R1 (team3/r1) ----
+  useTurnEntry: false,
   // ---- end R1 ----
   // ---- R2 (team3/r2) ----
   // ---- end R2 ----
@@ -171,6 +174,7 @@ export function validateTeam3ReversalConfig(c: Team3ReversalConfig, filters: Fil
   atLeast0(c.costCommissionPerShare, "costCommissionPerShare");
   // ==== Stage 2 per-goal blocks (validation): each session adds lines ONLY between its own markers ====
   // ---- R1 (team3/r1) ----
+  if (typeof c.useTurnEntry !== "boolean") fail(`useTurnEntry must be true or false (got ${c.useTurnEntry})`);
   // ---- end R1 ----
   // ---- R2 (team3/r2) ----
   // ---- end R2 ----
