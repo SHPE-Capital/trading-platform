@@ -41,7 +41,7 @@ The short, binding list. Every Stage 2 row follows it, and where anything else i
    3. the row's **mechanism check moves** in the predicted direction ([table](#mechanism-checks-measurable-before-a-row-runs));
    4. **both in-sample halves agree**: the bootstrap's `firstHalf` and `secondHalf` mean differences are both > 0 (`halvesAgree` and positive);
    5. **Core doesn't contradict it**: Core's effect has the same sign, or is flat.
-3. **Budget.** About **20 configs in total**, and **R3 gets 4**. **Every run goes in the ledger** ([ablation.md](ablation.md)), including diagnostics and failed runs.
+3. **Budget.** About **25 configs in total** (raised from 20 on 2026-11-23; the extra 5 are reserve), and **R3 gets 4**. **Every run goes in the ledger** ([ablation.md](ablation.md)), including diagnostics and failed runs.
 4. **Out-of-sample.** The OOS days (**2026-10-16 → 2026-11-13**) are **never run before Stage 3**. No runs, plots or peeks. `team3Bootstrap.ts` refuses OOS runs.
 5. **Promotion.** **Agents never promote a change to the baseline. The human decides.** An agent reports whether a row passes the keep rule and stops.
 
@@ -68,23 +68,24 @@ Change **one thing per row**, compared against the *current* baseline. The five 
 The bootstrap tool exists (`runtime/team3Bootstrap.ts`, built in groundwork).
 
 ### Order
-**R3 → R1 → R2 → R5 → R4**, set by the S0 diagnostics. Within each R, the setting rows and that goal's feature run together, next to each other.
+R3 ran first (done). The rest runs **in parallel** under [Parallel Stage 2](#parallel-stage-2) below: R1, R2, R4, R5 and the relativeToSpy **filter**, each as an on/off test against the frozen V4 baseline. What stays in order: the combining step after every session reports, then the relativeToSpy **new-signal** version on the combined stack, then Stage 3 once.
 
-### Budget: ~20 configs, split by goal
-At most **2 values per knob**. Feature rows count. Diagnostic (D) and validation (V) rows don't count, but they still go in the ledger.
+### Budget: ~25 configs, split by goal
+At most **2 values per knob**. Feature rows count. Diagnostic (D) and validation (V) rows don't count, but they still go in the ledger. The same config run twice (runs are deterministic) counts once.
 
 | Goal | Configs | Covers |
 |---|---|---|
-| R3 costs | 4 | `minEdgeBps` (2 values), cost-aware edge |
-| R1 liquidity | 3 | `entryZ` (2 values), fade-the-turn |
-| R2 relativeToSpy | 3 | filter at 2 cutoffs, + new-signal version only if the filter is kept |
-| R2 other | 2 | `useVwapRegime`, SPY/QQQ exclusion |
-| R5 portfolio | 3 | `useVolSizing` (`riskPerTradeUsd=5`), crowd split, interaction |
-| R4 exits | 2 | `stopZ` off, partway target |
-| Reserve | 3 | only by a lead decision written in the ledger |
-| **Total** | **20** | |
+| R3 costs | 4 (**used**) | `minEdgeBps` 25/35, cost gate 0.5/0.6: A05–A12 |
+| R1 liquidity | 3 | `entryZ` 2.5 and 1.5, fade-the-turn (`useTurnEntry`) |
+| R2 regime | 2 | SPY/QQQ exclusion (Q2.5), `useVwapRegime` (Q2.7) |
+| R2 relativeToSpy filter | 2 | filter at cutoffs 0.5 and 0.7 |
+| R4 exits | 2 (+1) | `stopZ` off (Q2.6), partway target; **+1 from the reserve, pre-registered:** scale-out-half runs only if the partway target fails the keep rule |
+| R5 portfolio | 2 | `useVolSizing` (`riskPerTradeUsd` 5), crowd split |
+| Combining + relativeToSpy new signal | 5 | one config per winner added, then the new-signal version and its retune |
+| Reserve | 5 | only by a lead decision written in the ledger |
+| **Total** | **25** | |
 
-A goal can't borrow from the next goal. Unused slots go to the reserve. *(The split is proposed; the lead confirms or edits it before R3 starts.)*
+A goal can't borrow from another goal. Unused slots go to the reserve. **Each extra config is another chance to keep something that only worked by luck**, and 21 OOS days can't fully separate real effects from lucky ones. So the paper states the real N, and the luck-only best IS Sharpe at that N (R6 formula: about **5.6 annualized at N = 25, T = 32**) is the bar an IS Sharpe is read against.
 
 ### Trial ledger
 The ledger is [ablation.md](ablation.md). **Every row goes in it**, including diagnostics, features and failed runs. Each row records: ID, R goal, window/dates, universe, config diff vs baseline, VERSION, backtestId, reportable yes/no, net P&L, trades, bps/trade, reversion share, and exit mix (plus win %, payoff, PF, Sharpe, max DD). Never edit a row; supersede it. The paper states the real number of configs tried.
@@ -95,19 +96,32 @@ The ledger is [ablation.md](ablation.md). **Every row goes in it**, including di
 - Don't carve a validation set out of the IS days. There are too few to split again. Use the paired bootstrap and the two-halves check instead.
 
 ### Mechanism checks (measurable before a row runs)
-A row can't run until its mechanism check is in the runner output.
+A row can't run until its mechanism check is in the runner output (`mechanism` in `TEAM3_ROW`, one file per goal in `runtime/team3Metrics/`). Baseline reversion share: **15.5% Core (A03), 17.6% Momentum (A04)**.
 
-| Goal | Mechanism check | Measurable now? |
-|---|---|---|
-| R3 costs, R1 liquidity | reversion share (target exits / trades), exit-reason mix, avg gross bps | **yes** |
-| R2 relativeToSpy | trade P&L moves less with SPY: β of per-trade P&L to SPY's return over the same holding window | **no: add the metric in groundwork** |
-| R2 vwapRegime | worst-day P&L | yes (per-day P&L) |
-| R5 crowd split | max drawdown, and worst same-minute cluster loss | **no: add the metric in groundwork** |
-| R5 vol sizing | P&L std across symbols | yes |
-| R4 exits | exit mix, P&L tails | yes |
+| Goal | Mechanism check |
+|---|---|
+| R3 costs | reversion share (target exits / trades), exit-reason mix, avg gross bps |
+| R1 liquidity | reversion share ↑; adverse move over the first 5 bars after entry ↓ |
+| R2 SPY/QQQ exclusion | Core's edge before costs moves toward Momentum's (zero-cost twins are D rows) |
+| R2 vwapRegime | fewer time-stop exits on trend days (trend day defined in the ledger before the run) |
+| R2 relativeToSpy filter | reversion share ↑; β of per-trade P&L to SPY's return over the holding window ↓ |
+| R4 stop off | the trades the baseline stopped don't turn into bigger losses |
+| R4 partway target / scale-out | win rate ↑, avg win ↓, net holds |
+| R5 vol sizing | share of entries where the cap binds (qty < qtyWanted) ↓ |
+| R5 crowd split | max drawdown on cluster days ↓ (cluster defined in the ledger before the run) |
 
-### Stopping rule (pre-registered 2026-11-23)
-After the **R3 budget and the relativeToSpy filter rows** are done: if Momentum's **edge before costs** is still well short of the ~14–15 bps round-trip cost (**< 10 bps/trade**), **stop tuning.** Don't spend the reserve chasing it. Freeze the current config, run Stage 3 once, and write the paper as *"why this doesn't beat costs, and what each part contributes"*: each component's effect with its CI, plus the cost decomposition. That's an honest, reportable result. *(The 10 bps threshold is proposed; the lead confirms it before R3.)*
+## Parallel Stage 2
+Decided by the lead on 2026-11-23. It applies to every goal after R3.
+- **Frozen baseline:** VERSION 4 defaults, A03 Core / A04 Momentum. The code is VERSION 6; with every switch off it reproduces A03/A04 exactly (ablation V1–V4). Nobody promotes anything.
+- **One worktree and branch per goal:** `.claude/worktrees/t3-<goal>` on `team3/<goal>`, branched from `team3/research`. Goals: `r1`, `r2`, `r4`, `r5`, `rspy`. Prompts: [`results/prompts/`](results/prompts/).
+- **Each session writes its own ledger**, `results/ledger-<goal>.md`, never `ablation.md`. They're merged into `ablation.md` in the combining step.
+- **No VERSION changes and no shared defaults in sessions.** A session writes "VERSION bump needed"; the combining step sets VERSION 7. Config fields go only inside that goal's marked block in `team3ReversalConfig.ts` and `manifest.ts`; new tests go in a new file.
+- **Bootstrap per universe:** `team3Bootstrap.ts <rowId>` picks the row's own baseline (Momentum → A04, Core → A03) and refuses mixed universes.
+- **Combining step:** merge the branches and set VERSION 7. Then add the keep-rule winners **one at a time, strongest first**. Each addition is one config on both universes, bootstrapped against the stack so far (per universe) and against V4. Stop when the next winner adds nothing. Then run the relativeToSpy new-signal version on the stack and retune. Freeze, log, and run Stage 3 once.
+- **The cost of parallel:** sessions can't see how their changes interact. The combining step is where interactions show up.
+
+### Stopping rule: dropped (2026-11-23)
+The pre-registered rule ("stop tuning if Momentum's edge before costs is < 10 bps after R3 and the relativeToSpy filter") was **dropped by the lead**. The project's goal is the best config we can justify. The 32 in-sample days are for exploration, not for deciding whether the strategy works; that decision rests on Stage 3. The cost of dropping it is the luck risk named under Budget, which the paper reports.
 
 ### S0 diagnostic results (in-sample only)
 - Window: IS 2026-09-01 → 2026-10-15. No OOS days used.
@@ -152,22 +166,13 @@ A `stub` filter's switch is refused by config validation. Flip its `status` to
 - **Momentum:** SPY, NVDA, AMD, MU, TSLA, META
 
 ## What's left
-In order. Each step gates the next.
-1. [ ] **Groundwork (before R3):**
-   - [x] Paired day-bootstrap tool (row minus baseline on the same days, from the saved `equity_curve`), plus the two-halves check: `runtime/team3Bootstrap.ts`.
-   - [ ] Runner metric: β of per-trade P&L to SPY (for relativeToSpy).
-   - [ ] Runner metric: max DD and worst same-minute cluster loss (for crowd split).
-   - [x] Fix the IS day count (it's 32; a phantom day came from the engine, UPSTREAM #10), and check the 65/65 target exits (a coincidence).
-   - [x] Trial ledger in [ablation.md](ablation.md) with every required column; A00/A03 Core summaries re-saved.
-   - [x] Testing rules written down (above).
-   - [ ] Lead confirms the budget split and the stopping threshold above.
-2. [x] **Stage 1:** fix M1–M7 under a new VERSION (VERSION 4), then rerun the anchors (A03 Core, A04 Momentum, IS).
-3. [ ] **R3** (4 configs), then apply the **stopping rule** check after R3 + the relativeToSpy filter.
-4. [ ] **R1** (3).
-5. [ ] **R2:** lock the [relativeToSpy spec](components/relative-to-spy.md#spec-locked-before-the-batch) first, then run the filter, then the new signal only if the filter is kept (3), then the other R2 rows (2).
-6. [ ] **R5** (3), then **R4** (2).
-7. [ ] **Stage 3:** freeze the config, log it, then run OOS once.
-8. [ ] Teammates: write Volume (rule, tests, write-up, then status `done`).
+1. [x] **Groundwork**: bootstrap tool, day count, 65/65 check, trial ledger, Testing rules. Per-goal mechanism metrics moved into the Stage 2 sessions (`runtime/team3Metrics/`).
+2. [x] **Stage 1:** M1–M7 under VERSION 4; anchors A03 Core, A04 Momentum.
+3. [x] **R3** (4 configs, A05–A12): nothing passed the keep rule (the reversion share fell). Lead to decide whether "trades ↓ and bps/trade ↑" counts as R3's mechanism.
+4. [ ] **Parallel Stage 2** (R1, R2, R4, R5, relativeToSpy filter), per [Parallel Stage 2](#parallel-stage-2).
+5. [ ] **Combining step**, then the relativeToSpy **new-signal** version.
+6. [ ] **Stage 3:** freeze the config, log it, then run OOS once.
+7. [ ] Teammates: write Volume (rule, tests, write-up, then status `done`).
 
 ## Results summary
 _(One line per kept/dropped decision, pointing to ablation rows. Filled after testing.)_

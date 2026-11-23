@@ -13,9 +13,9 @@ to the category whose mechanism it relies on.
 [MASTER.md S0 results](../MASTER.md#s0-diagnostic-results-in-sample-only).
 Every claim here is still a hypothesis, paired with the row that will test it.
 
-> **Rules for iterating (budget, keep rule, ledger, OOS ban, stopping rule) live in
+> **Rules for iterating (budget, keep rule, ledger, OOS ban, parallel Stage 2; the stopping rule was dropped 2026-11-23) live in
 > [MASTER.md, Iteration rules](../MASTER.md#iteration-rules).** Where this file disagrees with them, MASTER wins.
-> The main changes: about 20 configs split by goal (it used to be 10), Momentum is the main universe and Core is the control (no longer "tune on Core"), and no OOS day before Stage 3.
+> The main changes: about 25 configs split by goal (it used to be 10, then 20), Momentum is the main universe and Core is the control (no longer "tune on Core"), and no OOS day before Stage 3.
 
 ## The categories
 
@@ -49,7 +49,7 @@ Every claim here is still a hypothesis, paired with the row that will test it.
 
 ## The experiment queue (merged, deduplicated, cheapest first)
 
-The budget in [MASTER](../MASTER.md#iteration-rules) applies: **about 20 configs, split by goal**, all logged in the trial ledger. Momentum is the main universe and Core is the control (same config on both). In-sample only. Diagnostics (D) and validation (V) rows are not tuning, but they are still logged.
+The budget in [MASTER](../MASTER.md#iteration-rules) applies: **about 25 configs, split by goal**, with the goals after R3 run in parallel against the frozen V4 baseline, all logged in the trial ledger. Momentum is the main universe and Core is the control (same config on both). In-sample only. Diagnostics (D) and validation (V) rows are not tuning, but they are still logged.
 
 **Stage 0: sanity and free analysis (run once the runner exists)**
 | Queue | Row | Source | Run | What it decides |
