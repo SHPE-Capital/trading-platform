@@ -9,6 +9,10 @@ Never edit or delete a row; add a corrected one and mark the old one `superseded
 - Costs: slippage 5 bps (+ half spread 2 bps), $0.005/share · Capital: $100,000 · Bars: 1-min, regular session
 - Engine risk config: `TEAM3_PROTOCOL.riskConfig` (`contract/protocol.ts`): kill switch off, engine caps above the strategy's
 - VERSION 3 changes the baseline (VWAP reversion); rows from VERSION 2 are not comparable
+- **OOS is locked until Stage 3.** No row may use an OOS day before the final config is frozen and logged here ([MASTER](MASTER.md#out-of-sample-ban)).
+- Main universe: **Momentum**. Control: **Core**, with the same config. Each config gets one row per universe.
+
+This file is the **trial ledger**. Every run goes in it, including diagnostics, features and failures. Rules: [MASTER, Iteration rules](MASTER.md#iteration-rules).
 
 | ID | Date run | VER | Group | Window | Config (vs defaults) | Compared to | Net P&L $ | Trades | Avg bps/trade | Win % | Payoff | PF | Sharpe | Max DD $ (%) | backtestId | Notes |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
