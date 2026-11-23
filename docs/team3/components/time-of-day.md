@@ -1,5 +1,6 @@
 > **Status: dropped in VERSION 3, folded into the baseline.** This component became the baseline's session window: skipOpenMinutes, lastEntryMinutesBeforeClose, flattenMinutesBeforeClose.
 > See [baseline.md](baseline.md). The text below is kept for the paper's history.
+> **Implemented by Alex Rivera** (PR #78, `aaf0815`): skip entries in the first and last `skipEdgeMinutes` (15) of the session. That is the same 15-minute edge the baseline enforces with `skipOpenMinutes` / `lastEntryMinutesBeforeClose`, so the filter file was not re-added when his branch was merged.
 
 # Time of Day (skip the open and close)
 

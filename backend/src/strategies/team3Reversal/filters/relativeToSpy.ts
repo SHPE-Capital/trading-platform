@@ -24,7 +24,22 @@
 
 import type { EntryFilter } from "./types";
 
-export const relativeToSpyAllows: EntryFilter = (_input) => {
-  // TODO: your rule. Until then every trade goes through (same as the baseline).
-  return true;
+export const relativeToSpyAllows: EntryFilter = ({ bar, move, side, barsOf, config }) => {
+  const benchmarkBars = barsOf(config.benchmarkSymbol);
+  const moveInFadeDirection = side === "sell" ? move : -move;
+
+  for (let i = benchmarkBars.length - 1; i > 0; i--) {
+    const benchmark = benchmarkBars[i];
+    if (benchmark.ts > bar.ts) continue;
+    if (benchmark.ts < bar.ts) break;
+
+    const previous = benchmarkBars[i - 1];
+    if (previous.ts !== bar.ts - 60_000 || previous.close <= 0) break;
+
+    const benchmarkMove = (benchmark.close - previous.close) / previous.close;
+    return moveInFadeDirection > 2 * Math.abs(benchmarkMove);
+  }
+
+  // Skip the entry when the benchmark's one-minute return is unavailable.
+  return false;
 };

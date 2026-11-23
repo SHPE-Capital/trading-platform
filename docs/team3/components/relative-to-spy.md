@@ -4,6 +4,9 @@
 **Switch:** `useRelativeToSpy`  ·  **Knobs:** `benchmarkSymbol` = SPY (must be in symbols)  ·  **Status:** stub (lets every trade through), owner to fill in
 **Owner:** _(name)_
 
+## Origin
+First implemented by **Alex Rivera** (PR #78, `aaf0815`): enter only if the stock's 1-minute move in the fade direction is more than 2× |SPY's 1-minute move| (β = 1, about a 0.5 share cutoff over one bar). The Stage 2 session builds the specced filter on top of his code.
+
 ## Main idea
 When the whole market moves, the move comes back less. Fade only moves the stock made on its own.
 
