@@ -31,7 +31,8 @@ import { readFrame, type MinuteFrame } from "./contract/frame";
 import { Team3Book, type Holding } from "./contract/book";
 import { toSignal, signedQty, type Decision } from "./contract/emit";
 import { SessionHistory } from "./history";
-import { costGate, entryIdea, ownQuietIdea, spyDivergenceIdea, exitReason, sessionWindow, type EntryIdea } from "./rules";
+import { conditionIdea, type ConditionFeatures, costGate, entryIdea, ownQuietIdea, spyDivergenceIdea, exitReason, sessionWindow, type EntryIdea } from "./rules";
+import { minutesSinceOpen } from "./session";
 import { capQty, grossUsd } from "./risk";
 import { crowdSize, crowdSplitQty, fixedNotionalQty, volTargetQty } from "./sizing";
 
@@ -91,8 +92,10 @@ export class Team3ReversalStrategy extends BaseStrategy {
     // 5. ENTER: flat, in the trading window, stretched from VWAP with edge > costs, filters agree
     const prev = today[today.length - 2];
     if (!prev || window !== "open") return null;
-    if ((c.useSpyDivergence || c.useOwnQuietEntry) && symbol === c.benchmarkSymbol) return null;
-    const idea = c.useSpyDivergence
+    if ((c.useSpyDivergence || c.useOwnQuietEntry || c.useConditionEntry) && symbol === c.benchmarkSymbol) return null;
+    const idea = c.useConditionEntry
+      ? conditionIdea(bar, prev, vwap, this.conditionFeatures(today, vwap, c), c)
+      : c.useSpyDivergence
       ? spyDivergenceIdea(bar, prev, vwap, this.history.vwap(c.benchmarkSymbol, c.vwapWindowBars), c)
       : c.useOwnQuietEntry
         ? ownQuietIdea(today, this.history.today(c.benchmarkSymbol), vwap, c)
@@ -161,6 +164,34 @@ export class Team3ReversalStrategy extends BaseStrategy {
     if (today[today.length - 1]?.ts !== bar.ts || (this.decided.get(symbol) ?? -Infinity) >= bar.ts) return false;
     this.decided.set(symbol, bar.ts);
     return true;
+  }
+
+  /** Entry-time features for useConditionEntry (same definitions as runtime/team3Analysis/features.ts). */
+  private conditionFeatures(today: readonly BarView[], vwap: VwapView | null, c: Team3ReversalConfig): ConditionFeatures {
+    const n = today.length, bar = today[n - 1], prev = today[n - 2];
+    const spyToday = this.history.today(c.benchmarkSymbol);
+    const spyAt = (ts: number) => { for (let i = spyToday.length - 1; i >= 0; i--) { if (spyToday[i].ts === ts) return spyToday[i].close; if (spyToday[i].ts < ts) break; } return null; };
+    const start = today[Math.max(0, n - 1 - c.lookbackBars)];
+    const s0 = spyAt(start.ts), s1 = spyAt(bar.ts);
+    const total = bar.close / start.close - 1;
+    const ownShare = s0 !== null && s1 !== null && total !== 0 && n > 1 ? Math.abs(total - (s1 / s0 - 1)) / Math.abs(total) : NaN;
+    const earlier = today.slice(Math.max(0, n - 1 - c.lookbackBars), n - 1);
+    const vMean = earlier.length ? earlier.reduce((a, b) => a + b.volume, 0) / earlier.length : NaN;
+    const z = vwap?.z ?? NaN;
+    const spyZ = this.history.vwap(c.benchmarkSymbol, c.vwapWindowBars)?.z ?? NaN;
+    const minute = minutesSinceOpen(bar.ts);
+    const sign = z > 0 ? -1 : 1;   // trade side: short above VWAP, long below
+    return {
+      ownShare, absZ: Math.abs(z),
+      edgeBps: vwap ? (Math.abs(bar.close - vwap.vwap) / bar.close) * 10_000 : NaN,
+      crossings60: vwap?.crossings ?? NaN,
+      volRatio: vMean > 0 ? bar.volume / vMean : NaN,
+      rangeSigma: vwap && vwap.sigma > 0 ? (bar.high - bar.low) / vwap.sigma : NaN,
+      trendBps: (Math.abs(bar.close - today[0].open) / today[0].open) * 10_000,
+      timeOfDay: Math.min(2, Math.floor(((minute - 15) * 3) / (374 - 15 + 1))),
+      spyZ: spyZ ?? NaN,
+      turnBar: (sign > 0 ? bar.close > prev.close : bar.close < prev.close) ? 1 : 0,
+    };
   }
 
   private skip(message: string): null {

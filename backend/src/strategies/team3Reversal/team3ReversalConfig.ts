@@ -117,6 +117,17 @@ export interface Team3ReversalConfig extends BaseStrategyConfig {
   useOwnQuietEntry: boolean;
   oqMinOwnShare: number;
   oqMaxTrendBps: number;
+  /**
+   * conditionEntry (F3-F5): replace the baseline entry with the opportunity set (divMinZ <= |z| < stopZ,
+   * edge >= 0, side from z, benchmark not traded) AND every condition below. Ranges are (lo, hi], the
+   * survey's bin semantics; null = no bound. Features as in runtime/team3Analysis/features.ts.
+   */
+  useConditionEntry: boolean;
+  ceRanges: Partial<Record<"ownShare" | "absZ" | "edgeBps" | "crossings60" | "volRatio" | "rangeSigma" | "trendBps" | "timeOfDay", [number | null, number | null]>>;
+  /** SPY's z vs the stock's: "opposite" / "same" need |zSPY| >= 1; "neutral" is |zSPY| < 1. null = any. */
+  ceSpySide: "opposite" | "same" | "neutral" | null;
+  /** 1 = the bar moved toward VWAP vs the previous close, 0 = it didn't; null = any. */
+  ceTurnBar: 0 | 1 | null;
   // ---- end S5 ----
   /** volSizing: dollars a typical 1-minute move may cost per entry. 5 keeps most sizes inside the $ caps (25 hit the cap almost always). */
   riskPerTradeUsd: number;
@@ -187,6 +198,10 @@ export const DEFAULT_TEAM3_REVERSAL_CONFIG: Omit<Team3ReversalConfig, "id" | "sy
   useOwnQuietEntry: false,
   oqMinOwnShare: 0.945,
   oqMaxTrendBps: 47.1,
+  useConditionEntry: false,
+  ceRanges: {},
+  ceSpySide: null,
+  ceTurnBar: null,
   // ---- end S5 ----
 };
 
@@ -252,6 +267,15 @@ export function validateTeam3ReversalConfig(c: Team3ReversalConfig, filters: Fil
     if (c.useSpyDivergence || c.useTurnEntry) fail("useOwnQuietEntry replaces the entry; use one entry mode at a time");
     if (!(c.oqMinOwnShare >= 0) || !(c.oqMaxTrendBps >= 0)) fail("oqMinOwnShare and oqMaxTrendBps must be >= 0");
     if (!c.symbols.includes(c.benchmarkSymbol)) fail("useOwnQuietEntry needs benchmarkSymbol in symbols");
+  }
+  if (c.useConditionEntry) {
+    if (c.useSpyDivergence || c.useOwnQuietEntry || c.useTurnEntry) fail("useConditionEntry replaces the entry; use one entry mode at a time");
+    if (!c.symbols.includes(c.benchmarkSymbol)) fail("useConditionEntry needs benchmarkSymbol in symbols");
+    const known = ["ownShare", "absZ", "edgeBps", "crossings60", "volRatio", "rangeSigma", "trendBps", "timeOfDay"];
+    for (const [k, r] of Object.entries(c.ceRanges ?? {})) {
+      if (!known.includes(k)) fail(`ceRanges: unknown feature ${k}`);
+      if (!Array.isArray(r) || r.length !== 2) fail(`ceRanges.${k} must be [lo, hi]`);
+    }
   }
   // ---- end S5 ----
 

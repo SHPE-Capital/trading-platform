@@ -102,6 +102,41 @@ export function ownQuietIdea(today: readonly BarView[], spyToday: readonly BarVi
   return { side, move: (bar.close - prev.close) / prev.close, z: vwap.z, edgeBps };
 }
 
+/** Entry-time features for the condition entry, computed the way runtime/team3Analysis/features.ts does. */
+export interface ConditionFeatures {
+  ownShare: number; absZ: number; edgeBps: number; crossings60: number; volRatio: number;
+  rangeSigma: number; trendBps: number; timeOfDay: number;
+  /** SPY's z at this minute (NaN if missing). */
+  spyZ: number;
+  /** 1 if the bar moved toward VWAP vs the previous close. */
+  turnBar: 0 | 1;
+}
+
+type ConditionKnobs = Pick<Team3ReversalConfig, "divMinZ" | "stopZ" | "ceRanges" | "ceSpySide" | "ceTurnBar">;
+
+/** F3-F5: the opportunity set AND every configured (lo, hi] range, SPY side and turn-bar condition. */
+export function conditionIdea(bar: BarView, prev: BarView, vwap: VwapView | null, f: ConditionFeatures, c: ConditionKnobs): EntryIdea | null {
+  if (!vwap || vwap.z === null) return null;
+  const az = Math.abs(vwap.z);
+  if (az < c.divMinZ || az >= c.stopZ) return null;
+  for (const [k, r] of Object.entries(c.ceRanges ?? {})) {
+    if (!r) continue;
+    const x = f[k as keyof ConditionFeatures] as number;
+    if (!Number.isFinite(x)) return null;
+    if (r[0] !== null && !(x > r[0])) return null;
+    if (r[1] !== null && !(x <= r[1])) return null;
+  }
+  if (c.ceSpySide !== null) {
+    if (!Number.isFinite(f.spyZ)) return null;
+    const side = Math.abs(f.spyZ) < 1 ? "neutral" : Math.sign(f.spyZ) === Math.sign(vwap.z) ? "same" : "opposite";
+    if (side !== c.ceSpySide) return null;
+  }
+  if (c.ceTurnBar !== null && f.turnBar !== c.ceTurnBar) return null;
+  const side: Side = vwap.z > 0 ? "sell" : "buy";
+  const edgeBps = (Math.abs(bar.close - vwap.vwap) / bar.close) * 10_000;
+  return { side, move: (bar.close - prev.close) / prev.close, z: vwap.z, edgeBps };
+}
+
 export function entryIdea(bar: BarView, prev: BarView, vwap: VwapView | null, c: EntryKnobs): EntryIdea | null {
   if (c.useTurnEntry) return turnEntryIdea(bar, prev, vwap, c);
   if (!vwap || vwap.z === null || bar.close === prev.close) return null;
