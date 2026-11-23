@@ -51,6 +51,8 @@ export class Team3ReversalStrategy extends BaseStrategy {
   private readonly filters: FilterSet;
   /** R4: vwapZ of the latest entry signal per symbol (read by the partway target). */
   private readonly entryZ = new Map<string, number>();
+  /** R4: symbols whose current holding already scaled out half. */
+  private readonly scaledOut = new Set<string>();
 
   /**
    * @param teamConfig - full config (use createTeam3ReversalConfig())
@@ -108,6 +110,7 @@ export class Team3ReversalStrategy extends BaseStrategy {
 
     // 7. EMIT: the signal, plus the numbers behind it
     this.entryZ.set(symbol, idea.z);
+    this.scaledOut.delete(symbol);
     return this.send(bar, {
       kind: "enter", symbol, side: idea.side, qty, trigger: idea.z,
       meta: { ...this.entryMeta(prev, bar, idea, vwap), filtersOn: active.map((f) => f.name).join(",") || "none",
@@ -118,14 +121,17 @@ export class Team3ReversalStrategy extends BaseStrategy {
   /** 4. EXIT detail: ask the rules, and close exactly the shares Team 3 holds. */
   private exit(frame: MinuteFrame, h: Holding, window: ReturnType<typeof sessionWindow>, vwap: VwapView | null): StrategySignal | null {
     const { symbol, bar } = frame;
-    const view = { qty: h.qty, barsHeld: h.barsHeld, fromEarlierDay: this.book.isFromEarlierDay(h, bar.ts), entryZ: this.entryZ.get(symbol) ?? null };
+    const view = { qty: h.qty, barsHeld: h.barsHeld, fromEarlierDay: this.book.isFromEarlierDay(h, bar.ts), entryZ: this.entryZ.get(symbol) ?? null, scaledOut: this.scaledOut.has(symbol) };
     const reason = exitReason(view, window, vwap?.z ?? null, this.teamConfig);
     if (!reason) return null;
     // Gross: this close vs the real entry fill. Excludes the exit's own costs (fill happens next bar).
     const pnlBpsGross = (Math.sign(h.qty) * (bar.close - h.entryPrice) / h.entryPrice) * 10_000;
+    // R4 scale-out: close half (rounded down) at the partway point; if that is 0 shares, close all.
+    const half = reason === "partway" && this.teamConfig.useScaleOut ? Math.floor(Math.abs(h.qty) / 2) : 0;
+    if (half > 0) this.scaledOut.add(symbol);
     return this.send(bar, {
-      kind: "exit", symbol, heldQty: h.qty, reason, trigger: pnlBpsGross,
-      meta: { entryPrice: h.entryPrice, close: bar.close, barsHeld: h.barsHeld, pnlBpsGross, vwap: vwap?.vwap ?? null, vwapZ: vwap?.z ?? null },
+      kind: "exit", symbol, heldQty: half > 0 ? Math.sign(h.qty) * half : h.qty, reason, trigger: pnlBpsGross,
+      meta: { ...(half > 0 ? { partial: true } : {}), entryPrice: h.entryPrice, close: bar.close, barsHeld: h.barsHeld, pnlBpsGross, vwap: vwap?.vwap ?? null, vwapZ: vwap?.z ?? null },
     });
   }
 

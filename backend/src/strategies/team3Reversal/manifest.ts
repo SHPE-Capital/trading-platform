@@ -69,6 +69,7 @@ export const team3ReversalManifest: StrategyManifest = {
     // ---- end R2 ----
     // ---- R4 (team3/r4) ----
     { key: "usePartwayTarget", label: "Exit: partway target (R4)", kind: "boolean" },
+    { key: "useScaleOut", label: "Exit: scale out half at the partway point (R4)", kind: "boolean" },
     { key: "tpFraction", label: "Partway target: fraction of entry z (0-1]", kind: "number", min: 0.05, step: 0.05 },
     // ---- end R4 ----
     // ---- R5 (team3/r5) ----

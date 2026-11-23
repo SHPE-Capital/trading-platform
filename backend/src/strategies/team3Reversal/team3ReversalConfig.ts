@@ -81,6 +81,8 @@ export interface Team3ReversalConfig extends BaseStrategyConfig {
   usePartwayTarget: boolean;
   /** partwayTarget: fraction of the entry z to give back before exiting, (0, 1]. */
   tpFraction: number;
+  /** scaleOut (R4): at the partway point close half the shares (all if half rounds to 0); the rest rides to VWAP or the stops. */
+  useScaleOut: boolean;
   // ---- end R4 ----
   // ---- R5 (team3/r5) ----
   // ---- end R5 ----
@@ -136,6 +138,7 @@ export const DEFAULT_TEAM3_REVERSAL_CONFIG: Omit<Team3ReversalConfig, "id" | "sy
   // ---- R4 (team3/r4) ----
   usePartwayTarget: false,
   tpFraction: 0.5,
+  useScaleOut: false,
   // ---- end R4 ----
   // ---- R5 (team3/r5) ----
   // ---- end R5 ----
@@ -182,6 +185,7 @@ export function validateTeam3ReversalConfig(c: Team3ReversalConfig, filters: Fil
   // ---- end R2 ----
   // ---- R4 (team3/r4) ----
   if (!(isNum(c.tpFraction) && c.tpFraction > 0 && c.tpFraction <= 1)) fail(`tpFraction must be in (0, 1] (got ${c.tpFraction})`);
+  if (c.usePartwayTarget && c.useScaleOut) fail("usePartwayTarget and useScaleOut are alternatives: turn on one");
   // ---- end R4 ----
   // ---- R5 (team3/r5) ----
   // ---- end R5 ----
