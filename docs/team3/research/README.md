@@ -9,9 +9,13 @@ Simple code is not a beginner strategy. The depth is in *why* each line works.
 Each category below is one **mechanism**, not one indicator. A feature belongs
 to the category whose mechanism it relies on.
 
-**Status (2026-11-21):** desk research only. **No real backtest has run** (the
-runner is on hold), so nothing here says the baseline is profitable. Every
-claim is a hypothesis, paired with the ablation row that will test it.
+**Status (2026-11-23):** the S0 diagnostics have run (IS only). See
+[MASTER.md S0 results](../MASTER.md#s0-diagnostic-results-in-sample-only).
+Every claim here is still a hypothesis, paired with the row that will test it.
+
+> **Rules for iterating (budget, keep rule, ledger, OOS ban, stopping rule) live in
+> [MASTER.md, Iteration rules](../MASTER.md#iteration-rules).** Where this file disagrees with them, MASTER wins.
+> The main changes: about 20 configs split by goal (it used to be 10), Momentum is the main universe and Core is the control (no longer "tune on Core"), and no OOS day before Stage 3.
 
 ## The categories
 
@@ -22,7 +26,7 @@ claim is a hypothesis, paired with the ablation row that will test it.
 | R3 | **Costs: whether the edge survives** | Break-even is about **14–15 bps** per round trip even if price reverts all the way, about 25 bps at 60% capture. Costs decide the result but cannot create an edge. | [R3-costs](R3-costs.md) |
 | R4 | **Exit geometry: how much of the reversion we capture** | On a random walk no exit rule changes expected gross P&L. Exits manage the tails and the costs, and the edge has to come from entry. | [R4-exit-geometry](R4-exit-geometry.md) |
 | R5 | **Portfolio: how bets combine** | Several symbols stretching in the same minute is one market bet repeated. Vol sizing at today's default isn't really equal-risk. | [R5-portfolio](R5-portfolio.md) |
-| R6 | **Evidence: whether a result is real** | 32 in-sample / 21 out-of-sample days give a Sharpe standard error of about ±2.8 / ±3.5. Claim effects and costs, not a significant Sharpe. Tune at most 2 knobs, try at most 10 configs. | [R6-evidence](R6-evidence.md) |
+| R6 | **Evidence: whether a result is real** | 32 in-sample / 21 out-of-sample days give a Sharpe standard error of about ±2.8 / ±3.5. Claim effects and costs, not a significant Sharpe. At most 2 values per knob, about 20 configs in total, split by goal ([MASTER](../MASTER.md#budget-20-configs-split-by-goal)). | [R6-evidence](R6-evidence.md) |
 
 ## What the agents agreed on (independently)
 
@@ -45,20 +49,20 @@ claim is a hypothesis, paired with the ablation row that will test it.
 
 ## The experiment queue (merged, deduplicated, cheapest first)
 
-R6's budget applies: **at most 10 configs tried in Stage 2**, logged in a trial ledger and tuned on Core in-sample only. Diagnostics (D) and validation (V) rows are not tuning, but they are still logged.
+The budget in [MASTER](../MASTER.md#iteration-rules) applies: **about 20 configs, split by goal**, all logged in the trial ledger. Momentum is the main universe and Core is the control (same config on both). In-sample only. Diagnostics (D) and validation (V) rows are not tuning, but they are still logged.
 
 **Stage 0: sanity and free analysis (run once the runner exists)**
 | Queue | Row | Source | Run | What it decides |
 |---|---|---|---|---|
 | Q0.1 | V | R6-E2 | `entryZ=50, stopZ=60` → must be exactly $0 | the engine creates no P&L from nothing |
-| Q0.2 | A00 | R6-E1 | `beginner_reversal`, Core + Momentum, IS + OOS | the reference row |
+| Q0.2 | A00 | R6-E1 | `beginner_reversal`, Core + Momentum, **IS only** (its OOS run waits for Stage 3) | the reference row |
 | Q0.3 | A01 | — | the baseline (after M1, M2), Core + Momentum, IS | the anchor for every comparison |
 | Q0.4 | D | R3-D1 | A01 with a zero-cost fill model (**diagnostic only, not reportable**) | gross edge, **capture fraction**, close→next-open gap. If gross < ~15 bps, no threshold can save the baseline (R1-E2) |
 | Q0.5 | — | R2, R4, R1-E8, R6-E8 | **no new run**, from A01's ledger and meta: bps by `vwapCrossings` bucket; median `barsHeld` of `target` exits (half-life); exit-reason mix; per-symbol and per-day P&L | which Stage 2 rows are worth spending budget on |
 
 **Stage 1: corrections (M1–M7)**: done in code and docs before Stage 2, under a new VERSION.
 
-**Stage 2: the tuning budget (≤ 10 configs, Core IS, one change at a time vs A01)**
+**Stage 2: the tuning budget (the per-goal split in MASTER, Momentum IS with Core as control, one change at a time vs the current baseline, run in the order R3 → R1 → R2 → R5 → R4)**
 | Queue | Row | Source | Change | Expect |
 |---|---|---|---|---|
 | Q2.1 | A02 | R3-E1 / R1-E1 | `minEdgeBps=25` | trades ↓, avg net bps ↑, cost share ↓ |
@@ -75,7 +79,7 @@ The final config = the best of Q2.1–Q2.4 on one knob each, plus any Q2.5–Q2.
 | Queue | Row | Source | Pass criterion |
 |---|---|---|---|
 | Q3.1 | V | R6-E3 | frozen OOS rerun, once: same sign of net P&L, OOS avg bps > 0 |
-| Q3.2 | V | R6-E4 | the Core choice run unchanged on Momentum: reports whether the edge transfers |
+| Q3.2 | V | R6-E4 | the final config, unchanged, on Core (the control): reports whether the edge transfers |
 | Q3.3 | V | R6-E5 | 4 sub-periods: avg bps > 0 in most |
 | Q3.4 | V | R6-E8 | net P&L minus the best day > 0; no single symbol carries it |
 
