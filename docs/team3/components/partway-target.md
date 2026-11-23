@@ -13,3 +13,9 @@ Switch `usePartwayTarget` (default **off**), knob `tpFraction` (default 0.5, mus
   0.5σ is the slowest part of an OU reversion and is where the time stop usually ends the trade.
 - **Reversion share** for rows using it counts `target + partway` exits.
 - Tests: `backend/src/tests/strategy/team3Reversal/partwayTarget.test.ts`.
+
+## Scale-out variant (R4-03)
+Switch `useScaleOut` (default **off**; can't be combined with `usePartwayTarget`). Same trigger and `tpFraction`,
+but the `partway` exit closes floor(qty/2) shares (all if that is 0) and is flagged `meta.partial`. It fires once per
+holding; the rest exits on `target`, `stop`, `time`, `close` or `stale`. The R4 metric re-pairs both legs into one trip.
+Tests: `scaleOut.test.ts`.
