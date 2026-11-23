@@ -16,11 +16,11 @@ import { minutesSinceOpen, minutesUntilClose } from "./session";
 
 export type Side = "buy" | "sell";
 export type SessionWindow = "warmup" | "open" | "no_entries" | "flatten";
-export type ExitReason = "stale" | "close" | "stop" | "target" | "time";
+export type ExitReason = "stale" | "close" | "stop" | "target" | "partway" | "time";
 
 type WindowKnobs = Pick<Team3ReversalConfig, "skipOpenMinutes" | "lastEntryMinutesBeforeClose" | "flattenMinutesBeforeClose">;
 type EntryKnobs = Pick<Team3ReversalConfig, "entryZ" | "minEdgeBps" | "stopZ">;
-type ExitKnobs = Pick<Team3ReversalConfig, "stopZ" | "maxHoldBars">;
+type ExitKnobs = Pick<Team3ReversalConfig, "stopZ" | "maxHoldBars" | "usePartwayTarget" | "tpFraction">;
 
 type CostKnobs = Pick<Team3ReversalConfig, "captureShare" | "costFixedBps" | "costCommissionPerShare">;
 
@@ -74,6 +74,14 @@ export interface HoldingView {
   barsHeld: number;
   /** True when the entry filled on an earlier New York day. */
   fromEarlierDay: boolean;
+  /** R4: vwapZ of the entry signal bar (null if unknown). Only read by the partway target. */
+  entryZ?: number | null;
+}
+
+/** R4 partway target: z has come back tpFraction of the way from the entry z toward 0. */
+export function partwayReached(short: boolean, z: number, entryZ: number, tpFraction: number): boolean {
+  const level = (1 - tpFraction) * entryZ;
+  return short ? z <= level : z >= level;
 }
 
 /** First reason that applies wins. null = keep holding. */
@@ -83,6 +91,8 @@ export function exitReason(h: HoldingView, window: SessionWindow, z: number | nu
   if (window === "flatten") return "close";                                     // flat before the bell
   if (z !== null && (short ? z >= c.stopZ : z <= -c.stopZ)) return "stop";     // stretched further: trend day
   if (z !== null && (short ? z <= 0 : z >= 0)) return "target";                 // back to VWAP
+  if (c.usePartwayTarget && z !== null && h.entryZ != null
+    && partwayReached(short, z, h.entryZ, c.tpFraction)) return "partway";        // R4: took the fast part of the reversion
   if (h.barsHeld >= c.maxHoldBars) return "time";                               // waited long enough
   return null;
 }

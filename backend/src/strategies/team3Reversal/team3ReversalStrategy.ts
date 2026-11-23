@@ -49,6 +49,8 @@ export class Team3ReversalStrategy extends BaseStrategy {
   /** Last bar timestamp we decided on, per symbol: each bar is decided once. */
   private readonly decided = new Map<string, number>();
   private readonly filters: FilterSet;
+  /** R4: vwapZ of the latest entry signal per symbol (read by the partway target). */
+  private readonly entryZ = new Map<string, number>();
 
   /**
    * @param teamConfig - full config (use createTeam3ReversalConfig())
@@ -105,6 +107,7 @@ export class Team3ReversalStrategy extends BaseStrategy {
     if (qty <= 0) return this.skip(`${symbol} ${idea.side}: no room (wanted ${want}, gross $${gross.toFixed(0)})`);
 
     // 7. EMIT: the signal, plus the numbers behind it
+    this.entryZ.set(symbol, idea.z);
     return this.send(bar, {
       kind: "enter", symbol, side: idea.side, qty, trigger: idea.z,
       meta: { ...this.entryMeta(prev, bar, idea, vwap), filtersOn: active.map((f) => f.name).join(",") || "none",
@@ -115,7 +118,7 @@ export class Team3ReversalStrategy extends BaseStrategy {
   /** 4. EXIT detail: ask the rules, and close exactly the shares Team 3 holds. */
   private exit(frame: MinuteFrame, h: Holding, window: ReturnType<typeof sessionWindow>, vwap: VwapView | null): StrategySignal | null {
     const { symbol, bar } = frame;
-    const view = { qty: h.qty, barsHeld: h.barsHeld, fromEarlierDay: this.book.isFromEarlierDay(h, bar.ts) };
+    const view = { qty: h.qty, barsHeld: h.barsHeld, fromEarlierDay: this.book.isFromEarlierDay(h, bar.ts), entryZ: this.entryZ.get(symbol) ?? null };
     const reason = exitReason(view, window, vwap?.z ?? null, this.teamConfig);
     if (!reason) return null;
     // Gross: this close vs the real entry fill. Excludes the exit's own costs (fill happens next bar).
