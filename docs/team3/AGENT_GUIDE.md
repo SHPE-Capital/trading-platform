@@ -57,6 +57,8 @@ Worked examples: [vwap-regime](components/vwap-regime.md),
 [`ablation.md`](ablation.md) is the single results table. It is the paper's
 evidence, so a row only counts if it follows the protocol.
 
+Diagnostic runs (`TEAM3_DIAGNOSTIC=zero_cost`) measure the gross edge and are **never** ablation rows; log them as `D…` below the table.
+
 **Standard protocol (do not change per run; change it only here and in `contract/protocol.ts`, then rerun every row):**
 
 | Setting | Value |
@@ -101,11 +103,11 @@ costs decide whether it makes money at all. These metrics show exactly that.
 |---|---|---|
 | Net P&L ($) | After slippage and commissions | The bottom line |
 | Trades | Round trips | Too few = not significant; too many = cost bleed |
-| Avg net P&L / trade (bps) | Net P&L ÷ traded notional × 10,000 | Edge per trade. It must beat costs (~5+ bps) |
+| Avg net P&L / trade (bps) | Net P&L ÷ traded notional × 10,000 | Edge per trade. It must beat the modeled round trip: 2 × (5 slippage + 2 half spread) + commission ≈ **14–15 bps** |
 | Win rate (%) | Winning trades ÷ trades | Reversal should be high; low = fading trends |
 | Payoff ratio | Avg win ÷ avg loss | Reversal often < 1. Shows how large losses are |
 | Profit factor | Gross wins ÷ gross losses | > 1.2 is worth presenting |
-| Sharpe (daily, annualized) | Mean ÷ std of daily P&L × √252 | Risk-adjusted. Vol sizing should raise it |
+| Sharpe (daily, annualized) | Mean ÷ std of daily P&L × √252, daily P&L = last equity of each ET day minus the previous (first day vs starting capital). Computed by `runtime/team3Backtest.ts` as `sharpeDaily`. The engine's own `sharpeRatio` uses a different annualization; report ours, never mix them | Risk-adjusted. Vol sizing should raise it |
 | Max drawdown ($ and %) | Peak-to-trough equity | The trend-day damage the filters target |
 
 **Optional, add when the row is about that topic:**

@@ -28,7 +28,7 @@ $$ z = \frac{close - VWAP}{\sigma} $$
 Allow a sell when $z \ge minVwapZ$. Allow a buy when $z \le -minVwapZ$.
 
 ## Source
-VWAP deviations as temporary imbalances (SSRN 6438039). Took: deviation from VWAP = short-term inefficiency. Changed: we use the standard volume-weighted sigma bands to make the threshold comparable across stocks.
+VWAP deviations as temporary imbalances (SSRN 6438039). **(citation unverified: no record of SSRN 6438039 found on 2026-11-22; confirm or replace before the paper)** Took: deviation from VWAP = short-term inefficiency. Changed: we use the standard volume-weighted sigma bands to make the threshold comparable across stocks.
 
 ## Tests
 `vwapStretch.test.ts`: blocks without z, allows a sell far above / a buy far below, blocks the wrong direction.

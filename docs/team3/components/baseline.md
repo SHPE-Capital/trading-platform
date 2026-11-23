@@ -19,6 +19,11 @@ Fade a 1-minute move only when it leaves price stretched far from today's VWAP, 
 - **Size:** `floor(tradeUsd / price)` shares, or vol sizing if switched on. Then capped by $ per symbol and $ gross, shorts counted in full.
 - **Missing data:** no VWAP or zero sigma → no entry. A held position can still exit on `stale`, `close` or `time`.
 
+## VERSION 4 changes
+- **No entry at or past the stop:** an entry needs `entryZ <= |z| < stopZ`. In VERSION 3, 19 Core and 11 Momentum IS entries started at |z| ≥ 3.5 and were stopped the next bar.
+- Exit meta `pnlBps` is now `pnlBpsGross`: the exit bar's close vs the real entry fill, before the exit's own costs.
+- Why steady trends rarely trigger entries: on a straight-line trend with equal volume, z settles at √3 ≈ 1.73 < `entryZ`. Entries happen on *accelerations*, and on a steady trend the time stop, not `stopZ`, ends a losing trade.
+
 ## Math
 Typical price and session VWAP (since 9:30 today):
 $$ p_t = \tfrac{h_t + l_t + c_t}{3}, \qquad VWAP = \frac{\sum p_t v_t}{\sum v_t} $$
@@ -31,7 +36,7 @@ $$ edge = \frac{|c_t - VWAP|}{c_t} \times 10^4 \ge minEdgeBps $$
 Enter a short if $c_t > c_{t-1}$ and $z \ge entryZ$; enter a long if $c_t < c_{t-1}$ and $z \le -entryZ$.
 
 ## Source
-VWAP deviations as temporary order imbalances (SSRN 6438039). Took: fade stretches from session VWAP, with VWAP as the target. Changed: added a cost-aware edge gate, a z stop and a time stop, and flat by the close.
+VWAP deviations as temporary order imbalances (SSRN 6438039). **(citation unverified: no record of SSRN 6438039 found on 2026-11-22; confirm or replace before the paper)** Took: fade stretches from session VWAP, with VWAP as the target. Changed: added a cost-aware edge gate, a z stop and a time stop, and flat by the close.
 
 ## Tests
 - `rules.test.ts`: the session-window table, entry gates (side, z, edge, missing data) and the exit-reason order.

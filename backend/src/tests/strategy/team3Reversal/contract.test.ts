@@ -123,9 +123,9 @@ describe('We promise back', () => {
     expect(() => validateTeam3ReversalConfig(createTeam3ReversalConfig({ useRelativeToSpy: true }))).toThrow(/stub/);
   });
 
-  it('P10: results are tied to VERSION 3, and the catalog reports it', () => {
-    expect(Team3ReversalStrategy.VERSION).toBe(3);
-    expect(STRATEGY_DEFINITIONS.team3_reversal.algorithmVersion).toBe(3);
+  it('P10: results are tied to VERSION 4, and the catalog reports it', () => {
+    expect(Team3ReversalStrategy.VERSION).toBe(4);
+    expect(STRATEGY_DEFINITIONS.team3_reversal.algorithmVersion).toBe(4);
   });
 });
 

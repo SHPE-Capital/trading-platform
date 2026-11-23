@@ -63,7 +63,7 @@ export interface Team3ReversalConfig extends BaseStrategyConfig {
   volumeMaxRatio: number;
   /** relativeToSpy: the market symbol to compare against. Must be in `symbols`. */
   benchmarkSymbol: string;
-  /** volSizing: dollars a typical 1-minute move may cost per entry. */
+  /** volSizing: dollars a typical 1-minute move may cost per entry. 5 keeps most sizes inside the $ caps (25 hit the cap almost always). */
   riskPerTradeUsd: number;
 }
 
@@ -100,7 +100,7 @@ export const DEFAULT_TEAM3_REVERSAL_CONFIG: Omit<Team3ReversalConfig, "id" | "sy
   vwapWindowBars: 60,
   volumeMaxRatio: 3,
   benchmarkSymbol: "SPY",
-  riskPerTradeUsd: 25,
+  riskPerTradeUsd: 5,
 };
 
 /** Merges defaults with overrides; a new ID is assigned unless one is given. */

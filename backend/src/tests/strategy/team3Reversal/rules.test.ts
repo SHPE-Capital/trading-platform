@@ -28,6 +28,11 @@ describe('entryIdea: fade a bar stretched from VWAP, if the edge beats costs', (
   it('skips when z is below entryZ', () => {
     expect(entryIdea(fakeBar(0, 101), prev, fakeVwap({ vwap: 100, z: 1.9 }), c)).toBeNull();
   });
+  it('skips an entry already at or past its own stop (M1: it would be stopped on the next bar)', () => {
+    expect(entryIdea(fakeBar(0, 101), prev, fakeVwap({ vwap: 100, z: 3.5 }), c)).toBeNull();
+    expect(entryIdea(fakeBar(0, 99), prev, fakeVwap({ vwap: 100, z: -9.6 }), c)).toBeNull();
+    expect(entryIdea(fakeBar(0, 101), prev, fakeVwap({ vwap: 100, z: 3.4 }), c)).not.toBeNull();
+  });
   it('skips when the edge back to VWAP is under minEdgeBps', () => {
     expect(entryIdea(fakeBar(0, 100.1), prev, fakeVwap({ vwap: 100, z: 3 }), c)).toBeNull();   // 10 bps
   });

@@ -1,7 +1,7 @@
 /**
  * strategies/team3Reversal/team3ReversalStrategy.ts
  *
- * Team 3 Reversal, VERSION 3: intraday VWAP reversion on 1-minute bars.
+ * Team 3 Reversal, VERSION 4: intraday VWAP reversion on 1-minute bars.
  *
  *   Enter  fade a session bar that leaves price >= entryZ sigmas from VWAP,
  *          when the way back to VWAP beats costs (minEdgeBps). One position per symbol.
@@ -38,7 +38,7 @@ import { fixedNotionalQty, volTargetQty } from "./sizing";
 export class Team3ReversalStrategy extends BaseStrategy {
   readonly type: StrategyType = "team3_reversal";
   /** Bump whenever this folder's trading logic changes, filters included (CI enforces it). */
-  static readonly VERSION = 3;
+  static readonly VERSION = 4;
   readonly version = Team3ReversalStrategy.VERSION;
   /** Decide only when a bar arrives; quotes and trades never call evaluate(). */
   readonly triggers: readonly MarketEventKind[] = ["bar"];
@@ -117,10 +117,11 @@ export class Team3ReversalStrategy extends BaseStrategy {
     const view = { qty: h.qty, barsHeld: h.barsHeld, fromEarlierDay: this.book.isFromEarlierDay(h, bar.ts) };
     const reason = exitReason(view, window, vwap?.z ?? null, this.teamConfig);
     if (!reason) return null;
-    const pnlBps = (Math.sign(h.qty) * (bar.close - h.entryPrice) / h.entryPrice) * 10_000;
+    // Gross: this close vs the real entry fill. Excludes the exit's own costs (fill happens next bar).
+    const pnlBpsGross = (Math.sign(h.qty) * (bar.close - h.entryPrice) / h.entryPrice) * 10_000;
     return this.send(bar, {
-      kind: "exit", symbol, heldQty: h.qty, reason, trigger: pnlBps,
-      meta: { entryPrice: h.entryPrice, close: bar.close, barsHeld: h.barsHeld, pnlBps, vwap: vwap?.vwap ?? null, vwapZ: vwap?.z ?? null },
+      kind: "exit", symbol, heldQty: h.qty, reason, trigger: pnlBpsGross,
+      meta: { entryPrice: h.entryPrice, close: bar.close, barsHeld: h.barsHeld, pnlBpsGross, vwap: vwap?.vwap ?? null, vwapZ: vwap?.z ?? null },
     });
   }
 

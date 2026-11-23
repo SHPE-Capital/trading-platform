@@ -19,7 +19,7 @@ export type SessionWindow = "warmup" | "open" | "no_entries" | "flatten";
 export type ExitReason = "stale" | "close" | "stop" | "target" | "time";
 
 type WindowKnobs = Pick<Team3ReversalConfig, "skipOpenMinutes" | "lastEntryMinutesBeforeClose" | "flattenMinutesBeforeClose">;
-type EntryKnobs = Pick<Team3ReversalConfig, "entryZ" | "minEdgeBps">;
+type EntryKnobs = Pick<Team3ReversalConfig, "entryZ" | "minEdgeBps" | "stopZ">;
 type ExitKnobs = Pick<Team3ReversalConfig, "stopZ" | "maxHoldBars">;
 
 /** Where a session bar sits in the trading day. Exits are allowed in every window. */
@@ -43,13 +43,14 @@ export interface EntryIdea {
 
 /**
  * Fade the bar (sell an up bar, buy a down bar) only when it leaves the close at least
- * entryZ sigmas from VWAP on that same side, and the way back to VWAP beats minEdgeBps.
+ * entryZ sigmas from VWAP on that same side (but short of stopZ: a trade entered past
+ * its own stop would be stopped on the next bar), and the way back to VWAP beats minEdgeBps.
  */
 export function entryIdea(bar: BarView, prev: BarView, vwap: VwapView | null, c: EntryKnobs): EntryIdea | null {
   if (!vwap || vwap.z === null || bar.close === prev.close) return null;
   const move = (bar.close - prev.close) / prev.close;
   const side: Side = move > 0 ? "sell" : "buy";
-  const stretched = side === "sell" ? vwap.z >= c.entryZ : vwap.z <= -c.entryZ;
+  const stretched = (side === "sell" ? vwap.z >= c.entryZ : vwap.z <= -c.entryZ) && Math.abs(vwap.z) < c.stopZ;
   const edgeBps = (Math.abs(bar.close - vwap.vwap) / bar.close) * 10_000;
   return stretched && edgeBps >= c.minEdgeBps ? { side, move, z: vwap.z, edgeBps } : null;
 }
