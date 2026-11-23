@@ -36,7 +36,7 @@ export const TEAM3_FILTERS: FilterSet = {
   entry: [
     { name: "vwapRegime", switchKey: "useVwapRegime", status: "done", allows: vwapRegimeAllows },
     { name: "volume", switchKey: "useVolume", status: "stub", allows: volumeAllows },
-    { name: "relativeToSpy", switchKey: "useRelativeToSpy", status: "stub", allows: relativeToSpyAllows },
+    { name: "relativeToSpy", switchKey: "useRelativeToSpy", status: "done", allows: relativeToSpyAllows },
   ],
 };
 

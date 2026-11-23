@@ -1,45 +1,50 @@
 /**
  * strategies/team3Reversal/filters/relativeToSpy.ts
  *
- * Filter: Relative to the market.  Switch: useRelativeToSpy  Knob: benchmarkSymbol
- * Owner: Alex Rivera (PR #78; rule below is his 1-minute version)   Status: stub. Switching it on is refused until the
- * registry in index.ts marks it "done".
+ * Filter: Relative to the market.  Switch: useRelativeToSpy
+ * Knobs: benchmarkSymbol, rtsMinOwnShare, rtsExcludeSymbols (plus lookbackBars)
+ * Origin: Alex Rivera (PR #78, aaf0815) wrote the first rule here: enter only if the
+ * stock's 1-minute move in the fade direction beat 2 x |SPY's 1-minute move|. The
+ * Stage 2 rspy session turned it into the specced filter below, keeping his
+ * structure (benchmark bar matched by timestamp, entry blocked when SPY is missing).
+ * Status: done (docs/team3/components/relative-to-spy.md).
  *
  * Idea in plain words: when the whole market moves, the move comes back less.
- * Compare this stock's move with the benchmark's (SPY's) move over the same
- * minute, and only let the trade through when the stock moved much more than
- * the market did, in the same direction the baseline is fading.
+ * Fade only moves the stock made on its own.
  *
- * Useful tools:
- *   - input.move: this stock's move.
- *   - input.barsOf(input.config.benchmarkSymbol): SPY's recent bars.
- *
- * Timing (handled for you): barsOf(benchmark) already includes the benchmark's bar
- * for this same minute, even though symbols are evaluated one at a time.
- * Both lists are today's regular-session bars only.
- *
- * Steps: 1) write your rule as a comment, 2) code it below, 3) make
- * src/tests/strategy/team3Reversal/relativeToSpy.test.ts describe your rule.
+ * Rule (beta = 1):
+ *   start  = the oldest bar of `history` (up to lookbackBars session bars before this bar)
+ *   total  = stock close now / stock close at start - 1
+ *   resid  = total - (SPY close now / SPY close at start - 1)
+ *   enter only if |resid| / |total| >= rtsMinOwnShare.
+ *   SPY must have a bar at both the start ts and this bar's ts, else block.
+ *   total == 0 (or no history) blocks.  Symbols in rtsExcludeSymbols (SPY, QQQ) are never traded.
  */
 
-import type { EntryFilter } from "./types";
+import type { BarView, EntryFilter } from "./types";
 
-export const relativeToSpyAllows: EntryFilter = ({ bar, move, side, barsOf, config }) => {
-  const benchmarkBars = barsOf(config.benchmarkSymbol);
-  const moveInFadeDirection = side === "sell" ? move : -move;
-
-  for (let i = benchmarkBars.length - 1; i > 0; i--) {
-    const benchmark = benchmarkBars[i];
-    if (benchmark.ts > bar.ts) continue;
-    if (benchmark.ts < bar.ts) break;
-
-    const previous = benchmarkBars[i - 1];
-    if (previous.ts !== bar.ts - 60_000 || previous.close <= 0) break;
-
-    const benchmarkMove = (benchmark.close - previous.close) / previous.close;
-    return moveInFadeDirection > 2 * Math.abs(benchmarkMove);
+const closeAt = (bars: readonly BarView[], ts: number): number | null => {
+  for (let i = bars.length - 1; i >= 0; i--) {
+    const b = bars[i];
+    if (b.ts > ts) continue;
+    return b.ts === ts && b.close > 0 ? b.close : null;
   }
+  return null;
+};
 
-  // Skip the entry when the benchmark's one-minute return is unavailable.
-  return false;
+export const relativeToSpyAllows: EntryFilter = ({ symbol, bar, history, barsOf, config }) => {
+  if (config.rtsExcludeSymbols.includes(symbol.toUpperCase())) return false;
+  const start = history[0];
+  if (!start || start.close <= 0) return false;
+
+  const benchmarkBars = barsOf(config.benchmarkSymbol);
+  const spyNow = closeAt(benchmarkBars, bar.ts);
+  const spyStart = closeAt(benchmarkBars, start.ts);
+  // Skip the entry when the benchmark's return over the same bars is unavailable.
+  if (spyNow === null || spyStart === null) return false;
+
+  const total = bar.close / start.close - 1;
+  if (total === 0) return false;
+  const resid = total - (spyNow / spyStart - 1);
+  return Math.abs(resid) / Math.abs(total) >= config.rtsMinOwnShare;
 };
