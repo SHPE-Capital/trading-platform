@@ -1,0 +1,234 @@
+{
+  "format_version": "momentum_golden.v1",
+  "scenario": "s2_rvol_vwap",
+  "description": "Breakout + relative volume + VWAP band over 20 short sessions; early close; missing minute.",
+  "notes": [
+    "RVOL needs 15 prior sessions: first valid at session 15 (bar 180).",
+    "Session 17 is an early close (8 minutes instead of 12): later clock windows have fewer samples.",
+    "Symbol a-0011 has no bar at session 16, minute 4: its RVOL windows touching it are invalid."
+  ],
+  "symbols": [
+    {
+      "asset_id": "a-0010",
+      "symbol": "RRR"
+    },
+    {
+      "asset_id": "a-0011",
+      "symbol": "SSS"
+    },
+    {
+      "asset_id": "a-0012",
+      "symbol": "TTT"
+    }
+  ],
+  "sessions": [
+    {
+      "session": 0,
+      "date": "2026-01-05",
+      "start_i": 0,
+      "n_minutes": 12,
+      "early_close": false
+    },
+    {
+      "session": 1,
+      "date": "2026-01-06",
+      "start_i": 12,
+      "n_minutes": 12,
+      "early_close": false
+    },
+    {
+      "session": 2,
+      "date": "2026-01-07",
+      "start_i": 24,
+      "n_minutes": 12,
+      "early_close": false
+    },
+    {
+      "session": 3,
+      "date": "2026-01-08",
+      "start_i": 36,
+      "n_minutes": 12,
+      "early_close": false
+    },
+    {
+      "session": 4,
+      "date": "2026-01-09",
+      "start_i": 48,
+      "n_minutes": 12,
+      "early_close": false
+    },
+    {
+      "session": 5,
+      "date": "2026-01-12",
+      "start_i": 60,
+      "n_minutes": 12,
+      "early_close": false
+    },
+    {
+      "session": 6,
+      "date": "2026-01-13",
+      "start_i": 72,
+      "n_minutes": 12,
+      "early_close": false
+    },
+    {
+      "session": 7,
+      "date": "2026-01-14",
+      "start_i": 84,
+      "n_minutes": 12,
+      "early_close": false
+    },
+    {
+      "session": 8,
+      "date": "2026-01-15",
+      "start_i": 96,
+      "n_minutes": 12,
+      "early_close": false
+    },
+    {
+      "session": 9,
+      "date": "2026-01-16",
+      "start_i": 108,
+      "n_minutes": 12,
+      "early_close": false
+    },
+    {
+      "session": 10,
+      "date": "2026-01-19",
+      "start_i": 120,
+      "n_minutes": 12,
+      "early_close": false
+    },
+    {
+      "session": 11,
+      "date": "2026-01-20",
+      "start_i": 132,
+      "n_minutes": 12,
+      "early_close": false
+    },
+    {
+      "session": 12,
+      "date": "2026-01-21",
+      "start_i": 144,
+      "n_minutes": 12,
+      "early_close": false
+    },
+    {
+      "session": 13,
+      "date": "2026-01-22",
+      "start_i": 156,
+      "n_minutes": 12,
+      "early_close": false
+    },
+    {
+      "session": 14,
+      "date": "2026-01-23",
+      "start_i": 168,
+      "n_minutes": 12,
+      "early_close": false
+    },
+    {
+      "session": 15,
+      "date": "2026-01-26",
+      "start_i": 180,
+      "n_minutes": 12,
+      "early_close": false
+    },
+    {
+      "session": 16,
+      "date": "2026-01-27",
+      "start_i": 192,
+      "n_minutes": 12,
+      "early_close": false
+    },
+    {
+      "session": 17,
+      "date": "2026-01-28",
+      "start_i": 204,
+      "n_minutes": 8,
+      "early_close": true
+    },
+    {
+      "session": 18,
+      "date": "2026-01-29",
+      "start_i": 212,
+      "n_minutes": 12,
+      "early_close": false
+    },
+    {
+      "session": 19,
+      "date": "2026-01-30",
+      "start_i": 224,
+      "n_minutes": 12,
+      "early_close": false
+    }
+  ],
+  "n_bars": 236,
+  "warmup_sessions": 15,
+  "missing_bars": [
+    {
+      "asset_id": "a-0011",
+      "i": 196,
+      "session": 16,
+      "minute": 4
+    }
+  ],
+  "indicator_columns": {
+    "atr14": {
+      "kind": "number",
+      "abs": 1e-09,
+      "rel": 1e-09
+    },
+    "ready_atr14": {
+      "kind": "bool"
+    },
+    "prec_high_n10": {
+      "kind": "number",
+      "abs": 1e-09,
+      "rel": 1e-09
+    },
+    "sig_breakout": {
+      "kind": "bool"
+    },
+    "ready_breakout_n10": {
+      "kind": "bool"
+    },
+    "rvol_w3": {
+      "kind": "number",
+      "abs": 1e-09,
+      "rel": 1e-09
+    },
+    "sig_rvol": {
+      "kind": "bool"
+    },
+    "ready_rvol_w3": {
+      "kind": "bool"
+    },
+    "vwap": {
+      "kind": "number",
+      "abs": 1e-09,
+      "rel": 1e-09
+    },
+    "sig_vwap": {
+      "kind": "bool"
+    },
+    "ready_vwap": {
+      "kind": "bool"
+    }
+  },
+  "counts": {
+    "bars": 707,
+    "indicator_rows": 708,
+    "signals": 16,
+    "decisions": 10,
+    "ledger": 7
+  },
+  "files": {
+    "weekly_config": "weekly_config.json",
+    "bars": "bars.jsonl",
+    "indicators": "indicators.jsonl",
+    "signals": "signals.jsonl",
+    "orders": "orders.jsonl",
+    "ledger": "ledger.jsonl"
+  }
+}

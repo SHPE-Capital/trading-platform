@@ -5,17 +5,36 @@
  * EventBus at a configurable speed. Supports pause, resume, step, seek,
  * and speed control for debugging and strategy inspection.
  *
+ * While each recorded event is published, nowMs() returns that event's ts, so
+ * handlers see the recorded time rather than the wall clock. The override is
+ * installed only for the synchronous publish and refused (wall clock kept) in
+ * a process whose clock a trading engine has locked.
+ *
+ * Progress goes out as REPLAY_TICK: after every control command, on
+ * completion, and at most every TICK_INTERVAL_MS during playback.
+ *
  * Inputs:  ReplaySession with a recorded event array and playback controls.
- * Outputs: TradingEvents re-published to the EventBus; session state updates.
+ * Outputs: TradingEvents re-published to the EventBus; REPLAY_TICK progress;
+ *          session state updates.
  */
 
 import { EventBus } from "../engine/eventBus";
 import { logger } from "../../utils/logger";
+import { newId } from "../../utils/ids";
+import { setClockOverride, isClockLockedForLive } from "../../utils/time";
+import type { TradingEvent } from "../../types/events";
 import type { ReplaySession, ReplayCommand, ReplaySpeed } from "../../types/replay";
+
+/** A session as the API reports it: everything but the event array. */
+export type ReplaySessionStatus = Omit<ReplaySession, "events">;
+
+/** Minimum wall-clock gap between REPLAY_TICKs while playing. */
+const TICK_INTERVAL_MS = 100;
 
 export class ReplayEngine {
   private session: ReplaySession | null = null;
   private playbackTimer: NodeJS.Timeout | null = null;
+  private lastTickAt = 0;
 
   constructor(private readonly eventBus: EventBus) {}
 
@@ -53,6 +72,9 @@ export class ReplayEngine {
       case "seek":
         this._seek(command.targetIndex);
         break;
+      case "seek_ts":
+        this._seek(this._indexAtOrAfter(command.targetTs));
+        break;
       case "set_speed":
         this._setSpeed(command.speed);
         break;
@@ -60,6 +82,7 @@ export class ReplayEngine {
         this._reset();
         break;
     }
+    this._publishTick();
   }
 
   /**
@@ -68,6 +91,17 @@ export class ReplayEngine {
    */
   getSession(): ReplaySession | null {
     return this.session ? { ...this.session } : null;
+  }
+
+  /**
+   * The current session without its events — what status responses carry, so
+   * a poll does not serialize the whole recording.
+   * @returns ReplaySessionStatus or null
+   */
+  getStatus(): ReplaySessionStatus | null {
+    if (!this.session) return null;
+    const { events: _events, ...status } = this.session;
+    return status;
   }
 
   /**
@@ -105,11 +139,30 @@ export class ReplayEngine {
 
   private _seek(targetIndex: number): void {
     if (!this.session) return;
+    // A non-finite target would survive the clamp below as NaN and leave the
+    // cursor pointing at no event, so the next emit would throw. Callers over
+    // HTTP are validated in replayController; this keeps any other caller from
+    // wedging the session.
+    if (!Number.isFinite(targetIndex)) return;
     this._clearTimer();
     this.session.cursor = Math.max(0, Math.min(targetIndex, this.session.totalEvents - 1));
+    if (this.session.status === "completed") this.session.status = "paused";
     if (this.session.status === "playing") {
       this._scheduleNext();
     }
+  }
+
+  /** Index of the first event with ts >= targetTs (events are in time order). */
+  private _indexAtOrAfter(targetTs: number): number {
+    const events = this.session!.events;
+    let lo = 0;
+    let hi = events.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (events[mid].ts < targetTs) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
   }
 
   private _setSpeed(speed: ReplaySpeed): void {
@@ -160,12 +213,47 @@ export class ReplayEngine {
 
     const event = this.session.events[this.session.cursor];
     this.session.simulatedNow = event.ts;
-    this.eventBus.publish(event);
+    this._publishAtRecordedTime(event);
     this.session.cursor++;
 
     if (this.session.cursor >= this.session.totalEvents) {
       this.session.status = "completed";
+      logger.info("ReplayEngine: playback completed", { id: this.session.id });
+      this._publishTick();
+    } else if (this.session.status === "playing" && Date.now() - this.lastTickAt >= TICK_INTERVAL_MS) {
+      this._publishTick();
     }
+  }
+
+  private _publishAtRecordedTime(event: TradingEvent): void {
+    if (isClockLockedForLive()) {
+      this.eventBus.publish(event);
+      return;
+    }
+    setClockOverride(() => event.ts);
+    try {
+      this.eventBus.publish(event);
+    } finally {
+      setClockOverride(null);
+    }
+  }
+
+  /** ts is wall-clock delivery time, not simulated time (see ReplayTickEvent). */
+  private _publishTick(): void {
+    if (!this.session) return;
+    this.lastTickAt = Date.now();
+    this.eventBus.publish({
+      id: newId(),
+      type: "REPLAY_TICK",
+      ts: this.lastTickAt,
+      mode: "replay",
+      sessionId: this.session.id,
+      cursor: this.session.cursor,
+      totalEvents: this.session.totalEvents,
+      status: this.session.status,
+      speed: this.session.speed,
+      simulatedNow: this.session.simulatedNow,
+    });
   }
 
   private _clearTimer(): void {

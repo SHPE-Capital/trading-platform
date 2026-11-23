@@ -208,25 +208,29 @@ saveState({ base, remapped, apiPort: ports.api, counts: finalCounts });
 // 5. App containers
 // ---------------------------------------------------------------------------
 
-// Market data: a member's OWN Alpaca keys (never the club's) feed backtests over REST.
-// Without keys, backtests use the local bar cache (seed it with `npm run data:pull`).
-// The live stream (one connection per Alpaca account) is opt-in via LOCAL_STREAM_DATA=1.
+// Market data: a member's OWN Alpaca keys (never the club's) stream live data to
+// the paper runner and feed backtests over REST. Alpaca allows one live stream per
+// account; LOCAL_STREAM_DATA=0 turns the paper runner's off (backtests still work).
+// Without keys the paper runner has no data and refuses new runs.
+const NO_DATA_FIX = "add your own free Alpaca paper keys as ALPACA_DATA_KEY/ALPACA_DATA_SECRET in backend/.env (https://app.alpaca.markets), then re-run `npm run dev:stack`";
 const data = loadDataCredentials();
 const dataEnv = {};
-let dataNote = "no Alpaca keys: backtests use the local bar cache (seed it with `npm run data:pull`)";
+let dataNote = `NONE - strategies cannot run and backtests use only cached bars. To fix: ${NO_DATA_FIX}`;
 if (data.source) {
   const who = await identifyAlpacaAccount(data.key, data.secret);
   if (who.isClub) {
-    dataNote = `WITHHELD - the keys from ${data.source} belong to the club account (${who.account}). Use your own free Alpaca keys, or \`npm run data:pull\``;
+    dataNote = `WITHHELD - the keys from ${data.source} belong to the club account (${who.account}). Strategies cannot run. To fix: ${NO_DATA_FIX}`;
   } else {
     dataEnv.LOCAL_DATA_KEY = data.key;
     dataEnv.LOCAL_DATA_SECRET = data.secret;
-    if (data.streamOptIn) {
+    if (data.stream) {
       dataEnv.LOCAL_STREAM_DATA_KEY = data.key;
       dataEnv.LOCAL_STREAM_DATA_SECRET = data.secret;
     }
     const account = who.account ? `account ${who.account}` : "account not verified";
-    dataNote = `your Alpaca keys from ${data.source} (${account}) for backtests; live stream ${data.streamOptIn ? "ON" : "off (set LOCAL_STREAM_DATA=1 to enable)"}`;
+    dataNote = data.stream
+      ? `LIVE from your Alpaca keys in ${data.source} (${account}), for paper runs and backtests`
+      : `your Alpaca keys from ${data.source} (${account}) for backtests only; live stream OFF (LOCAL_STREAM_DATA=0), so strategies cannot run`;
   }
 }
 const composeEnv = {

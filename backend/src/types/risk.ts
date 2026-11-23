@@ -58,6 +58,12 @@ export interface RiskConfig {
   killSwitchActive: boolean;
   /** Maximum intraday drawdown as a fraction of start-of-day equity before kill switch engages */
   maxIntradayDrawdownPct?: number;
+  /**
+   * Daily halt: a fall of this fraction from start-of-day equity (including unrealized PnL)
+   * blocks new buy orders until `resetSession()`. Unset = no daily halt. Unlike the drawdown
+   * kill switch it never blocks sells, so a liquidation can still reach the broker.
+   */
+  dailyHaltPct?: number;
   /** Maximum concentration in any single symbol as a fraction of total equity */
   maxConcentrationPct?: number;
   /** Minimum cash reserve as a fraction of total equity — orders rejected if breached */

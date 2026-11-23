@@ -51,6 +51,47 @@ const streams = new BacktestStreamManager({
   savedResultExists: (id) => backtestResultExists(id),
 });
 
+const GRANULARITIES = new Set(["bar", "quote", "trade"]);
+const RISK_FIELDS = ["maxIntradayDrawdownPct", "cashReservePct", "gapBufferBps", "spreadBufferBps"] as const;
+
+const isFiniteNumber = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+
+/**
+ * Checks the run-level fields of a backtest request. The engine does not reject
+ * bad values here — it completes with corrupt metrics (a string capital
+ * concatenates into equity, zero capital divides to NaN, an unparseable date
+ * gives a NaN period) that are then saved and reused — so they stop here.
+ */
+function runFieldsProblem(body: Record<string, unknown>): string | null {
+  if (body.name != null && typeof body.name !== "string") return "name must be a string";
+  if (typeof body.startDate !== "string" || typeof body.endDate !== "string") {
+    return "startDate and endDate must be ISO date strings";
+  }
+  const start = Date.parse(body.startDate);
+  const end = Date.parse(body.endDate);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return "startDate and endDate must be valid dates";
+  if (end < start) return "endDate must not be before startDate";
+  if (body.initialCapital != null && !(isFiniteNumber(body.initialCapital) && body.initialCapital > 0)) {
+    return "initialCapital must be a positive number";
+  }
+  for (const field of ["slippageBps", "commissionPerShare"] as const) {
+    const v = body[field];
+    if (v != null && !(isFiniteNumber(v) && v >= 0)) return `${field} must be a number >= 0`;
+  }
+  if (body.dataGranularity != null && !GRANULARITIES.has(body.dataGranularity as string)) {
+    return "dataGranularity must be one of bar, quote, trade";
+  }
+  const rc = body.riskConfig;
+  if (rc != null) {
+    if (typeof rc !== "object" || Array.isArray(rc)) return "riskConfig must be an object";
+    for (const field of RISK_FIELDS) {
+      const v = (rc as Record<string, unknown>)[field];
+      if (v != null && !isFiniteNumber(v)) return `riskConfig.${field} must be a number`;
+    }
+  }
+  return null;
+}
+
 /**
  * GET /api/backtests
  * Summaries of saved backtest results.
@@ -199,6 +240,11 @@ export async function runBacktest(req: Request, res: Response): Promise<void> {
 
   if (!body.strategyConfig || !body.startDate || !body.endDate) {
     res.status(400).json({ error: "strategyConfig, startDate, and endDate are required" });
+    return;
+  }
+  const fieldProblem = runFieldsProblem(body as unknown as Record<string, unknown>);
+  if (fieldProblem) {
+    res.status(400).json({ error: fieldProblem });
     return;
   }
   if (!BACKTESTABLE_TYPES.has(body.strategyConfig.type)) {

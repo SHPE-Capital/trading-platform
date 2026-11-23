@@ -1,0 +1,114 @@
+{
+  "schema_version": "weekly_config.v1",
+  "run_id": "rm9-2026-w47-similarity",
+  "code_commit": "a1bdc4c0d2e3",
+  "data_version": "snapshot-2026-11-13",
+  "protocol_hash": "3f2a9c0b7d114e55",
+  "policy": "similarity",
+  "decision_cutoff": "2026-11-20T21:00:00Z",
+  "search_range": {
+    "start": "2021-11-15",
+    "end": "2026-08-14"
+  },
+  "validation_range": {
+    "start": "2026-08-17",
+    "end": "2026-11-13"
+  },
+  "activation": {
+    "start": "2026-11-23",
+    "end": "2026-11-27"
+  },
+  "universe": [
+    {
+      "asset_id": "a-0001",
+      "symbol": "AAPL"
+    },
+    {
+      "asset_id": "a-0002",
+      "symbol": "MSFT"
+    },
+    {
+      "asset_id": "a-0003",
+      "symbol": "NVDA"
+    }
+  ],
+  "selected": {
+    "config_id": "5575e5f41ca2e9a0",
+    "grid_version": "v1",
+    "subset": [
+      "adx",
+      "breakout"
+    ],
+    "params": {
+      "adx.period": 14,
+      "adx.q": 20,
+      "breakout.b": 0.1,
+      "breakout.n": 20
+    }
+  },
+  "no_deployment": null,
+  "acceptance": {
+    "passed": true,
+    "checks": [
+      {
+        "name": "search_min_trades",
+        "passed": true,
+        "value": 412.0,
+        "threshold": 100.0
+      },
+      {
+        "name": "validation_min_trades",
+        "passed": true,
+        "value": 88.0,
+        "threshold": 30.0
+      },
+      {
+        "name": "max_drawdown",
+        "passed": true,
+        "value": 0.042,
+        "threshold": 0.1
+      }
+    ]
+  },
+  "ess": 312.4,
+  "evaluations": {
+    "logical": 2048,
+    "actual": 517
+  },
+  "seeds": [
+    11,
+    22,
+    33
+  ],
+  "account": {
+    "starting_cash": 100000.0,
+    "max_positions": 10,
+    "per_stock_pct": 0.08,
+    "risk_pct": 0.0025,
+    "total_exposure_cap": 0.8,
+    "liquidity_cap_pct": 0.01,
+    "liquidity_lookback": 20,
+    "liquidity_min_obs": 15,
+    "daily_halt_pct": 0.01,
+    "cost_bps": 10.0,
+    "ranking": "dollar_volume_20d",
+    "entry_score_threshold": null,
+    "size_multiplier": null,
+    "search_replay_reference_equity": null,
+    "exit": {
+      "initial_stop_atr": 1.5,
+      "trail_activation_atr": 1.0,
+      "trail_distance_atr": 1.5,
+      "max_hold_minutes": 60,
+      "session_exit_minutes_before_close": 5
+    },
+    "fill": {
+      "kind": "limit_markup",
+      "limit_markup": 0.002
+    }
+  },
+  "runtime": {
+    "seconds": 1843.2,
+    "peak_memory_mb": 5120.0
+  }
+}

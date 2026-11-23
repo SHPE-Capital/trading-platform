@@ -29,8 +29,17 @@ import { nowMs } from "../../utils/time";
 import { DEFAULT_RISK_CONFIG } from "../../config/defaults";
 import type { RiskConfig, RiskCheckResult, StrategyRiskBudget, PortfolioRiskViolation } from "../../types/risk";
 import type { OrderIntent } from "../../types/orders";
-import type { PortfolioRiskView, PortfolioSnapshot } from "../../types/portfolio";
+import type { PortfolioRiskView } from "../../types/portfolio";
 import type { MarketHours } from "../market/marketHours";
+
+/**
+ * A qty the checks below can reason about. They compare with `>`, and every
+ * comparison with NaN is false, so a NaN qty would pass all of them — reject
+ * it here, along with ±Infinity, so the engine fails closed.
+ */
+function isValidQty(qty: number): boolean {
+  return Number.isFinite(qty) && qty > 0;
+}
 
 export class RiskEngine {
   private config: RiskConfig;
@@ -42,6 +51,8 @@ export class RiskEngine {
   private lastOrderTs: Map<string, number> = new Map();
   /** Equity at the start of the current session (set on first check) */
   private sessionStartEquity: number | null = null;
+  /** Latched once the daily halt (config.dailyHaltPct) trips; cleared by resetSession(). */
+  private dailyHaltTripped = false;
   /** Per-strategy capital budgets registered at engine startup */
   private readonly _strategyBudgets = new Map<string, StrategyRiskBudget>();
   /**
@@ -72,11 +83,11 @@ export class RiskEngine {
    * @param referencePrice - Current market price for the symbol (optional)
    * @returns RiskCheckResult indicating pass or fail with reason
    */
-  check(intent: OrderIntent, portfolio: PortfolioSnapshot, referencePrice?: number, referenceTs?: number): RiskCheckResult {
+  check(intent: OrderIntent, portfolio: PortfolioRiskView, referencePrice?: number, referenceTs?: number): RiskCheckResult {
     const ts = nowMs();
 
-    if (intent.qty <= 0) {
-      return { passed: false, intent, failedCheck: "INVALID_QTY", reason: `Order qty must be > 0 (got ${intent.qty})`, ts };
+    if (!isValidQty(intent.qty)) {
+      return { passed: false, intent, failedCheck: "INVALID_QTY", reason: `Order qty must be a finite number > 0 (got ${intent.qty})`, ts };
     }
 
     this._initSessionEquity(portfolio);
@@ -98,11 +109,11 @@ export class RiskEngine {
    * Use this to validate all legs of a multi-leg signal before emitting any
    * ORDER_INTENT_CREATED events — if any leg would fail, the whole group is dropped.
    */
-  preflightCheck(intent: OrderIntent, portfolio: PortfolioSnapshot, referencePrice?: number, referenceTs?: number): RiskCheckResult {
+  preflightCheck(intent: OrderIntent, portfolio: PortfolioRiskView, referencePrice?: number, referenceTs?: number): RiskCheckResult {
     const ts = nowMs();
 
-    if (intent.qty <= 0) {
-      return { passed: false, intent, failedCheck: "INVALID_QTY", reason: `Order qty must be > 0 (got ${intent.qty})`, ts };
+    if (!isValidQty(intent.qty)) {
+      return { passed: false, intent, failedCheck: "INVALID_QTY", reason: `Order qty must be a finite number > 0 (got ${intent.qty})`, ts };
     }
 
     this._initSessionEquity(portfolio);
@@ -212,6 +223,7 @@ export class RiskEngine {
    */
   resetSession(): void {
     this.sessionStartEquity = null;
+    this.dailyHaltTripped = false;
   }
 
   /**
@@ -264,7 +276,7 @@ export class RiskEngine {
   checkStrategyBudget(
     intent: OrderIntent,
     worstCaseNotional: number,
-    portfolio: PortfolioSnapshot,
+    portfolio: PortfolioRiskView,
     alreadyReservedForStrategy: number,
     openOrderCount = 0,
   ): { failedCheck: string; reason: string } | null {
@@ -357,7 +369,7 @@ export class RiskEngine {
   // Private helpers
   // ------------------------------------------------------------------
 
-  private _initSessionEquity(portfolio: PortfolioSnapshot): void {
+  private _initSessionEquity(portfolio: PortfolioRiskView): void {
     if (this.sessionStartEquity === null) {
       this.sessionStartEquity = portfolio.equity > 0 ? portfolio.equity : portfolio.initialCapital;
     }
@@ -365,28 +377,26 @@ export class RiskEngine {
 
   private _runChecks(
     intent: OrderIntent,
-    portfolio: PortfolioSnapshot,
+    portfolio: PortfolioRiskView,
     ts: number,
     referencePrice?: number,
     referenceTs?: number,
   ): { failedCheck: string; reason: string } | null {
-    const checks = [
-      () => this._checkKillSwitch(intent),
-      () => this._checkMarketOpen(ts),
-      () => this._checkStaleQuote(referenceTs),
-      () => this._checkCooldown(intent, ts),
-      () => this._checkMaxPositionSize(intent, portfolio, referencePrice),
-      () => this._checkMaxNotionalExposure(intent, portfolio, referencePrice),
-      () => this._checkShortSelling(intent, portfolio),
-      () => this._checkCashReserve(intent, portfolio, referencePrice),
-      () => this._checkIntradayDrawdown(intent, portfolio),
-      () => this._checkConcentration(intent, portfolio, referencePrice),
-    ];
-    for (const check of checks) {
-      const result = check();
-      if (result) return result;
-    }
-    return null;
+    // Checked in order; the first failure wins. Written as a chain rather than
+    // an array of closures: this runs for every intent.
+    return (
+      this._checkKillSwitch(intent) ??
+      this._checkDailyHalt(intent, portfolio) ??
+      this._checkMarketOpen(ts) ??
+      this._checkStaleQuote(referenceTs) ??
+      this._checkCooldown(intent, ts) ??
+      this._checkMaxPositionSize(intent, portfolio, referencePrice) ??
+      this._checkMaxNotionalExposure(intent, portfolio, referencePrice) ??
+      this._checkShortSelling(intent, portfolio) ??
+      this._checkCashReserve(intent, portfolio, referencePrice) ??
+      this._checkIntradayDrawdown(intent, portfolio) ??
+      this._checkConcentration(intent, portfolio, referencePrice)
+    );
   }
 
   // ------------------------------------------------------------------
@@ -418,7 +428,7 @@ export class RiskEngine {
 
   private _resolveReferencePrice(
     intent: OrderIntent,
-    portfolio: PortfolioSnapshot,
+    portfolio: PortfolioRiskView,
     referencePrice?: number,
   ): number | null {
     if (typeof intent.limitPrice === "number" && intent.limitPrice > 0) return intent.limitPrice;
@@ -433,6 +443,22 @@ export class RiskEngine {
   private _checkKillSwitch(_intent: OrderIntent): { failedCheck: string; reason: string } | null {
     if (!this.config.killSwitchActive) return null;
     return { failedCheck: "KILL_SWITCH", reason: "Global kill switch is active — all orders blocked" };
+  }
+
+  /** Blocks new buys once equity is `dailyHaltPct` below session-start equity; sells always pass. */
+  private _checkDailyHalt(
+    intent: OrderIntent,
+    portfolio: PortfolioRiskView,
+  ): { failedCheck: string; reason: string } | null {
+    const limit = this.config.dailyHaltPct;
+    if (limit == null || !Number.isFinite(limit) || limit <= 0) return null;
+    if (intent.side !== "buy") return null;
+    if (!this.dailyHaltTripped && this.sessionStartEquity != null && this.sessionStartEquity > 0) {
+      const fall = (this.sessionStartEquity - portfolio.equity) / this.sessionStartEquity;
+      if (fall >= limit) this.dailyHaltTripped = true;
+    }
+    if (!this.dailyHaltTripped) return null;
+    return { failedCheck: "DAILY_HALT", reason: `Daily halt: equity fell at least ${(limit * 100).toFixed(2)}% from session start; new entries blocked` };
   }
 
   private _checkCooldown(
@@ -457,7 +483,7 @@ export class RiskEngine {
 
   private _checkMaxPositionSize(
     intent: OrderIntent,
-    portfolio: PortfolioSnapshot,
+    portfolio: PortfolioRiskView,
     referencePrice?: number,
   ): { failedCheck: string; reason: string } | null {
     const existingPosition = portfolio.positions.find((p) => p.symbol === intent.symbol);
@@ -482,7 +508,7 @@ export class RiskEngine {
 
   private _checkMaxNotionalExposure(
     intent: OrderIntent,
-    portfolio: PortfolioSnapshot,
+    portfolio: PortfolioRiskView,
     referencePrice?: number,
   ): { failedCheck: string; reason: string } | null {
     const rawPrice = this._resolveReferencePrice(intent, portfolio, referencePrice);
@@ -513,7 +539,7 @@ export class RiskEngine {
 
   private _checkShortSelling(
     intent: OrderIntent,
-    portfolio: PortfolioSnapshot,
+    portfolio: PortfolioRiskView,
   ): { failedCheck: string; reason: string } | null {
     if (this.config.allowShortSelling || intent.side !== "sell") return null;
     const position = portfolio.positions.find((p) => p.symbol === intent.symbol);
@@ -529,7 +555,7 @@ export class RiskEngine {
 
   private _checkCashReserve(
     intent: OrderIntent,
-    portfolio: PortfolioSnapshot,
+    portfolio: PortfolioRiskView,
     referencePrice?: number,
   ): { failedCheck: string; reason: string } | null {
     const reservePct = this.config.cashReservePct ?? 0;
@@ -572,7 +598,7 @@ export class RiskEngine {
 
   private _checkIntradayDrawdown(
     _intent: OrderIntent,
-    portfolio: PortfolioSnapshot,
+    portfolio: PortfolioRiskView,
   ): { failedCheck: string; reason: string } | null {
     const limit = this.config.maxIntradayDrawdownPct;
     if (limit == null || !Number.isFinite(limit)) return null;
@@ -591,7 +617,7 @@ export class RiskEngine {
 
   private _checkConcentration(
     intent: OrderIntent,
-    portfolio: PortfolioSnapshot,
+    portfolio: PortfolioRiskView,
     referencePrice?: number,
   ): { failedCheck: string; reason: string } | null {
     const limit = this.config.maxConcentrationPct;

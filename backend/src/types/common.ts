@@ -32,7 +32,7 @@ export type OrderType = "market" | "limit" | "stop" | "stop_limit";
 export type ExecutionAlgoType = "market" | "twap" | "vwap" | "pov" | "is";
 
 /** Position sizing algorithm used to compute order quantity */
-export type SizerType = "fixed_notional" | "volatility_scaled" | "kelly_fractional" | "equal_weight";
+export type SizerType = "fixed_notional" | "volatility_scaled" | "kelly_fractional" | "equal_weight" | "funded_account";
 
 /** Time-in-force instruction for an order */
 export type TimeInForce = "day" | "gtc" | "ioc" | "fok" | "opg" | "cls";

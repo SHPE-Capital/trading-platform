@@ -1,0 +1,129 @@
+{
+  "format_version": "momentum_golden.v1",
+  "scenario": "s3_rank_size",
+  "description": "Breakout + VWAP; simultaneous signals, a tie on dollar volume, max_positions=3.",
+  "notes": [
+    "a-0021 is a clone of a-0020 (identical bars): equal dollar volume, so the asset-id tie-break orders them.",
+    "The account allows 3 positions, so decisions with state 'busy' reject by max_positions."
+  ],
+  "symbols": [
+    {
+      "asset_id": "a-0020",
+      "symbol": "EEE"
+    },
+    {
+      "asset_id": "a-0021",
+      "symbol": "FFF"
+    },
+    {
+      "asset_id": "a-0022",
+      "symbol": "GGG"
+    },
+    {
+      "asset_id": "a-0023",
+      "symbol": "HHH"
+    },
+    {
+      "asset_id": "a-0024",
+      "symbol": "III"
+    },
+    {
+      "asset_id": "a-0025",
+      "symbol": "JJJ"
+    }
+  ],
+  "sessions": [
+    {
+      "session": 0,
+      "date": "2026-01-05",
+      "start_i": 0,
+      "n_minutes": 30,
+      "early_close": false
+    },
+    {
+      "session": 1,
+      "date": "2026-01-06",
+      "start_i": 30,
+      "n_minutes": 30,
+      "early_close": false
+    },
+    {
+      "session": 2,
+      "date": "2026-01-07",
+      "start_i": 60,
+      "n_minutes": 30,
+      "early_close": false
+    },
+    {
+      "session": 3,
+      "date": "2026-01-08",
+      "start_i": 90,
+      "n_minutes": 30,
+      "early_close": false
+    },
+    {
+      "session": 4,
+      "date": "2026-01-09",
+      "start_i": 120,
+      "n_minutes": 30,
+      "early_close": false
+    },
+    {
+      "session": 5,
+      "date": "2026-01-12",
+      "start_i": 150,
+      "n_minutes": 30,
+      "early_close": false
+    }
+  ],
+  "n_bars": 180,
+  "warmup_sessions": 2,
+  "missing_bars": [],
+  "indicator_columns": {
+    "atr14": {
+      "kind": "number",
+      "abs": 1e-09,
+      "rel": 1e-09
+    },
+    "ready_atr14": {
+      "kind": "bool"
+    },
+    "prec_high_n10": {
+      "kind": "number",
+      "abs": 1e-09,
+      "rel": 1e-09
+    },
+    "sig_breakout": {
+      "kind": "bool"
+    },
+    "ready_breakout_n10": {
+      "kind": "bool"
+    },
+    "vwap": {
+      "kind": "number",
+      "abs": 1e-09,
+      "rel": 1e-09
+    },
+    "sig_vwap": {
+      "kind": "bool"
+    },
+    "ready_vwap": {
+      "kind": "bool"
+    }
+  },
+  "counts": {
+    "bars": 1080,
+    "indicator_rows": 1080,
+    "signals": 61,
+    "decisions": 34,
+    "ledger": 17
+  },
+  "files": {
+    "weekly_config": "weekly_config.json",
+    "bars": "bars.jsonl",
+    "indicators": "indicators.jsonl",
+    "signals": "signals.jsonl",
+    "orders": "orders.jsonl",
+    "ledger": "ledger.jsonl"
+  }
+}

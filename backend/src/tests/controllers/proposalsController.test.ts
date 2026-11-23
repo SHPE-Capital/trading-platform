@@ -442,6 +442,14 @@ describe('rejectProposal', () => {
     expect(mockSettle).not.toHaveBeenCalled();
   });
 
+  it('rejects a non-string reason with 400 instead of throwing', async () => {
+    const res = mockRes();
+    await rejectProposal(mockReq({ params: { id: 'prop-1' } as never, body: { reason: 5 } }), res);
+
+    expect(res.statusCode).toBe(400);
+    expect(mockSettle).not.toHaveBeenCalled();
+  });
+
   it('settles and records the reason as a request_changes comment', async () => {
     mockSettle.mockResolvedValue(makeProposal({ status: 'rejected' }));
     mockInsertComment.mockResolvedValue({});
@@ -618,6 +626,13 @@ describe('createVersion', () => {
 // Comments
 // ---------------------------------------------------------------------------
 describe('addComment', () => {
+  it('rejects a non-string body with 400 instead of throwing', async () => {
+    const res = mockRes();
+    await addComment(mockReq({ params: { id: 'prop-1' } as never, body: { body: { x: 1 } } }), res);
+
+    expect(res.statusCode).toBe(400);
+  });
+
   it('lets a member leave a plain comment', async () => {
     mockGetProposal.mockResolvedValue(makeProposal());
     mockInsertComment.mockResolvedValue({ id: 'c-1' });

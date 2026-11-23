@@ -34,6 +34,7 @@ import type { EventBus } from "../core/engine/eventBus";
 import type { IExecutionSink } from "../core/execution/IExecutionSink";
 import type { OrderJournal } from "../core/execution/journaledExecution";
 import type { MarketDataAdapterOptions } from "../adapters/alpaca/marketData";
+import type { OrderExecutionAdapterOptions } from "../adapters/alpaca/orderExecution";
 import type { MetricsFile } from "../bench/report";
 import type { RunManifest } from "../bench/manifest";
 
@@ -88,6 +89,11 @@ export class RuntimeLatency {
 
   adapterOptions(): MarketDataAdapterOptions {
     return { probe: this.probe, observers: this.recorder ? [this.recorder] : [] };
+  }
+
+  /** Hooks for the Alpaca order adapter (response-header timing). */
+  orderAdapterOptions(): OrderExecutionAdapterOptions {
+    return { onResponseHeaders: (intentId, ns) => this.probe.responseHeaders(intentId, ns) };
   }
 
   wrapSink(sink: IExecutionSink): IExecutionSink {

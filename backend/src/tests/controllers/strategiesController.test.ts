@@ -305,6 +305,32 @@ describe('startStrategyRun: with orchestrator', () => {
     );
   });
 
+  it('records the market data the run trades on', async () => {
+    const orchestrator = { hasStrategyWithConfigId: jest.fn().mockReturnValue(false) };
+    mockInsertRun.mockResolvedValue(undefined);
+    const marketData = { status: () => ({ source: 'alpaca-stream' }), runStamp: () => ({ source: 'alpaca-stream', feed: 'iex' }) };
+    await startStrategyRun(
+      ctxReq({ orchestrator, liveRuns: makeLiveRuns(), executionMode: 'paper', marketData }, { body: { strategyId: 'strat-1', versionId: 'ver-1' } }),
+      mockRes(),
+    );
+    expect(mockInsertRun.mock.calls[0][0].meta).toEqual({ sandbox: true, marketData: { source: 'alpaca-stream', feed: 'iex' } });
+  });
+
+  it('refuses to start a run on a runner with no market data', async () => {
+    const orchestrator = { hasStrategyWithConfigId: jest.fn().mockReturnValue(false) };
+    const liveRuns = makeLiveRuns();
+    const marketData = { status: () => ({ source: 'none', message: 'No market data: add keys' }), runStamp: jest.fn() };
+    const res = mockRes();
+    await startStrategyRun(
+      ctxReq({ orchestrator, liveRuns, executionMode: 'paper', marketData }, { body: { strategyId: 'strat-1', versionId: 'ver-1' } }),
+      res,
+    );
+    expect(res.status).toHaveBeenCalledWith(503);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ detail: 'No market data: add keys' }));
+    expect(mockInsertRun).not.toHaveBeenCalled();
+    expect(liveRuns.activate).not.toHaveBeenCalled();
+  });
+
   it('warms up, persists a row already leased to this runner, then starts trading', async () => {
     const orchestrator = { hasStrategyWithConfigId: jest.fn().mockReturnValue(false) };
     const liveRuns = makeLiveRuns();

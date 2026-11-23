@@ -123,6 +123,29 @@ export interface Trade {
   id?: string;
 }
 
+/** A provider correction of an earlier trade print (Alpaca `c`). */
+export interface TradeCorrection {
+  symbol: Symbol;
+  /** Id of the trade being corrected. */
+  originalId: string;
+  originalPrice: number;
+  originalSize: number;
+  /** The trade as it should have been printed. */
+  corrected: Trade;
+}
+
+/** A provider cancel or error of an earlier trade print (Alpaca `x`). */
+export interface TradeCancel {
+  symbol: Symbol;
+  tradeId: string;
+  price: number;
+  size: number;
+  /** "C" cancel, "E" error (Alpaca `a`). */
+  action: string;
+  ts: EpochMs;
+  isoTs: ISOTimestamp;
+}
+
 // ------------------------------------------------------------------
 // Bar (OHLCV candle)
 // ------------------------------------------------------------------

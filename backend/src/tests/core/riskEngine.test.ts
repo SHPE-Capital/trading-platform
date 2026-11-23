@@ -121,6 +121,41 @@ describe('kill switch', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Order quantity — a non-finite qty must fail closed. Every limit below is a
+// `>` comparison, and any comparison with NaN is false, so a NaN qty used to
+// slip past all of them.
+// ---------------------------------------------------------------------------
+describe('invalid qty', () => {
+  const tight = { maxPositionSizeUsd: 1_000, maxNotionalExposureUsd: 1_000 };
+  const priced = () => makePortfolio({ positions: [makePosition({ qty: 1, currentPrice: 500 })] });
+
+  it.each([NaN, Infinity, -Infinity])('check() rejects qty %p with INVALID_QTY', (qty) => {
+    const result = new RiskEngine(tight).check(makeIntent({ qty }), priced(), 500);
+    expect(result.passed).toBe(false);
+    expect(result.failedCheck).toBe('INVALID_QTY');
+  });
+
+  it.each([NaN, Infinity])('preflightCheck() rejects qty %p with INVALID_QTY', (qty) => {
+    const result = new RiskEngine(tight).preflightCheck(makeIntent({ qty }), priced(), 500);
+    expect(result.passed).toBe(false);
+    expect(result.failedCheck).toBe('INVALID_QTY');
+  });
+
+  it('a NaN sell is rejected even with short selling disallowed and nothing held', () => {
+    const engine = new RiskEngine({ allowShortSelling: false });
+    const result = engine.check(makeIntent({ side: 'sell', qty: NaN }), makePortfolio(), 500);
+    expect(result.passed).toBe(false);
+    expect(result.failedCheck).toBe('INVALID_QTY');
+  });
+
+  it('a rejected NaN intent does not start the cooldown', () => {
+    const engine = new RiskEngine({ orderCooldownMs: 5_000 });
+    engine.check(makeIntent({ qty: NaN }), makePortfolio(), 500);
+    expect(engine.check(makeIntent({ qty: 1 }), makePortfolio(), 500).passed).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Order cooldown
 // ---------------------------------------------------------------------------
 describe('order cooldown', () => {

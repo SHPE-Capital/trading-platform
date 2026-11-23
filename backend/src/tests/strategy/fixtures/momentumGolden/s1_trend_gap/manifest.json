@@ -1,0 +1,169 @@
+{
+  "format_version": "momentum_golden.v1",
+  "scenario": "s1_trend_gap",
+  "description": "Breakout + ADX + EMA trend; early-close session, one missing minute, warm-up boundaries.",
+  "notes": [
+    "ATR14 ready at bar 70 (session 1, minute 34); ADX7 at bar 35; EMA20 and its 5-bar lag at bar 100.",
+    "Session 5 is an early close (24 minutes instead of 36).",
+    "Symbol a-0003 has no bar at session 4, minute 12: every recursive indicator restarts there."
+  ],
+  "symbols": [
+    {
+      "asset_id": "a-0001",
+      "symbol": "AAA"
+    },
+    {
+      "asset_id": "a-0002",
+      "symbol": "BBB"
+    },
+    {
+      "asset_id": "a-0003",
+      "symbol": "CCC"
+    },
+    {
+      "asset_id": "a-0004",
+      "symbol": "DDD"
+    }
+  ],
+  "sessions": [
+    {
+      "session": 0,
+      "date": "2026-01-05",
+      "start_i": 0,
+      "n_minutes": 36,
+      "early_close": false
+    },
+    {
+      "session": 1,
+      "date": "2026-01-06",
+      "start_i": 36,
+      "n_minutes": 36,
+      "early_close": false
+    },
+    {
+      "session": 2,
+      "date": "2026-01-07",
+      "start_i": 72,
+      "n_minutes": 36,
+      "early_close": false
+    },
+    {
+      "session": 3,
+      "date": "2026-01-08",
+      "start_i": 108,
+      "n_minutes": 36,
+      "early_close": false
+    },
+    {
+      "session": 4,
+      "date": "2026-01-09",
+      "start_i": 144,
+      "n_minutes": 36,
+      "early_close": false
+    },
+    {
+      "session": 5,
+      "date": "2026-01-12",
+      "start_i": 180,
+      "n_minutes": 24,
+      "early_close": true
+    },
+    {
+      "session": 6,
+      "date": "2026-01-13",
+      "start_i": 204,
+      "n_minutes": 36,
+      "early_close": false
+    },
+    {
+      "session": 7,
+      "date": "2026-01-14",
+      "start_i": 240,
+      "n_minutes": 36,
+      "early_close": false
+    }
+  ],
+  "n_bars": 276,
+  "warmup_sessions": 3,
+  "missing_bars": [
+    {
+      "asset_id": "a-0003",
+      "i": 156,
+      "session": 4,
+      "minute": 12
+    }
+  ],
+  "indicator_columns": {
+    "atr14": {
+      "kind": "number",
+      "abs": 1e-09,
+      "rel": 1e-09
+    },
+    "ready_atr14": {
+      "kind": "bool"
+    },
+    "prec_high_n10": {
+      "kind": "number",
+      "abs": 1e-09,
+      "rel": 1e-09
+    },
+    "sig_breakout": {
+      "kind": "bool"
+    },
+    "ready_breakout_n10": {
+      "kind": "bool"
+    },
+    "adx_a7": {
+      "kind": "number",
+      "abs": 1e-07,
+      "rel": 1e-09
+    },
+    "pdi_a7": {
+      "kind": "number",
+      "abs": 1e-07,
+      "rel": 1e-09
+    },
+    "mdi_a7": {
+      "kind": "number",
+      "abs": 1e-07,
+      "rel": 1e-09
+    },
+    "sig_adx": {
+      "kind": "bool"
+    },
+    "ready_adx_a7": {
+      "kind": "bool"
+    },
+    "ema_5": {
+      "kind": "number",
+      "abs": 1e-09,
+      "rel": 1e-09
+    },
+    "ema_20": {
+      "kind": "number",
+      "abs": 1e-09,
+      "rel": 1e-09
+    },
+    "sig_ema": {
+      "kind": "bool"
+    },
+    "ready_ema_f5_s20": {
+      "kind": "bool"
+    }
+  },
+  "counts": {
+    "bars": 1103,
+    "indicator_rows": 1104,
+    "signals": 306,
+    "decisions": 127,
+    "ledger": 20
+  },
+  "files": {
+    "weekly_config": "weekly_config.json",
+    "bars": "bars.jsonl",
+    "indicators": "indicators.jsonl",
+    "signals": "signals.jsonl",
+    "orders": "orders.jsonl",
+    "ledger": "ledger.jsonl"
+  }
+}

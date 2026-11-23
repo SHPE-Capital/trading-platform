@@ -11,5 +11,5 @@
   ],
   "ignore": ["src/app/**", "src/tests/**"],
   "ext": "ts",
-  "exec": "ts-node src/runtime/backtestWorker.ts"
+  "exec": "ts-node --transpile-only src/runtime/backtestWorker.ts"
 }

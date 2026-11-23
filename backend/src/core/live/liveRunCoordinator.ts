@@ -36,6 +36,8 @@ export interface LeaseStore {
 export interface LiveRunCoordinatorDeps {
   registry: RunRegistry;
   subscribe(symbols: string[]): void;
+  /** Called with symbols no held run needs anymore, so the feed stops sending them. */
+  unsubscribe(symbols: string[]): void;
   leases: LeaseStore;
   buildStrategy(run: StrategyRun): IStrategy;
   warmUp(strategy: IStrategy): Promise<number>;
@@ -56,6 +58,8 @@ export interface LiveRunCoordinatorDeps {
 export class LiveRunCoordinator {
   private readonly held = new Set<string>();
   private readonly expirations = new Map<string, number>();
+  /** Symbols each held run subscribed, so a stop releases only what nothing else uses. */
+  private readonly runSymbols = new Map<string, string[]>();
   /**
    * Runs whose fills are already in this process's book. A run that is lost
    * and later re-adopted here is not restored twice; fills another runner made
@@ -117,6 +121,7 @@ export class LiveRunCoordinator {
       });
     }
     if (symbols.length > 0) this.deps.subscribe(symbols);
+    this.runSymbols.set(runId, [...new Set(symbols)]);
     this.held.add(runId);
     if (expiresAt) this.expirations.set(runId, expiresAt);
   }
@@ -126,6 +131,7 @@ export class LiveRunCoordinator {
     this.deps.registry.deregisterStrategy(runId);
     if (!this.held.delete(runId)) return;
     this.expirations.delete(runId);
+    this.releaseSymbols(runId);
     await this.deps.leases.release(runId).catch((err) =>
       logger.warn("LiveRunCoordinator: lease release failed — it will lapse on its own", { runId, err: String(err) }),
     );
@@ -136,6 +142,7 @@ export class LiveRunCoordinator {
     this.deps.registry.deregisterStrategy(runId);
     this.held.delete(runId);
     this.expirations.delete(runId);
+    this.releaseSymbols(runId);
   }
 
   isHeld(runId: string): boolean {
@@ -214,6 +221,7 @@ export class LiveRunCoordinator {
     const runIds = [...this.held];
     this.held.clear();
     this.expirations.clear();
+    this.runSymbols.clear();
     await Promise.all(runIds.map((id) => this.deps.leases.release(id).catch(() => false)));
   }
 
@@ -270,5 +278,14 @@ export class LiveRunCoordinator {
       this.forget(id);
     }
     return lost;
+  }
+
+  /** Unsubscribes a dropped run's symbols that no other held run still trades. */
+  private releaseSymbols(runId: string): void {
+    const symbols = this.runSymbols.get(runId);
+    if (!this.runSymbols.delete(runId) || !symbols) return;
+    const stillUsed = new Set([...this.runSymbols.values()].flat());
+    const unused = symbols.filter((s) => !stillUsed.has(s));
+    if (unused.length > 0) this.deps.unsubscribe(unused);
   }
 }

@@ -1,0 +1,104 @@
+{
+  "schema_version": "weekly_config.v1",
+  "run_id": "golden-s3_rank_size",
+  "code_commit": "0000000",
+  "data_version": "synthetic",
+  "protocol_hash": null,
+  "policy": "uniform",
+  "decision_cutoff": "2025-12-31T21:00:00Z",
+  "search_range": {
+    "start": "2025-01-02",
+    "end": "2025-12-12"
+  },
+  "validation_range": {
+    "start": "2025-12-15",
+    "end": "2025-12-31"
+  },
+  "activation": {
+    "start": "2026-01-05",
+    "end": "2026-01-12"
+  },
+  "universe": [
+    {
+      "asset_id": "a-0020",
+      "symbol": "EEE"
+    },
+    {
+      "asset_id": "a-0021",
+      "symbol": "FFF"
+    },
+    {
+      "asset_id": "a-0022",
+      "symbol": "GGG"
+    },
+    {
+      "asset_id": "a-0023",
+      "symbol": "HHH"
+    },
+    {
+      "asset_id": "a-0024",
+      "symbol": "III"
+    },
+    {
+      "asset_id": "a-0025",
+      "symbol": "JJJ"
+    }
+  ],
+  "selected": {
+    "config_id": "26e6a0ca0f40098d",
+    "grid_version": "v1",
+    "subset": [
+      "breakout",
+      "vwap"
+    ],
+    "params": {
+      "breakout.b": 0.1,
+      "breakout.n": 10,
+      "vwap.e": 3
+    }
+  },
+  "no_deployment": null,
+  "acceptance": {
+    "passed": true,
+    "checks": []
+  },
+  "ess": 1.0,
+  "evaluations": {
+    "logical": 0,
+    "actual": 0
+  },
+  "seeds": [
+    0
+  ],
+  "account": {
+    "starting_cash": 100000.0,
+    "max_positions": 3,
+    "per_stock_pct": 0.08,
+    "risk_pct": 0.0025,
+    "total_exposure_cap": 0.8,
+    "liquidity_cap_pct": 0.01,
+    "liquidity_lookback": 5,
+    "liquidity_min_obs": 2,
+    "daily_halt_pct": 0.01,
+    "cost_bps": 10.0,
+    "ranking": "dollar_volume_20d",
+    "entry_score_threshold": null,
+    "size_multiplier": null,
+    "search_replay_reference_equity": null,
+    "exit": {
+      "initial_stop_atr": 1.5,
+      "trail_activation_atr": 1.0,
+      "trail_distance_atr": 1.5,
+      "max_hold_minutes": 60,
+      "session_exit_minutes_before_close": 5
+    },
+    "fill": {
+      "kind": "limit_markup",
+      "limit_markup": 0.002
+    }
+  },
+  "runtime": {
+    "seconds": 0.0,
+    "peak_memory_mb": 0.0
+  }
+}

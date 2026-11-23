@@ -1,44 +1,70 @@
 /**
  * features/replay/ReplayPlayer.tsx
  *
- * Replay session player. Allows selecting a session, loading it into the
- * engine, and controlling playback via the ReplayControls component.
+ * Replay session player. Allows selecting a recorded session, loading it
+ * (whole or filtered) into the engine, controlling playback via the
+ * ReplayControls component, and reading the attribution once it completes.
  *
- * Inputs:  useReplay hook data (session, sessions, control).
- * Outputs: Session selector, session info, and playback controls.
+ * Inputs:  useReplay hook data (session, sessions, attribution, control).
+ * Outputs: Session selector, filter panel, session info, playback controls, attribution.
  */
 
 "use client";
 
+import { useState } from "react";
 import ReplayControls from "../../components/controls/ReplayControls";
+import ReplayFilterPanel from "./ReplayFilterPanel";
+import ReplayAttribution from "./ReplayAttribution";
 import { useReplay } from "../../hooks/useReplay";
 import { formatTimestamp } from "../../utils/dates";
+import type { EventLogRecord } from "../../types/api";
+
+function optionLabel(log: EventLogRecord): string {
+  return `${log.name} · ${log.source} · ${log.eventCount.toLocaleString()} events`;
+}
 
 export default function ReplayPlayer() {
-  const { session, sessions, isLoading, error, loadSession, control } = useReplay();
+  const { session, sessions, attribution, isLoading, error, loadSession, control } = useReplay();
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   if (isLoading) return <p className="text-sm text-zinc-400">Loading replay sessions…</p>;
-  if (error) return <p className="text-sm text-red-500">{error}</p>;
+
+  const selected = sessions.find((s) => s.id === selectedId);
 
   return (
     <div className="flex flex-col gap-6">
+      {error && <p className="text-sm text-red-500">{error}</p>}
+
       {/* Session selector */}
       <div className="flex flex-col gap-2">
-        <label className="text-xs font-medium text-zinc-500">Select Session</label>
+        <label htmlFor="replay-session" className="text-xs font-medium text-zinc-500">Select Session</label>
         <select
-          onChange={(e) => e.target.value && loadSession(e.target.value)}
+          id="replay-session"
+          onChange={(e) => {
+            if (!e.target.value) return;
+            setSelectedId(e.target.value);
+            loadSession(e.target.value);
+          }}
           defaultValue=""
-          className="w-full max-w-sm rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
+          className="w-full max-w-xl rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
         >
           <option value="" disabled>Choose a recorded session…</option>
           {sessions.map((s) => (
-            <option key={s.id} value={s.id}>{s.name}</option>
+            <option key={s.id} value={s.id}>{optionLabel(s)}</option>
           ))}
         </select>
         {sessions.length === 0 && (
-          <p className="text-xs text-zinc-400">No recorded sessions available. Run a live session first to record events.</p>
+          <p className="text-xs text-zinc-400">
+            No recorded sessions available. Start a trading runtime with REPLAY_RECORD=1 and stop it gracefully to record one.
+          </p>
         )}
+        {selected?.description && <p className="text-xs text-zinc-400">{selected.description}</p>}
       </div>
+
+      <ReplayFilterPanel
+        sessionId={selectedId}
+        onApply={(filter) => (selectedId ? loadSession(selectedId, filter) : Promise.resolve())}
+      />
 
       {/* Current session info */}
       {session && (
@@ -52,6 +78,8 @@ export default function ReplayPlayer() {
           <ReplayControls session={session} onControl={control} />
         </div>
       )}
+
+      {session?.status === "completed" && attribution && <ReplayAttribution attribution={attribution} />}
     </div>
   );
 }

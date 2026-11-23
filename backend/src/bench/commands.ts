@@ -336,6 +336,8 @@ export async function runFixtureCorrectness(runId = "fixture-correctness"): Prom
     for (const [code, n] of Object.entries(codes)) check(`${kind} issue ${code}`, n, c(`issues.${kind}.${code}`));
   }
   for (const [t, n] of Object.entries(E.unhandled)) check(`unhandled ${t}`, n, c(`messages.unhandled.${t}`));
+  for (const [k, n] of Object.entries(E.revisions)) check(`revision ${k}`, n, c(`revisions.${k}`));
+  for (const t of ["c", "x", "u"]) check(`${t} no longer unhandled`, 0, c(`messages.unhandled.${t}`));
   check("subscription acks", E.subscriptionAcks, c("lifecycle.subscription_ack"));
   check("nothing quarantined under 'pass'", 0, c("quarantined.quote") + c("quarantined.trade"));
   const lag = probe.histogram("bar.publication_lag_ns");

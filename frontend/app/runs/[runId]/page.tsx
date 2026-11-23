@@ -29,6 +29,8 @@ import { fetchOrders } from "../../../services/portfolioService";
 import { fetchRunFills } from "../../../services/performanceService";
 import { formatCurrency } from "../../../utils/formatting";
 import { formatTimestamp } from "../../../utils/dates";
+import { runDataLabel } from "../../../utils/marketData";
+import { describeHoldingMs, pairsMaxHoldingMs } from "../../../utils/holdingTime";
 import type { StrategyRun } from "../../../types/strategy";
 import type { Fill, Order } from "../../../types/portfolio";
 
@@ -42,6 +44,7 @@ export default function RunPage({ params }: Props) {
   const [orders, setOrders] = useState<Order[]>([]);
   const [fills, setFills] = useState<Fill[]>([]);
   const live = run?.status === "running";
+  const maxHoldingMs = pairsMaxHoldingMs(run?.strategyType, run?.config);
   const { report, isLoading, error, refetch } = useRunPerformance(runId, live ? 30_000 : 0);
 
   useEffect(() => {
@@ -79,7 +82,9 @@ export default function RunPage({ params }: Props) {
               run?.status && `Status: ${run.status}`,
               run?.executionMode,
               run?.runtimeOrigin,
+              runDataLabel(run?.meta),
               run?.strategyVersion != null && `algo v${run.strategyVersion}`,
+              maxHoldingMs !== undefined && `max hold ${describeHoldingMs(maxHoldingMs)}`,
               run?.startedAt && `started ${formatTimestamp(run.startedAt)}`,
               run?.stoppedAt && `stopped ${formatTimestamp(run.stoppedAt)}`,
               report && `capital base ${formatCurrency(report.capitalBase, 0)}`,
@@ -120,7 +125,7 @@ export default function RunPage({ params }: Props) {
           </div>
 
           <div className="grid gap-6 lg:grid-cols-2">
-            <HoldingTimesCard buckets={report.holdingTimes} />
+            <HoldingTimesCard buckets={report.holdingTimes} maxHoldingMs={maxHoldingMs} />
             <EventsTimeline events={report.events ?? []} />
           </div>
 

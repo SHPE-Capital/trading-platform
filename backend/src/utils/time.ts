@@ -175,6 +175,17 @@ const TIMEFRAME_UNIT_MS = new Map<string, number>([
  * @returns Duration in milliseconds
  */
 export function timeframeToMs(timeframe: string): number {
+  const cached = TIMEFRAME_MS_CACHE.get(timeframe);
+  if (cached !== undefined) return cached;
+  const ms = parseTimeframeMs(timeframe);
+  if (TIMEFRAME_MS_CACHE.size < 64) TIMEFRAME_MS_CACHE.set(timeframe, ms);
+  return ms;
+}
+
+/** Parsed timeframes; a backtest asks for the same one on every bar. */
+const TIMEFRAME_MS_CACHE = new Map<string, number>();
+
+function parseTimeframeMs(timeframe: string): number {
   const match = /^(\d+)([A-Za-z]+)$/.exec(timeframe);
   const unit = match?.[2] ?? timeframe;
   const unitMs = TIMEFRAME_UNIT_MS.get(unit);

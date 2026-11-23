@@ -65,10 +65,11 @@ for updates, and the browser reuses its cached response when the data is unchang
 They do not require a fix; `401` before login is also expected.
 
 Source directories are bind-mounted; dependencies live in Docker volumes. If
-backend edits do not trigger nodemon on Windows, restart the affected services:
+backend edits do not trigger nodemon on Windows, restart the affected services.
+Backtests run in `backtest-worker`, so include it after editing strategy code:
 
 ```text
-docker compose -f docker/docker-compose.dev.yml restart paper-trading api
+docker compose -f docker/docker-compose.dev.yml restart paper-trading api backtest-worker
 ```
 
 The default stack omits real-money trading and sets
@@ -77,8 +78,9 @@ The default stack omits real-money trading and sets
 
 ## Market data and environment forwarding
 
-Local execution defaults to `sim`. Without data keys reaching the runner, it
-replays cached bars. With streaming keys, it simulates fills against live data.
+Local execution defaults to `sim`: orders fill in a local book, priced on live
+Alpaca data from **your own** keys. Without data keys the runner receives no
+data, reports **No data** in the navbar badge, and refuses to start strategies.
 Detailed fill behavior belongs to [backtest/sim execution](../architecture/backtest-execution.md#the-sim-runtime).
 
 For live prices, sign in to your own [Alpaca paper account](https://app.alpaca.markets/),
@@ -90,19 +92,25 @@ for account/key generation. Update `backend/.env`:
 ```dotenv
 ALPACA_DATA_KEY=your-personal-paper-key
 ALPACA_DATA_SECRET=your-personal-paper-secret
-LOCAL_STREAM_DATA=1
 ```
 
-Then restart `npm run dev:stack`. During market hours, startup should report
-your data account and `live stream ON`. One-minute strategies need completed
-bars; no movement outside market hours is not a setup failure.
+Then restart `npm run dev:stack`. Startup should report
+`Market data: LIVE from your Alpaca keys`. The navbar badge then shows what the
+paper runner is receiving (**Live**, **Idle**, **Market closed**, **Stale data**,
+**Disconnected**, **No data**) and where orders fill; hover it for details. Each
+run also records the data source it traded on. One-minute strategies need
+completed bars; no movement outside market hours is not a setup failure. Test
+outside market hours with a [backtest](backtesting.md).
+
+Free keys stream the IEX feed (a few percent of market volume), while backtests
+use the full SIP feed, so paper and backtest results differ somewhat.
 
 | Setting | How `dev:stack` handles it |
 |---|---|
 | Data keys | Reads shell or `backend/.env`; falls back to trading-key values for data use |
-| `LOCAL_STREAM_DATA=1` | Reads shell or `backend/.env`; opts the paper runner into the live stream |
+| `LOCAL_STREAM_DATA=0` | Reads shell or `backend/.env`; turns the paper runner's live stream off (Alpaca allows one stream per account) |
 | Trading keys and `EXECUTION_TARGET` | Must come from the launching shell to opt into personal paper orders; file values are not forwarded |
-| Replay window/speed, latency probe flags | Pass through the launching shell where Compose exposes them |
+| Latency probe flags | Pass through the launching shell where Compose exposes them |
 | Supabase URLs/keys and runtime ports | Generated/injected for the local containers by the launcher |
 | Other backend `.env` settings | Do not assume they reach Docker; inspect `docker-compose.dev.yml` |
 
@@ -113,10 +121,21 @@ runtime. Personal paper execution commands live in
 [paper trading](live-paper-trading.md#use-your-personal-alpaca-paper-account-locally).
 Keep credentials out of code, frontend variables, screenshots and commits.
 
-### Seeding replay data
+If a backtest reports rejected or missing market-data credentials, its
+symbol/date range is not fully covered by the local cache. Add personal
+`ALPACA_DATA_KEY` and `ALPACA_DATA_SECRET` to `backend/.env`, stop the running
+launcher, and rerun `npm run dev:stack` so the worker receives them. Restarting
+only the worker does not inject newly edited `.env` credentials. Alternatively,
+seed that exact symbol/date range from the hosted cache as described below. An
+Alpaca `401` means the supplied data credentials were rejected; signing into
+the app again does not resolve it. Fully cached historical ranges work without
+Alpaca keys.
 
-`data:pull` copies bars already cached by the hosted platform into your local
-Supabase cache. It never calls Alpaca. Obtain the hosted API base and a member
+### Seeding cached bars
+
+Backtests fetch missing bars from Alpaca with your keys and cache them. To
+backtest without keys (or to avoid the download), `data:pull` copies bars
+already cached by the hosted platform into your local Supabase cache. It never calls Alpaca. Obtain the hosted API base and a member
 session/access details from your lead; the requested range must exist there.
 
 The command runs **from `backend/`**, not the repo root. Supply these variables
@@ -136,25 +155,14 @@ workdir (the remapped workdir, when used, is `.local/supabase-workdir`).
 
 ```text
 cd backend
-npm run data:pull -- --symbols SPY,QQQ --from 2026-10-01 --to 2026-10-07
+npm run data:pull -- --symbols SPY,AAPL --from 2026-10-01 --to 2026-10-07
 ```
 
-Back at the repo root, disable streaming and select a cached period in the shell:
+Backtests over the seeded symbols and dates then run from the cache. Cached bars
+feed backtests only; the paper runner always trades live data.
 
-```powershell
-$env:EXECUTION_TARGET = "sim"
-$env:LOCAL_STREAM_DATA = "0"
-$env:REPLAY_FROM = "2026-10-06"
-$env:REPLAY_TO = "2026-10-07"
-$env:REPLAY_SPEED = "60"
-npm run dev:stack
-```
-
-In bash/zsh, use `export NAME=value` for those same assignments before running
-the command. Leave shell trading keys unset for cached-bar simulation: runtime
-data credentials can fall back to them. Choose dates/symbols actually seeded.
-For the difference between this feed and the incomplete recorded-session UI,
-see [replay workflows](replay.md).
+SPY/AAPL are the course reference's default symbols. Seed SPY/QQQ instead for
+the default pairs strategy, or supply the symbols in your own configuration.
 
 ## Ports, data safety, and troubleshooting
 
@@ -180,7 +188,8 @@ an empty database; it is not a recovery command.
 | Missing `dev:stack` script | Terminal must be at repo root |
 | Cannot sign in | Run `doctor`; check launcher bootstrap and actual Supabase addresses |
 | Stream connection limit | Stop other clients using the same personal data account |
-| No bars available | Configure personal live data or seed the selected replay range |
+| Badge shows **No data** | Add your own Alpaca data keys to `backend/.env` and relaunch |
+| Backtest fails: "Alpaca rejected the data request" | No usable data keys and the range is not cached: add keys, or seed it with `data:pull` |
 | Changed `.env` has no effect | Check forwarding table above; relaunch/recreate services after changing container environment |
 
 ## Database boundaries

@@ -13,7 +13,8 @@
  *   5. Enter short spread when z > entryZScore (spread unusually high → expect mean reversion down)
  *   6. Exit when |z| < exitZScore (spread reverted to mean)
  *   7. Stop-loss exit when |z| > stopLossZScore (spread moved further against us)
- *   8. Max-hold exit when position age exceeds maxHoldingTimeMs
+ *   8. Max-hold exit when position age exceeds maxHoldingTimeMs (guaranteed: checked on
+ *      every bar of either leg, even when steps 1-7 are skipped)
  *
  * The strategy emits one signal per leg per trigger. The execution layer
  * handles routing both legs into actual orders.
@@ -35,7 +36,7 @@ import { nowMs, barEndMs } from "../../utils/time";
 import type { EvaluationContext } from "../base/strategy";
 import type { StrategySignal, StrategyType } from "../../types/strategy";
 import type { Bar, MarketEventKind } from "../../types/market";
-import { DEFAULT_COINT_HYSTERESIS } from "./pairsConfig";
+import { DEFAULT_COINT_HYSTERESIS, validatePairsConfig } from "./pairsConfig";
 import type {
   PairsStrategyConfig,
   PairsInternalState,
@@ -48,7 +49,9 @@ export class PairsStrategy extends BaseStrategy {
   // v4: added hysteresis deadband around the cointegration threshold to stop state flapping
   // v5: scores completed bars only — one observation per minute from both legs' closes.
   //     Live runs previously also added an observation on every quote and trade.
-  static readonly VERSION = 5;
+  // v6: the max-hold exit is enforced on every bar of either leg, including bars the scoring
+  //     path skips (partner bar missing, too few observations, no z-score), and the limit is validated.
+  static readonly VERSION = 6;
   readonly version = PairsStrategy.VERSION;
   readonly triggers: readonly MarketEventKind[] = ["bar"];
 
@@ -74,6 +77,7 @@ export class PairsStrategy extends BaseStrategy {
   constructor(readonly pairsConfig: PairsStrategyConfig) {
     // BaseStrategy expects BaseStrategyConfig — PairsStrategyConfig satisfies that shape
     super(pairsConfig as never);
+    validatePairsConfig(pairsConfig);
     this.state = this._initState();
   }
 
@@ -89,6 +93,16 @@ export class PairsStrategy extends BaseStrategy {
     if (!this.isActive || !this.pairsConfig.enabled) return null;
     const { leg1Symbol, leg2Symbol } = this.pairsConfig;
     if (context.symbol !== leg1Symbol && context.symbol !== leg2Symbol) return null;
+
+    // The max-hold limit is a guarantee, so it is enforced here, after the scoring
+    // path has had its say but regardless of why that path returned nothing
+    // (partner bar missing, cooldown, too few observations, no z-score). A bar from
+    // either leg is enough to trigger it.
+    return this._evaluateScoring(context) ?? this._checkMaxHoldExpired();
+  }
+
+  private _evaluateScoring(context: EvaluationContext): StrategySignal | null {
+    const { leg1Symbol, leg2Symbol } = this.pairsConfig;
     if (this._debugEnabled) this._debug.evaluateCalls++;
 
     const bar1 = context.symbolState.get(leg1Symbol)?.latestBar;
@@ -274,6 +288,26 @@ export class PairsStrategy extends BaseStrategy {
       testStatistic,
       criticalValue,
       this.pairsConfig.cointHysteresis ?? DEFAULT_COINT_HYSTERESIS,
+    );
+  }
+
+  /**
+   * Forces the position closed once it is older than maxHoldingTimeMs. Uses the last
+   * known z-score, spread and window stats for the signal's meta, since the scoring
+   * path may not have produced fresh ones this bar.
+   */
+  private _checkMaxHoldExpired(): StrategySignal | null {
+    const { positionState, positionOpenedAt } = this.state;
+    if (positionState === "flat" || positionOpenedAt === null) return null;
+    if (nowMs() - positionOpenedAt < this.pairsConfig.maxHoldingTimeMs) return null;
+
+    return this._buildExitSignal(
+      this.pairsConfig.leg1Symbol,
+      this.state.lastZScore ?? 0,
+      this.state.spreadWindow.mean() ?? 0,
+      this.state.spreadWindow.stdDev() ?? 0,
+      this.state.lastSpread ?? 0,
+      "max_hold_exit",
     );
   }
 

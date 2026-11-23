@@ -24,13 +24,16 @@ test run does not replace `npm run typecheck` (which includes tests).
 | `npm run test:int` | Synthetic end-to-end engine tests under `int/` |
 | `npm run test:http` | Supertest HTTP contracts under `http/` |
 | `npm run test:ci` | Jest with coverage and its configured threshold |
-| `npm run test:live` | Explicit integration opt-in; inspect credentials/targets and individual tests before running |
 
 For one strategy, for example:
 
 ```text
 npm test -- --runInBand src/tests/strategy/beginnerReversalStrategy.test.ts
 ```
+
+Nothing above touches a live service. Connectivity against the real Alpaca
+and Supabase endpoints is checked separately by `npm run verify:network`,
+which is read-only and refuses to run outside paper mode.
 
 Ordinary unit/HTTP/benchmark suites use mocks or local synthetic input.
 Executable benchmarks are separate commands: see

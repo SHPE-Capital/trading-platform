@@ -1,0 +1,7 @@
+{"asset_id":"a-0011","entry_i":183,"exit_i":187,"qty":166,"entry_price":47.92,"exit_price":48.05,"exit_reason":"session_end","net_pnl":5.648979999999246}
+{"asset_id":"a-0012","entry_i":183,"exit_i":187,"qty":37,"entry_price":212.22,"exit_price":212.29,"exit_reason":"session_end","net_pnl":-13.116870000000253}
+{"asset_id":"a-0012","entry_i":195,"exit_i":199,"qty":37,"entry_price":213.17,"exit_price":213.23,"exit_reason":"session_end","net_pnl":-13.556799999999916}
+{"asset_id":"a-0010","entry_i":196,"exit_i":199,"qty":94,"entry_price":84.61,"exit_price":84.72,"exit_reason":"session_end","net_pnl":-5.577020000000054}
+{"asset_id":"a-0011","entry_i":215,"exit_i":219,"qty":163,"entry_price":49.01,"exit_price":48.93,"exit_reason":"session_end","net_pnl":-29.004219999999723}
+{"asset_id":"a-0010","entry_i":215,"exit_i":219,"qty":92,"entry_price":86.1,"exit_price":86.13,"exit_reason":"session_end","net_pnl":-13.085159999999895}
+{"asset_id":"a-0010","entry_i":227,"exit_i":231,"qty":91,"entry_price":86.95,"exit_price":87.01,"exit_reason":"session_end","net_pnl":-10.370359999999794}

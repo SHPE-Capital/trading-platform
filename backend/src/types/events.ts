@@ -10,7 +10,7 @@
  */
 
 import type { EpochMs, UUID, ExecutionMode } from "./common";
-import type { Quote, Trade, Bar } from "./market";
+import type { Quote, Trade, Bar, TradeCorrection, TradeCancel } from "./market";
 import type { OrderIntent, Order, Fill } from "./orders";
 import type { PortfolioSnapshot } from "./portfolio";
 import type { StrategySignal } from "./strategy";
@@ -26,6 +26,9 @@ export type EventType =
   | "QUOTE_RECEIVED"
   | "TRADE_RECEIVED"
   | "BAR_RECEIVED"
+  | "BAR_REVISED"
+  | "TRADE_CORRECTED"
+  | "TRADE_CANCELED"
   // Order lifecycle events
   | "ORDER_INTENT_CREATED"
   | "ORDER_SUBMITTED"
@@ -118,6 +121,28 @@ export interface TradeReceivedEvent extends BaseEvent {
 export interface BarReceivedEvent extends BaseEvent {
   type: "BAR_RECEIVED";
   payload: Bar;
+}
+
+/**
+ * A revised version of a bar already received (Alpaca "updated bar": a late
+ * trade changed it). Corrects state only; strategies are not re-run, because
+ * they already acted on the original.
+ */
+export interface BarRevisedEvent extends BaseEvent {
+  type: "BAR_REVISED";
+  payload: Bar;
+}
+
+/** A correction of an earlier trade print. Corrects state only. */
+export interface TradeCorrectedEvent extends BaseEvent {
+  type: "TRADE_CORRECTED";
+  payload: TradeCorrection;
+}
+
+/** A cancel/error of an earlier trade print. Corrects state only. */
+export interface TradeCanceledEvent extends BaseEvent {
+  type: "TRADE_CANCELED";
+  payload: TradeCancel;
 }
 
 // ------------------------------------------------------------------
@@ -389,6 +414,9 @@ export type TradingEvent =
   | QuoteReceivedEvent
   | TradeReceivedEvent
   | BarReceivedEvent
+  | BarRevisedEvent
+  | TradeCorrectedEvent
+  | TradeCanceledEvent
   | OrderIntentCreatedEvent
   | OrderSubmittedEvent
   | OrderAcknowledgedEvent

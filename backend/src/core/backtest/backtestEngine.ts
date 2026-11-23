@@ -40,7 +40,7 @@ import { BacktestLoader } from "./backtestLoader";
 import { BACKTEST_RISK_CONFIG } from "../../config/defaults";
 import { logger } from "../../utils/logger";
 import { nowMs, setClockOverride, isClockLockedForLive, barEndMs } from "../../utils/time";
-import { newId } from "../../utils/ids";
+import { newEventId } from "../../utils/ids";
 import type { BacktestConfig, BacktestResult } from "../../types/backtest";
 import type { PortfolioSnapshot } from "../../types/portfolio";
 import type { IStrategy } from "../../strategies/base/strategy";
@@ -355,7 +355,7 @@ export class BacktestEngine {
           // symbol states were already updated in phase 2.
           for (const bar of batch) {
             eventBus.publish({
-              id: newId(),
+              id: newEventId(),
               type: "BAR_RECEIVED",
               ts: bar.ts,
               mode: "backtest",

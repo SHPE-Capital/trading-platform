@@ -39,6 +39,12 @@ export function createApp(ctx: AppContext = {}): express.Application {
     },
   }));
   app.use(express.json());
+  // Express 5 leaves req.body undefined on a body-less request; handlers
+  // destructure it, so default to {} and let their own validation answer 400.
+  app.use((req, _res, next) => {
+    if (req.body === undefined) req.body = {};
+    next();
+  });
   app.use(requestLogger);
 
   // ------ API routes ------

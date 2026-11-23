@@ -9,9 +9,8 @@
  * Outputs: Normalized Quote, Trade, and Bar objects ready for the EventBus.
  */
 
-import type { Quote, Trade, Bar, MarketDataIssue } from "../../types/market";
-import { isoToMs } from "../../utils/time";
-import { parseRfc3339Parts } from "../../core/telemetry/clock";
+import type { Quote, Trade, Bar, MarketDataIssue, TradeCorrection, TradeCancel } from "../../types/market";
+import { rfc3339ToEpochMs } from "../../core/telemetry/clock";
 
 /**
  * Bump when normalized output changes for the same input, so benchmark runs
@@ -90,7 +89,7 @@ export function normalizeQuote(raw: AlpacaRawQuote): Quote {
   const totalSize = bidSize + askSize;
   const microPrice = totalSize > 0 ? (askSize * bid + bidSize * ask) / totalSize : mid;
   const imbalance = totalSize > 0 ? (bidSize - askSize) / totalSize : 0;
-  const ts = isoToMs(raw.t);
+  const ts = rfc3339ToEpochMs(raw.t);
 
   return {
     symbol: raw.S,
@@ -122,7 +121,7 @@ export function normalizeTrade(raw: AlpacaRawTrade): Trade {
     symbol: raw.S,
     price: raw.p,
     size: raw.s,
-    ts: isoToMs(raw.t),
+    ts: rfc3339ToEpochMs(raw.t),
     isoTs: raw.t,
     exchange: raw.x,
     tape: raw.z,
@@ -147,10 +146,66 @@ export function normalizeBar(raw: AlpacaRawBar, timeframe: string): Bar {
     volume: raw.v,
     vwap: raw.vw,
     tradeCount: raw.n,
-    ts: isoToMs(raw.t),
+    ts: rfc3339ToEpochMs(raw.t),
     isoTs: raw.t,
     timeframe,
   };
+}
+
+/**
+ * Normalizes an Alpaca trade correction (`T: "c"`).
+ * @param raw - Raw correction message
+ */
+export function normalizeTradeCorrection(raw: Record<string, unknown>): TradeCorrection {
+  const t = String(raw["t"]);
+  return {
+    symbol: String(raw["S"]),
+    originalId: String(raw["oi"]),
+    originalPrice: Number(raw["op"]),
+    originalSize: Number(raw["os"]),
+    corrected: {
+      symbol: String(raw["S"]),
+      price: Number(raw["cp"]),
+      size: Number(raw["cs"]),
+      ts: rfc3339ToEpochMs(t),
+      isoTs: t,
+      exchange: raw["x"] as string | undefined,
+      tape: raw["z"] as string | undefined,
+      conditions: raw["cc"] as string[] | undefined,
+      id: raw["ci"] !== undefined ? String(raw["ci"]) : undefined,
+    },
+  };
+}
+
+/**
+ * Normalizes an Alpaca trade cancel/error (`T: "x"`).
+ * @param raw - Raw cancel message
+ */
+export function normalizeTradeCancel(raw: Record<string, unknown>): TradeCancel {
+  const t = String(raw["t"]);
+  return {
+    symbol: String(raw["S"]),
+    tradeId: String(raw["i"]),
+    price: Number(raw["p"]),
+    size: Number(raw["s"]),
+    action: String(raw["a"] ?? ""),
+    ts: rfc3339ToEpochMs(t),
+    isoTs: t,
+  };
+}
+
+/** A correction or cancel is usable when it names its symbol, trade id(s) and time. */
+export function validateRawTradeAdjustment(raw: Record<string, unknown>): MarketDataIssue | null {
+  const common = commonIssue(raw);
+  if (common) return common;
+  if (raw["T"] === "c") {
+    if (raw["oi"] === undefined || !isFiniteNumber(raw["cp"]) || !isFiniteNumber(raw["cs"])) return reject("MISSING_FIELD");
+    if ((raw["cp"] as number) <= 0) return reject("NON_POSITIVE_PRICE");
+    // The corrected print replaces latestTrade, so hold it to the same bar as a trade.
+    if ((raw["cs"] as number) < 0) return reject("NEGATIVE_SIZE");
+    return null;
+  }
+  return raw["i"] === undefined ? reject("MISSING_FIELD") : null;
 }
 
 // ------------------------------------------------------------------
@@ -172,7 +227,8 @@ function isFiniteNumber(v: unknown): v is number {
 function commonIssue(raw: Record<string, unknown>): MarketDataIssue | null {
   if (typeof raw["S"] !== "string" || raw["S"] === "") return reject("MISSING_FIELD");
   if (typeof raw["t"] !== "string") return reject("MISSING_FIELD");
-  if (parseRfc3339Parts(raw["t"]) === null) return reject("BAD_TIMESTAMP");
+  // Unusable exactly when the normalized ts would be NaN (same parser as normalizeQuote).
+  if (Number.isNaN(rfc3339ToEpochMs(raw["t"]))) return reject("BAD_TIMESTAMP");
   return null;
 }
 

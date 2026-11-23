@@ -37,9 +37,15 @@ export async function getPortfolioSnapshot(req: Request, res: Response): Promise
   }
 }
 
-/** GET /api/portfolio/equity-curve — query param: ?limit=500 */
+/** Upper bound on ?limit= for the equity curve (~3.5 days of 60s snapshots). */
+const MAX_EQUITY_CURVE_LIMIT = 5000;
+
+/** GET /api/portfolio/equity-curve — query param: ?limit=500 (clamped to 1..5000) */
 export async function getEquityCurve(req: Request, res: Response): Promise<void> {
-  const limit = parseInt(String(req.query["limit"] ?? "500"), 10);
+  // A non-numeric limit parses to NaN, which supabase-js drops (unbounded read);
+  // a negative one is a PostgREST range error that the repository turns into [].
+  const parsed = parseInt(String(req.query["limit"] ?? "500"), 10);
+  const limit = Number.isNaN(parsed) ? 500 : Math.min(MAX_EQUITY_CURVE_LIMIT, Math.max(1, parsed));
   try {
     const curve = await getPortfolioEquityCurve(limit);
     res.json(curve);

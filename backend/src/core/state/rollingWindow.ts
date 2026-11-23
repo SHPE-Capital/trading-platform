@@ -44,16 +44,36 @@ export class RollingTimeWindow<T> {
   constructor(private readonly windowMs: number) {}
 
   /**
-   * Appends a new timestamped value to the window and evicts stale entries.
+   * Adds a timestamped value and evicts entries older than the window,
+   * measured from the NEWEST timestamp held.
+   *
+   * Items are kept in time order: a late item (older than the newest — an
+   * out-of-order print) is inserted at its place rather than appended, so
+   * eviction's binary search stays correct and a late item cannot drag "now"
+   * backwards. Late items cost an O(n) insert; in-order pushes stay O(1).
    * An item whose timestamp is not a finite number is ignored: it cannot be
-   * placed in time, and once stored it would stop eviction from ordering the
-   * window (NaN compares false both ways), leaving stale items in place.
+   * placed in time.
    * @param item - A TimedValue containing the timestamp and value
    */
   push(item: TimedValue<T>): void {
     if (!Number.isFinite(item.ts)) return;
-    this.items.push(item);
-    this.evict(item.ts);
+    const items = this.items;
+    const n = items.length;
+    if (n === this.head || item.ts >= items[n - 1].ts) {
+      items.push(item);
+      this.evict(item.ts);
+      return;
+    }
+    // Insert after any items with the same timestamp, keeping arrival order among equals.
+    let lo = this.head;
+    let hi = n;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (items[mid].ts <= item.ts) lo = mid + 1;
+      else hi = mid;
+    }
+    items.splice(lo, 0, item);
+    this.evict(items[items.length - 1].ts);
   }
 
   /**
@@ -93,7 +113,8 @@ export class RollingTimeWindow<T> {
   }
 
   /**
-   * Returns the most recently pushed item, or undefined if empty.
+   * Returns the newest item by timestamp (the last pushed, unless it arrived
+   * late), or undefined if empty.
    * @returns Latest TimedValue<T> or undefined
    */
   getLatest(): TimedValue<T> | undefined {

@@ -24,6 +24,7 @@ import type { StrategyType, ParamSpec } from "../../types/strategy";
 import { useStrategyConfigs } from "../../hooks/useStrategyConfigs";
 import { useStrategyVersions } from "../../hooks/useStrategyVersions";
 import { daysAgoString } from "../../utils/dates";
+import { maxHoldingHint, maxHoldingProblem, MAX_HOLDING_MINS } from "../../utils/holdingTime";
 import RiskBudgetSection, { type RiskBudgetState, defaultRiskBudgetState } from "../shared/RiskBudgetSection";
 
 interface Props {
@@ -134,6 +135,9 @@ function StrategyBacktestForm({ type, onSubmit, isLoading }: Props & { type: Str
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    const holdingProblem = type === "pairs_trading" ? maxHoldingProblem(maxHoldingMins) : null;
+    setFormError(holdingProblem);
+    if (holdingProblem) return;
     const selectedStrategy = strategies.find((s) => s.id === selectedId);
 
     const strategyConfig: Record<string, unknown> = type !== "pairs_trading" ? {
@@ -257,8 +261,9 @@ function StrategyBacktestForm({ type, onSubmit, isLoading }: Props & { type: Str
         <Field label="Trade Notional (USD)">
           <input type="number" min="100" step="100" value={tradeNotionalUsd} onChange={(e) => setTradeNotionalUsd(Number(e.target.value))} className={inputClass} />
         </Field>
-        <Field label="Max Holding Time (minutes)">
-          <input type="number" min="1" step="1" value={maxHoldingMins} onChange={(e) => setMaxHoldingMins(Number(e.target.value))} className={inputClass} />
+        <Field label="Max Holding Time (minutes, hard limit)">
+          <input type="number" min="1" max={MAX_HOLDING_MINS} step="1" value={maxHoldingMins} onChange={(e) => setMaxHoldingMins(Number(e.target.value))} className={inputClass} />
+          <span className="text-[11px] text-zinc-400">{maxHoldingHint(maxHoldingMins)}</span>
         </Field>
         <Field label="Cooldown After Exit (minutes)">
           <input type="number" min="0" step="1" value={cooldownMins} onChange={(e) => setCooldownMins(Number(e.target.value))} className={inputClass} />
@@ -397,6 +402,8 @@ function StrategyBacktestForm({ type, onSubmit, isLoading }: Props & { type: Str
           </div>
         )}
       </div>
+
+      {type === "pairs_trading" && formError && <p role="alert" className="text-sm text-red-600">{formError}</p>}
 
       <button
         type="submit"

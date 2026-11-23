@@ -40,7 +40,9 @@ if (doctor.status !== 0) {
 
 console.log(`
 Setup complete. Next:
-  npm run dev:stack      start Supabase + the app (first run pulls images; takes a few minutes)
+  1. Add your own free Alpaca paper keys to backend/.env (ALPACA_DATA_KEY / ALPACA_DATA_SECRET).
+     Get them at https://app.alpaca.markets -> Paper Trading -> API Keys. Without them strategies cannot run.
+  2. npm run dev:stack   start Supabase + the app (first run pulls images; takes a few minutes)
   npm run doctor         health report any time
 Log in at http://localhost:3000 with lead@local.test / local-development-only
 `);
