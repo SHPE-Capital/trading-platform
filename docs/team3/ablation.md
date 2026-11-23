@@ -16,7 +16,7 @@ This file is the **trial ledger**. Every run goes in it, including diagnostics, 
 
 **Columns.** `Goal` = the R budget bucket (R3, R1, R2-rts, R2, R5, R4, reserve), or `—` for S0/S1 anchors and D/V rows, which don't count toward the ~20. `Config vs baseline` is the change against the current baseline (VERSION 4 defaults, A03 Core / A04 Momentum). `Rep` = reportable as a result (diagnostics: no). `Rev %` = reversion share = `target` exits ÷ trades (the R3/R1 mechanism check). `Exit mix` = count by exit reason (avg gross bps where logged). Window `IS` = 2026-09-01 → 2026-10-15 (32 trading days). Sharpe = runner `sharpeDaily` over the 32 days.
 
-**Stage 2 configs used: 19 of ~30** (R3 4, R1 3, R2 2, R4 3 incl. 1 reserve, R5 2, rspy 2, combining 3 of 10: C3, C3b, C4). The parallel goals' rows are merged below in [Stage 2 (parallel goal sessions)](#stage-2-parallel-goal-sessions); full rows stay in [`results/ledger-<goal>.md`](results/). The combining step is in [S2 combination](#s2-combination).
+**Stage 2 configs used (see the F3/B section for the final count, 25): 19 of ~30** (R3 4, R1 3, R2 2, R4 3 incl. 1 reserve, R5 2, rspy 2, combining 3 of 10: C3, C3b, C4). The parallel goals' rows are merged below in [Stage 2 (parallel goal sessions)](#stage-2-parallel-goal-sessions); full rows stay in [`results/ledger-<goal>.md`](results/). The combining step is in [S2 combination](#s2-combination).
 
 | ID | Date run | Goal | Window (dates) | Universe | Config vs baseline | VER | backtestId | Rep | Net P&L $ | Trades | Avg bps/trade | Rev % | Exit mix | Win % | Payoff | PF | Sharpe | Max DD $ (%) | Compared to | Notes |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -147,6 +147,17 @@ Configs used: **21 of ~30** (S5: F1, F2).
 - **F3** = |z| > 1.947 AND crossings60 in 1–2 AND SPY neutral (|zSPY| < 1). Simulated: Momentum 31 trades, +4.75 bps, halves +7.34 / +3.05; Core +5.09.
 - **F4 and F5 are removed.**
 - Other slots stay unspent.
+
+### F3 (results, 2026-11-23)
+
+Parity with `useConditionEntry` off: Mom `7e745d10-…` = A04, Core `54554839-…` = A03. VERSION 8 parity: Mom `d2129489-7410-4568-8f3c-32e9c041a052`, Core `b218e0de-69d1-4aa4-8536-9a3ac19726da` = A04/A03.
+
+| ID | Universe | Config | backtestId | Net $ | Trades | Net bps/trade | Win % | Exits (n, avg gross bps) | Bootstrap vs parent (Δ $/day, share; halves) | Verdict |
+|---|---|---|---|---|---|---|---|---|---|---|
+| F3 | Mom | `{"useConditionEntry":true,"ceRanges":{"absZ":[1.947,null],"crossings60":[0,2]},"ceSpySide":"neutral"}` | `f27874dd-8c1e-4898-b908-56e8c108d2d3` | **+69.22** | 31 | **+4.75** | 61.3 | target 8 (+86.5), time 21 (−12.5), stop 2 | vs V4 +53.66, 1.000; +21.29 (0.96) / +86.02. vs F1 −1.19, 0.427 | Matches the offline simulation exactly. |
+| F3 | Core | same | `d47f1ca0-71a9-4901-8ff3-4d36e88f31a1` | **+71.15** | 29 | **+5.09** | 41.4 | target 7 (+62.5), time 22 (−3.7) | vs V4 +97.50, 1.000 | **The only signal positive on both universes.** |
+
+Configs used: **22 of ~30** (F3). F3 is the only signal positive on both universes in-sample, on about 30 trades per universe, picked under a rule relaxed after the data had been seen.
 
 ### Checks
 

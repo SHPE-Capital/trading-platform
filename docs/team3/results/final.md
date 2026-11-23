@@ -31,3 +31,8 @@ A trade makes money only when **edge before costs > round-trip cost**.
 
 ## 4. What goes to Stage 3 (the lead decides)
 Stage 3 runs once, out-of-sample (2026-10-16 → 11-13), on configs frozen and logged before the run. Suggested: **C3** (the defensible stack) and **F1** (the survey hypothesis), both declared up front. Any OOS result is reported, including a loss.
+
+## 5. Addendum: F3 (2026-11-23)
+- **Offline evaluation** ([signal-eval.md](signal-eval.md)): the engine-feasible simulator reproduces F1, F2 and V4 exactly. No survey group met the pre-registered rule. Under a relaxed trade minimum, the lead picked **F3** (|z| > 1.947, 1–2 VWAP crossings, SPY within 1σ).
+- **F3:** Momentum **+$69** (+4.75 bps/trade, 31 trades); Core **+$71** (+5.09, 29 trades). It's the only signal positive on both universes.
+- **Trials:** 22 strategy configs. The paper's honest story doesn't change: the tuned parts make losses and costs smaller; small condition sets beat costs in-sample on about 30 trades, and only the out-of-sample run can tell whether that's real.
