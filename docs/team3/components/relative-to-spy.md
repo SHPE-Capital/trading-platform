@@ -1,7 +1,7 @@
 # Relative to SPY (stock-specific moves only)
 
 **Type:** entry filter  ·  **File:** `filters/relativeToSpy.ts`
-**Switch:** `useRelativeToSpy`  ·  **Knobs:** `benchmarkSymbol` = SPY (must be in symbols)  ·  **Status:** stub (lets every trade through), owner to fill in
+**Switch:** `useRelativeToSpy`  ·  **Knobs:** `benchmarkSymbol` = SPY (must be in symbols)  ·  **Status:** done (VERSION 7), tested in Stage 2 (RS-01/02)  ·  **Owner:** Alex Rivera (PR #78), specced filter by the Stage 2 rspy session  ·  **Knobs:** `rtsMinOwnShare`, `rtsExcludeSymbols` = [SPY, QQQ]
 **Owner:** _(name)_
 
 ## Origin
