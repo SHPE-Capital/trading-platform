@@ -94,7 +94,7 @@ The ledger is [ablation.md](ablation.md). **Every row goes in it**, including di
 
 ### Out-of-sample ban
 - **No OOS day (2026-10-16 → 2026-11-20) is used before Stage 3.** That covers runs, plots, peeks, "just checking" and diagnostics. One OOS look on a feature leaks into every later decision, and then relativeToSpy or any other feature can't be claimed as evidence.
-- Stage 3 runs **once**, on the final stacked config, frozen and recorded in the ledger before the run.
+- Stage 3 runs **once**, on the configs frozen and recorded in the ledger before the run. Frozen 2026-11-24: F3 and L2 (primaries), L4, F1, C3, plus V4 as the reference. See [ablation.md](ablation.md), "Stage 3 pre-registration".
 - Don't carve a validation set out of the IS days. There are too few to split again. Use the paired bootstrap and the two-halves check instead.
 
 ### Mechanism checks (measurable before a row runs)

@@ -30,7 +30,11 @@ A trade makes money only when **edge before costs > round-trip cost**.
 - **Limit-order execution:** the most direct cut to the 14 bps round trip, and real engineering (queue position, fill probability).
 
 ## 4. What goes to Stage 3 (the lead decides)
-Stage 3 runs once, out-of-sample (2026-10-16 → 11-20), on configs frozen and logged before the run. Suggested: **C3** (the defensible stack) and **F1** (the survey hypothesis), both declared up front. Any OOS result is reported, including a loss.
+Stage 3 runs once, out-of-sample (2026-10-16 → 11-20), on configs frozen and logged before the run. **Frozen (2026-11-24):**
+- the primaries, **F3** and **L2** (F1 + hold 150);
+- also run: **L4** (F3 + hold 90), **F1** and **C3**, with V4 as the reference.
+
+The tests and the success rule are in the ledger ("Stage 3 pre-registration"). Any OOS result is reported, including a loss.
 
 ## 5. Addendum: F3 (2026-11-23)
 - **Offline evaluation** ([signal-eval.md](signal-eval.md)): the engine-feasible simulator reproduces F1, F2 and V4 exactly. No survey group met the pre-registered rule. Under a relaxed trade minimum, the lead picked **F3** (|z| > 1.947, 1–2 VWAP crossings, SPY within 1σ).

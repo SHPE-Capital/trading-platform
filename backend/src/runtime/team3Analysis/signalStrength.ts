@@ -184,16 +184,16 @@ const IDS = {
 type Uni = keyof typeof IDS;
 type RunName = keyof typeof IDS.momentum;
 
-interface RawTrip { symbol: string; side: "buy" | "sell"; entryTs: number; exitTs: number; qty: number }
-interface Loaded { trips: RawTrip[]; row: { trades: number; netPnl: number; avgBpsPerTrade: number } }
+export interface RawTrip { symbol: string; side: "buy" | "sell"; entryTs: number; exitTs: number; qty: number }
+export interface Loaded { trips: RawTrip[]; row: { trades: number; netPnl: number; avgBpsPerTrade: number } }
 
-function loadTrips(id: string): Loaded {
+export function loadTrips(id: string): Loaded {
   const d = JSON.parse(readFileSync(path.join(DATA_DIR, `${id}.trades.json`), "utf8"));
   return { trips: d.roundTrips, row: { trades: d.row.trades, netPnl: d.row.netPnl, avgBpsPerTrade: d.row.avgBpsPerTrade } };
 }
 
 /** Re-costs a dumped trade from the bars (entry/exit at the next raw opens, the dump's own qty). */
-function recost(all: Map<string, SessionSeries>, t: RawTrip): EvalTrade {
+export function recost(all: Map<string, SessionSeries>, t: RawTrip): EvalTrade {
   const s = all.get(t.symbol)!;
   const i = s.index.get(t.entryTs - BAR_MS), k = s.index.get(t.exitTs - BAR_MS);
   if (i === undefined || k === undefined) throw new Error(`bar missing ${t.symbol}@${t.entryTs}`);

@@ -233,6 +233,60 @@ Code VERSION 8. In-sample only, each row run once per universe, all with dumps.
 - **Core moves with F1 on every hold** (−6.57 → about +1.6 to +2.2), but on 13 trades.
 - **Configs used: 27 of ~30** (22 + L1–L5); 3 stay in reserve.
 
+### Stage 3 pre-registration (2026-11-24, before any OOS run)
+
+This was written and committed before any out-of-sample backtest. The commit time is the proof. OOS = 2026-10-16 → 2026-11-20, 26 trading days.
+
+**FROZEN** (code VERSION 8, commit `2120a7c92c4bcacece716fcddfa99e8b5ec44a4b`; strategy code unchanged since):
+
+```json
+{"id": "FROZEN-1 F3 (primary)", "version": 8, "commit": "2120a7c", "config": {"useConditionEntry": true, "ceRanges": {"absZ": [1.947, null], "crossings60": [0, 2]}, "ceSpySide": "neutral"}}
+{"id": "FROZEN-2 L2 = F1 + hold 150 (primary)", "version": 8, "commit": "2120a7c", "config": {"useSpyDivergence": true, "maxHoldBars": 150}}
+{"id": "FROZEN-3 L4 = F3 + hold 90", "version": 8, "commit": "2120a7c", "config": {"useConditionEntry": true, "ceRanges": {"absZ": [1.947, null], "crossings60": [0, 2]}, "ceSpySide": "neutral", "maxHoldBars": 90}}
+{"id": "FROZEN-4 F1", "version": 8, "commit": "2120a7c", "config": {"useSpyDivergence": true}}
+{"id": "FROZEN-5 C3", "version": 8, "commit": "2120a7c", "config": {"useRelativeToSpy": true, "rtsMinOwnShare": 0.7, "useCrowdSplit": true}}
+{"id": "REFERENCE V4 (baseline, not a freeze)", "version": 8, "commit": "2120a7c", "config": {}}
+```
+
+**Runs.**
+- **Real runs:** 6 configs × 2 universes = 12, each once, with `TEAM3_WINDOW=out` and `TEAM3_DUMP`. `TEAM3_DIAGNOSTIC`, `TEAM3_COST_SCALE` and `TEAM3_EXCLUDE` are unset.
+- **Zero-cost twins:** 12 more (D rows, for the gross edge out-of-sample).
+- **Check each run before it's logged:** `TEAM3_ROW.config` equals the frozen JSON, the window is `out`, the version is 8 and `tradingDays` is 26.
+
+**Tests.** The code is in `runtime/team3Analysis/stage3Tests.ts` (committed with this section), with 10,000 draws and seed 20261124.
+
+| Test | What | Rule |
+|---|---|---|
+| 1. Does the longer hold help? | Pair L2 and F1 trades by symbol + entry time, take the per-pair net bps difference, bootstrap the pairs, and report the share > 0. **Primary: L2 vs F1 on Momentum.** L4 vs F3, and Core, are secondary. | ≥ 0.8 confirmed, ≥ 0.7 suggestive, ≥ 0.6 weak, < 0.6 not supported |
+| 2. Does it make money? (profit, the main test) | A trade bootstrap of each config's net bps/trade (Σ net $ / Σ notional, as the engine computes it), with a 90% interval, on both universes | Profitable only if the 90% lower end is > 0 |
+| 3. Sanity check | C3 vs V4 day bootstrap, `team3Bootstrap.ts <V4> <C3> --stage3` | Passes if C3's mean Δ $/day > 0 (C3 loses less than V4); the share is reported |
+
+**Rules that apply to every test.**
+- **Minimum trades:** 10 on Momentum, 5 on Core. Below that, the result is "inconclusive", whatever the number says.
+- **Core is supportive only.** It's reported and labelled, but it never decides success.
+- **Cost:** about 14.2 bps per round trip. Net = gross − cost.
+
+**Success rule:** **L2 or F3** has a 90% lower end above 0 for net bps/trade on **Momentum** OOS, with ≥ 10 trades. With two primaries, the chance of a lucky pass is about 10%.
+
+**For context (in-sample, computed with the same code on 2026-11-24):**
+- No frozen config passes Test 2 in-sample. Momentum 90% intervals:
+  - L2: +14.27, interval −2.79 … +31.01
+  - F1: +7.14, interval −6.84 … +22.01
+  - F3: +4.75, interval −14.95 … +23.80
+  - L4: +7.37, interval −17.68 … +30.83
+  - C3: −5.25, interval −11.24 … +0.61
+- Test 1 in-sample: L2 vs F1 share 0.867, confirmed; L4 vs F3 0.716, suggestive.
+- **A Stage 3 pass would therefore need the OOS result to be stronger than the in-sample one.**
+
+**No-changes rule:** nothing is retuned after Stage 3. Each config runs once, and every result is reported, including losses and inconclusive ones.
+
+**Disclosures (for the report):**
+- N = 27 strategy configs, and the luck-only IS Sharpe bar is about 5.7.
+- The search also covered 1,309 survey groups and 126 strength/RSI groups.
+- F3 was picked under a rule relaxed after the data had been seen.
+- The L2 and L4 hold lengths were chosen in-sample.
+- With about 20–25 Momentum trades per config, the per-trade standard error is 10–16 bps. Stage 3 can refute a large edge, but it can't confirm a 5–14 bps one.
+
 ### Checks
 
 **65/65 target exits (2026-11-23):** Core (A03) and Momentum (A04) both end with 65 `target` exits. This is a coincidence, not shared or overwritten output:
