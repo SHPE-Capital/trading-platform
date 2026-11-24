@@ -287,6 +287,74 @@ This was written and committed before any out-of-sample backtest. The commit tim
 - The L2 and L4 hold lengths were chosen in-sample.
 - With about 20–25 Momentum trades per config, the per-trade standard error is 10–16 bps. Stage 3 can refute a large edge, but it can't confirm a 5–14 bps one.
 
+### Stage 3 results (out-of-sample 2026-10-16 → 11-20, 2026-11-24)
+
+**Pre-registration came first.** It was committed in `19b4fe5` at 2026-11-24 06:30:53 UTC, and the first OOS run started at 06:33:31 UTC.
+
+**Data and run checks:**
+- All 11 symbols have 26 days × 389 regular-session bars, with no short sessions.
+- All 24 runs pass the checks: frozen config, window `out`, VERSION 8, 26 days, and `diagnostic` null on the real runs.
+- Each config × universe ran once.
+- One deviation from the one-run-per-command rule: the F1 Core zero-cost twin ran past the command timeout and finished in the background while the F3 twins ran. Both completed cleanly, and the runs are deterministic.
+
+**Tests 1 and 2:** `stage3Tests.ts`, 10,000 draws, seed 20261124. The minimum is 10 trades on Momentum and 5 on Core, and Core is supportive only.
+
+| Config | Universe | backtestId | Net $ | Trades | Net bps/trade | 90% CI (Test 2) | Zero-cost gross bps (id) | Test 2 verdict |
+|---|---|---|---|---|---|---|---|---|
+| V4 (reference) | Mom | `5365f534-a3c1-49d1-ae70-57b5cf126222` | −2,813.83 | 328 | −18.19 | −27.41 … −9.45 | −3.96 (`e4724222`) | not profitable |
+| C3 | Mom | `215f976d-3776-4b18-b00c-574f76b1799d` | −1,754.93 | 207 | −23.48 | −37.63 … −10.58 | −9.22 (`c5132e68`) | not profitable |
+| F1 | Mom | `0b470ed3-1239-44c0-af0e-4c60ddb045e7` | +27.99 | **7** | +8.39 | −27.06 … +41.09 | +22.60 (`e387aecd`) | **inconclusive** (7 < 10) |
+| **F3 (primary)** | Mom | `f0f1882c-132f-4e97-b69c-3cfa81d1b82e` | −95.34 | 20 | **−10.19** | −36.62 … +15.93 | +4.01 (`b2bd1101`) | **not profitable** |
+| **L2 (primary)** | Mom | `ad995dd2-a2e4-4b31-a2c9-ded97a2258a9` | +91.88 | **7** | **+27.52** | +5.05 … +47.15 | +41.73 (`7be09172`) | **inconclusive** (7 < 10) |
+| L4 | Mom | `fecdfc9b-be49-472c-823f-5e47167f49aa` | −44.59 | 20 | −4.77 | −47.33 … +37.38 | +9.43 (`901c7382`) | not profitable |
+| V4 (reference) | Core | `d6f44654-149c-4087-b619-82bddb53c015` | −3,110.33 | 365 | −18.00 | −21.52 … −14.41 | −3.75 (`adb39dc3`) | not profitable |
+| C3 | Core | `e5427e6a-bcb7-4fbc-b89e-8c50354bcf31` | −1,247.94 | 141 | −22.29 | −27.64 … −16.95 | −8.00 (`a5739993`) | not profitable |
+| F1 | Core | `6a30c472-d979-4d5d-9b54-01d976289a5b` | −134.09 | 17 | −16.31 | −27.36 … −5.62 | −2.03 (`667dd1e1`) | not profitable |
+| F3 | Core | `068d3b90-33b2-4617-a82e-62277b64ec70` | −257.37 | 23 | −23.24 | −34.17 … −12.27 | −8.96 (`053884d5`) | not profitable |
+| L2 | Core | `ac49db3d-aea7-485d-9c2c-d91f10764744` | −95.46 | 17 | −11.62 | −31.69 … +5.43 | +2.67 (`5d395e30`) | not profitable |
+| L4 | Core | `b6e919a9-5a5e-45f0-9349-5729e2e06341` | −329.20 | 23 | −29.75 | −53.43 … −8.10 | −15.47 (`e2976126`) | not profitable |
+
+**Test 1: does the longer hold help?** These are matched-trade shares.
+
+| Pair | Universe | Pairs (changed) | Mean Δ net bps | Share | Verdict |
+|---|---|---|---|---|---|
+| **L2 vs F1 (primary)** | Mom | 7 (2) | +18.79 | 0.906 | **inconclusive** (7 < 10) |
+| L2 vs F1 | Core | 17 (15) | +4.24 | 0.716 | suggestive |
+| L4 vs F3 | Mom | 20 (16) | +4.71 | 0.604 | weak |
+| L4 vs F3 | Core | 23 (22) | −7.21 | 0.275 | not supported |
+
+**Test 3: sanity check.** This is the day bootstrap with `--stage3`, 26 days.
+
+| Pair | Universe | Mean Δ $/day | Share | 95% CI | Verdict |
+|---|---|---|---|---|---|
+| C3 vs V4 | Mom | +40.73 | 0.945 | −9.97 … +86.03 | **passes** (C3 loses less) |
+| C3 vs V4 | Core | +71.63 | 1.000 | +42.17 … +101.59 | passes |
+
+For context only (not a test), here is each primary against V4 by day bootstrap:
+- L2: Momentum +111.76/day (0.996), Core +115.96 (1.000).
+- F3: Momentum +104.56 (0.995), Core +109.73 (1.000).
+
+Both beat V4 mostly because they trade far less than a losing baseline.
+
+**Verdict, applied as written: Stage 3 does not succeed.**
+- **F3** is not profitable on Momentum OOS: −10.19 bps/trade, lower end −36.6. Its edge before costs fell from about +18 in-sample to +4.0, below the ~14.2 round trip. It's negative on Core too.
+- **L2** has the only interval above zero (+5.05 … +47.15, +27.52 bps/trade). But it's on **7 trades**, below the pre-registered minimum of 10, so it reads **inconclusive**.
+  - F1's entry fired only 7 times on Momentum in 26 days, against 32 in 32 in-sample days.
+  - L2's gain over F1 comes from 2 trades that changed exit (mean Δ +18.8 on 7 pairs).
+- **The hold-length primary (L2 vs F1 on Momentum) is inconclusive**, on 7 pairs.
+  - On Core, a longer hold is suggestive for F1 (0.72) and not supported for F3 (0.28).
+- **C3 passes the sanity check**: it loses less than V4 on both universes, as in-sample. Both still lose: V4 −18 bps/trade, C3 −22 to −23 bps/trade. Costs make up most of that.
+- **The OOS period was harder than in-sample** for every config.
+  - V4's edge before costs went from +4.70 to −3.96 on Momentum, and from −1.08 to −3.75 on Core.
+  - C3's went from +8.98 to −9.22 on Momentum.
+  - So reversion to VWAP paid less, before any cost, on these 26 days.
+
+**Disclosures:**
+- N = 27 strategy configs, and the luck-only IS Sharpe bar is about 5.7. The search also covered 1,309 survey groups and 126 strength/RSI groups.
+- F3 was picked under a rule relaxed after the data had been seen. The L2 and L4 hold lengths were chosen in-sample.
+- With 7 to 23 trades per config, the per-trade standard error is about 10–25 bps.
+- No config was changed or rerun after these results.
+
 ### Checks
 
 **65/65 target exits (2026-11-23):** Core (A03) and Momentum (A04) both end with 65 `target` exits. This is a coincidence, not shared or overwritten output:

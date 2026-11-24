@@ -50,3 +50,24 @@ The tests and the success rule are in the ledger ("Stage 3 pre-registration"). A
   - Its pre-registered neighbour at 120 fails (share 0.64, the halves disagree), so the gain is a fragile peak.
   - F3 at 45 and at 90 fails.
 - **Trials:** 27 strategy configs; 3 stay in reserve.
+
+## 7. Stage 3 result (out-of-sample 2026-10-16 → 11-20)
+**The pre-registered success rule is not met.** Neither primary is profitable on Momentum out-of-sample with ≥ 10 trades. Full table: [ablation.md](../ablation.md), "Stage 3 results".
+
+| Config | Momentum net bps/trade (90% CI), trades | Verdict | Core net bps/trade, trades |
+|---|---|---|---|
+| **F3** (primary) | −10.19 (−36.6 … +15.9), 20 | not profitable | −23.24, 23 |
+| **L2** (primary, F1 + hold 150) | +27.52 (+5.1 … +47.2), **7** | inconclusive (< 10 trades) | −11.62, 17 |
+| L4 (F3 + hold 90) | −4.77 (−47.3 … +37.4), 20 | not profitable | −29.75, 23 |
+| F1 | +8.39 (−27.1 … +41.1), 7 | inconclusive | −16.31, 17 |
+| C3 | −23.48 (−37.6 … −10.6), 207 | not profitable | −22.29, 141 |
+| V4 (reference) | −18.19 (−27.4 … −9.5), 328 | not profitable | −18.00, 365 |
+
+- **The hold-length primary (L2 vs F1, Momentum) is inconclusive** on 7 matched trades (share 0.91). On Core, the longer hold is suggestive for F1 (0.72) and not supported for F3 (0.28).
+- **The sanity check passes.** C3 loses less than V4 on both universes (day bootstrap share 0.945 Momentum, 1.000 Core), as in-sample.
+- **The out-of-sample days were worse for VWAP reversion before any cost.** V4's edge before costs fell from +4.7 to −4.0 bps/trade on Momentum, and F3's from about +18 to +4.0. A 14.2 bps round trip on top of that leaves every config with ≥ 10 trades losing money.
+- **The honest conclusion for the paper:**
+  - The tuned parts reduce losses relative to the baseline, in-sample and out-of-sample.
+  - The small condition-set signals that beat costs in-sample didn't hold out-of-sample.
+  - L2's positive out-of-sample number rests on 7 trades and can't be read either way.
+  - As pre-registered, nothing is retuned.
