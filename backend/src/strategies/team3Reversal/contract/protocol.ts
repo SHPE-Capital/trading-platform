@@ -40,15 +40,20 @@ export const TEAM3_PROTOCOL = {
 };
 
 /**
- * Research windows (docs/team3/ablation.md header). IS = 32 trading days, OOS = 21.
+ * Research windows (docs/team3/ablation.md header). IS = 32 trading days, OOS = 26 (end extended 11-13 -> 11-20, lead, 2026-11-23).
  * OOS is locked until Stage 3 (MASTER.md, Testing rules).
  */
 export const TEAM3_WINDOWS: Record<"in" | "out", { startDate: string; endDate: string }> = {
   in: { startDate: "2026-09-01T00:00:00Z", endDate: "2026-10-15T23:59:59Z" },
-  out: { startDate: "2026-10-16T00:00:00Z", endDate: "2026-11-13T23:59:59Z" },
+  out: { startDate: "2026-10-16T00:00:00Z", endDate: "2026-11-20T23:59:59Z" },
 };
 
 /** Research universes (AGENT_GUIDE.md section 2). Momentum is the main universe, Core the control. */
+/** OOS ban: true when a run ending at endDate would touch out-of-sample days without --stage3. */
+export function oosLocked(endDate: string, stage3: boolean): boolean {
+  return !stage3 && Date.parse(endDate) > Date.parse(TEAM3_WINDOWS.in.endDate);
+}
+
 export const TEAM3_GROUPS: Record<"core" | "momentum", string[]> = {
   core: ["SPY", "QQQ", "AAPL", "MSFT", "GOOGL", "AMZN"],
   momentum: ["SPY", "NVDA", "AMD", "MU", "TSLA", "META"],

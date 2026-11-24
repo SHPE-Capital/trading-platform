@@ -21,7 +21,7 @@
 import { getBacktestResultById } from "../adapters/supabase/repositories";
 import { pairedDayBootstrap, BOOTSTRAP_DEFAULTS } from "../strategies/team3Reversal/contract/bootstrap";
 import { dailyPnl } from "../strategies/team3Reversal/contract/daily";
-import { TEAM3_BASELINES, TEAM3_WINDOWS, universeOf } from "../strategies/team3Reversal/contract/protocol";
+import { TEAM3_BASELINES, oosLocked, universeOf } from "../strategies/team3Reversal/contract/protocol";
 import type { BacktestResult } from "../types/backtest";
 import { logger } from "../utils/logger";
 
@@ -35,7 +35,7 @@ async function load(id: string, stage3: boolean): Promise<{ result: BacktestResu
   if (!result) throw new Error(`backtest ${id} not found (was its summary saved?)`);
   const cfg = result.config as unknown as { startDate: string; endDate: string };
   const window = { startDate: cfg.startDate, endDate: cfg.endDate };
-  if (!stage3 && Date.parse(window.endDate) > Date.parse(TEAM3_WINDOWS.in.endDate)) {
+  if (oosLocked(window.endDate, stage3)) {
     throw new Error(`backtest ${id} ends ${window.endDate}, after the in-sample window: OOS is locked until Stage 3 (pass --stage3 only then)`);
   }
   return { result, window };

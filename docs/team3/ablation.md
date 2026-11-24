@@ -5,7 +5,8 @@ Never edit or delete a row; add a corrected one and mark the old one `superseded
 
 **Protocol header (lead confirms once, before A01):**
 - In-sample window: `2026-09-01` → `2026-10-15` (to be confirmed against cached data)
-- Out-of-sample window: `2026-10-16` → `2026-11-13` (to be confirmed)
+- Out-of-sample window: `2026-10-16` → `2026-11-20` (26 trading days)
+- **OOS end extended 2026-11-13 → 2026-11-20 by lead decision, 2026-11-23, before any OOS run. Reason: more days for a small sample.**
 - Costs: slippage 5 bps (+ half spread 2 bps), $0.005/share · Capital: $100,000 · Bars: 1-min, regular session
 - Engine risk config: `TEAM3_PROTOCOL.riskConfig` (`contract/protocol.ts`): kill switch off, engine caps above the strategy's
 - VERSION 3 changes the baseline (VWAP reversion); rows from VERSION 2 are not comparable

@@ -42,7 +42,7 @@ The short, binding list. Every Stage 2 row follows it, and where anything else i
    4. **both in-sample halves agree**: the bootstrap's `firstHalf` and `secondHalf` mean differences are both > 0 (`halvesAgree` and positive);
    5. **Core doesn't contradict it**: Core's effect has the same sign, or is flat.
 3. **Budget.** About **30 configs in total** (raised from 20 to 25 on 2026-11-23, the extra 5 being reserve; then to 30 the same day, 5 more for the combining step), and **R3 gets 4**. **Every run goes in the ledger** ([ablation.md](ablation.md)), including diagnostics and failed runs.
-4. **Out-of-sample.** The OOS days (**2026-10-16 → 2026-11-13**) are **never run before Stage 3**. No runs, plots or peeks. `team3Bootstrap.ts` refuses OOS runs.
+4. **Out-of-sample.** The OOS days (**2026-10-16 → 2026-11-20**; end extended from 11-13 by the lead on 2026-11-23, before any OOS run) are **never run before Stage 3**. No runs, plots or peeks. `team3Bootstrap.ts` refuses OOS runs.
 5. **Promotion.** **Agents never promote a change to the baseline. The human decides.** An agent reports whether a row passes the keep rule and stops.
 
 ## Iteration rules
@@ -93,7 +93,7 @@ A goal can't borrow from another goal. Unused slots go to the reserve. **Each ex
 The ledger is [ablation.md](ablation.md). **Every row goes in it**, including diagnostics, features and failed runs. Each row records: ID, R goal, window/dates, universe, config diff vs baseline, VERSION, backtestId, reportable yes/no, net P&L, trades, bps/trade, reversion share, and exit mix (plus win %, payoff, PF, Sharpe, max DD). Never edit a row; supersede it. The paper states the real number of configs tried.
 
 ### Out-of-sample ban
-- **No OOS day (2026-10-16 → 2026-11-13) is used before Stage 3.** That covers runs, plots, peeks, "just checking" and diagnostics. One OOS look on a feature leaks into every later decision, and then relativeToSpy or any other feature can't be claimed as evidence.
+- **No OOS day (2026-10-16 → 2026-11-20) is used before Stage 3.** That covers runs, plots, peeks, "just checking" and diagnostics. One OOS look on a feature leaks into every later decision, and then relativeToSpy or any other feature can't be claimed as evidence.
 - Stage 3 runs **once**, on the final stacked config, frozen and recorded in the ledger before the run.
 - Don't carve a validation set out of the IS days. There are too few to split again. Use the paired bootstrap and the two-halves check instead.
 
