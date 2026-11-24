@@ -172,4 +172,4 @@ No RSI rule meets the minimums. The only positive one is F1 again with its "conf
   - Weakness: the second half is −11 and Core is +1.8 on 13 trades.
   - Prefer L2 over F1 at hold 30: F1 hold 30 depends on META and its top 2 days, and it's negative on Core.
 - **Drop C3 from Stage 3** as a candidate: its CI is −11.4 … +0.4 on Momentum and −17.3 … −6.8 on Core. It's already shown to lose, so the OOS run would tell us nothing new. Report it as the in-sample reference.
-- **Expectations for Stage 3:** about 20 OOS trading days gives roughly 15–20 trades per candidate. Against a per-trade SD of 50–70 bps, the standard error is 12–17 bps, so the OOS run can refute a large edge but can't confirm a 5–14 bps one. Report the result whatever it is.
+- **Expectations for Stage 3:** 26 OOS trading days (2026-10-16 → 11-20) give roughly 20–25 Momentum trades per candidate at the in-sample rate (Core F1/L2 about 11). Against a per-trade SD of 50–70 bps, the standard error is 10–16 bps, so the OOS run can refute a large edge but can't confirm a 5–14 bps one. Report the result whatever it is.

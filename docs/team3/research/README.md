@@ -26,7 +26,7 @@ Every claim here is still a hypothesis, paired with the row that will test it.
 | R3 | **Costs: whether the edge survives** | Break-even is about **14–15 bps** per round trip even if price reverts all the way, about 25 bps at 60% capture. Costs decide the result but cannot create an edge. | [R3-costs](R3-costs.md) |
 | R4 | **Exit geometry: how much of the reversion we capture** | On a random walk no exit rule changes expected gross P&L. Exits manage the tails and the costs, and the edge has to come from entry. | [R4-exit-geometry](R4-exit-geometry.md) |
 | R5 | **Portfolio: how bets combine** | Several symbols stretching in the same minute is one market bet repeated. Vol sizing at today's default isn't really equal-risk. | [R5-portfolio](R5-portfolio.md) |
-| R6 | **Evidence: whether a result is real** | 32 in-sample / 21 out-of-sample days give a Sharpe standard error of about ±2.8 / ±3.5. Claim effects and costs, not a significant Sharpe. At most 2 values per knob, about 20 configs in total, split by goal ([MASTER](../MASTER.md#budget-20-configs-split-by-goal)). | [R6-evidence](R6-evidence.md) |
+| R6 | **Evidence: whether a result is real** | 32 in-sample / 26 out-of-sample days give a Sharpe standard error of about ±2.8 / ±3.1. Claim effects and costs, not a significant Sharpe. At most 2 values per knob, about 20 configs in total, split by goal ([MASTER](../MASTER.md#budget-20-configs-split-by-goal)). | [R6-evidence](R6-evidence.md) |
 
 ## What the agents agreed on (independently)
 

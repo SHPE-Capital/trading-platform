@@ -87,7 +87,7 @@ At most **2 values per knob**. Feature rows count. Diagnostic (D) and validation
 
 The combining step judges each step with a size-neutral **"true test"**: net bps/trade must improve, plus bootstrap share ≥ 0.8, halves agree, Core doesn't contradict, and the step's mechanism moves. The net-$ keep rule alone rewards rows that just bet smaller or trade less.
 
-A goal can't borrow from another goal. Unused slots go to the reserve. **Each extra config is another chance to keep something that only worked by luck**, and 21 OOS days can't fully separate real effects from lucky ones. So the paper states the real N, and the luck-only best IS Sharpe at that N (R6 formula: about **5.8 annualized at N = 30, T = 32**; 5.6 at N = 25) is the bar an IS Sharpe is read against.
+A goal can't borrow from another goal. Unused slots go to the reserve. **Each extra config is another chance to keep something that only worked by luck**, and 26 OOS days can't fully separate real effects from lucky ones. So the paper states the real N, and the luck-only best IS Sharpe at that N (R6 formula: about **5.8 annualized at N = 30, T = 32**; 5.6 at N = 25) is the bar an IS Sharpe is read against.
 
 ### Trial ledger
 The ledger is [ablation.md](ablation.md). **Every row goes in it**, including diagnostics, features and failed runs. Each row records: ID, R goal, window/dates, universe, config diff vs baseline, VERSION, backtestId, reportable yes/no, net P&L, trades, bps/trade, reversion share, and exit mix (plus win %, payoff, PF, Sharpe, max DD). Never edit a row; supersede it. The paper states the real number of configs tried.
