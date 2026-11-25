@@ -4,6 +4,10 @@
  * How the app shows Team 3 Reversal: its name, default settings, and the form
  * fields (baseline knobs and caps, one checkbox per filter switch, one number per knob).
  *
+ * Released configuration: L2 (SPY-divergence entry, 150-bar hold), frozen at commit 2120a7c.
+ * Only the form's pre-fill is L2; DEFAULT_TEAM3_REVERSAL_CONFIG stays the research baseline.
+ * Strategy sheet: docs/strategies/team3-vwap-reversion.md
+ *
  * Owner: team lead.
  */
 
@@ -11,26 +15,29 @@ import { asProblem, type StrategyManifest } from "../../config/strategyManifest"
 import { Team3ReversalStrategy } from "./team3ReversalStrategy";
 import {
   DEFAULT_TEAM3_REVERSAL_CONFIG,
-  DEFAULT_TEAM3_REVERSAL_SYMBOLS,
   createTeam3ReversalConfig,
   validateTeam3ReversalConfig,
   type Team3ReversalConfig,
 } from "./team3ReversalConfig";
+import { TEAM3_GROUPS } from "./contract/protocol";
 
 const build = (config: Record<string, unknown>) => createTeam3ReversalConfig(config as Partial<Team3ReversalConfig>);
 
 export const team3ReversalManifest: StrategyManifest = {
   type: "team3_reversal",
-  status: "experimental",
-  label: "Team 3 Reversal",
+  status: "ready",
+  label: "Team 3 VWAP Reversion",
   description:
-    "Intraday VWAP reversion on 1-minute bars: fades moves stretched from VWAP, exits back at VWAP, " +
-    "flat by the close. Each filter is a switch; with every switch off it is the baseline.",
+    "L2: intraday VWAP reversion on 1-minute bars. Enters when a stock is stretched from VWAP while SPY " +
+    "is stretched the opposite way, exits back at VWAP, on a z stop or after 150 bars, flat by the close. " +
+    "Frozen at commit 2120a7c.",
   version: Team3ReversalStrategy.VERSION,
   defaultConfig: {
     ...DEFAULT_TEAM3_REVERSAL_CONFIG,
-    symbols: [...DEFAULT_TEAM3_REVERSAL_SYMBOLS],
-    name: "Team 3 Reversal: baseline",
+    useSpyDivergence: true,
+    maxHoldBars: 150,
+    symbols: [...TEAM3_GROUPS.momentum],
+    name: "Team 3 VWAP Reversion: SPY-Divergence, 150-bar hold (L2) v8",
   },
   // Saved configs may omit fields; createTeam3ReversalConfig fills them from the defaults.
   create: (config) => new Team3ReversalStrategy(build(config)),
