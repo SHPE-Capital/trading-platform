@@ -58,6 +58,32 @@ export const team3ReversalManifest: StrategyManifest = {
     { key: "useRelativeToSpy", label: "Filter: relative to the market (stub)", kind: "boolean" },
     { key: "benchmarkSymbol", label: "Relative: benchmark symbol", kind: "text", hint: "Must also be in Symbols" },
     { key: "useVolSizing", label: "Sizing: volatility target", kind: "boolean" },
+    { key: "useCostGate", label: "Filter: edge x capture share beats costs", kind: "boolean" },
+    { key: "captureShare", label: "Cost gate: capture share (0-1]", kind: "number", min: 0.05, step: 0.05 },
+    { key: "costFixedBps", label: "Cost gate: fixed round trip (bps)", kind: "number", min: 0, step: 0.5 },
+    { key: "costCommissionPerShare", label: "Cost gate: commission per share ($)", kind: "number", min: 0, step: 0.001 },
+    // ==== Stage 2 per-goal blocks (params): each session adds lines ONLY between its own markers ====
+    // ---- R1 (team3/r1) ----
+    { key: "useTurnEntry", label: "Entry: wait for the turn back toward VWAP", kind: "boolean" },
+    // ---- end R1 ----
+    // ---- R2 (team3/r2) ----
+    // ---- end R2 ----
+    // ---- R4 (team3/r4) ----
+    { key: "usePartwayTarget", label: "Exit: partway target (R4)", kind: "boolean" },
+    { key: "useScaleOut", label: "Exit: scale out half at the partway point (R4)", kind: "boolean" },
+    { key: "tpFraction", label: "Partway target: fraction of entry z (0-1]", kind: "number", min: 0.05, step: 0.05 },
+    // ---- end R4 ----
+    // ---- R5 (team3/r5) ----
+    { key: "useCrowdSplit", label: "Sizing: split size across same-way stretched symbols", kind: "boolean" },
+    // ---- end R5 ----
+    // ---- RSPY (team3/rspy) ----
+    { key: "rtsMinOwnShare", label: "Relative to SPY: min own share of move (0-1)", kind: "number", min: 0, step: 0.05 },
+    // ---- end RSPY ----
+    // ---- S5 ----
+    { key: "useSpyDivergence", label: "Entry: stock stretched while SPY stretched the other way (S5)", kind: "boolean" },
+    { key: "useOwnQuietEntry", label: "Entry: stock-specific stretch on a quiet day (S5)", kind: "boolean" },
+    { key: "useConditionEntry", label: "Entry: survey condition set (F3-F5; conditions via config JSON)", kind: "boolean" },
+    // ---- end S5 ----
     { key: "riskPerTradeUsd", label: "Vol sizing: $ risk per 1-min move", kind: "number", min: 1, step: 1 },
   ],
 };

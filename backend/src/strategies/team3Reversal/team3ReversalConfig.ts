@@ -53,6 +53,8 @@ export interface Team3ReversalConfig extends BaseStrategyConfig {
   useRelativeToSpy: boolean;
   /** Size each entry by volatility (riskPerTradeUsd) instead of tradeUsd. Still capped. */
   useVolSizing: boolean;
+  /** costGate (R3): enter only if captureShare x edge to VWAP (bps) beats the round-trip cost (bps). */
+  useCostGate: boolean;
 
   // ---- Knobs: the number each component is tuned by ---------------------
   /** vwapRegime: fewest VWAP side-switches in the window to count the day as choppy. */
@@ -63,7 +65,71 @@ export interface Team3ReversalConfig extends BaseStrategyConfig {
   volumeMaxRatio: number;
   /** relativeToSpy: the market symbol to compare against. Must be in `symbols`. */
   benchmarkSymbol: string;
-  /** volSizing: dollars a typical 1-minute move may cost per entry. */
+  /** costGate: share of the stretch back to VWAP we expect to capture (0-1]. */
+  captureShare: number;
+  /** costGate: price-independent part of a round trip, bps: 2 x (slippage 5 + half spread 2), as in the protocol. */
+  costFixedBps: number;
+  /** costGate: commission per share, both legs counted, turned into bps at the entry price. */
+  costCommissionPerShare: number;
+  // ==== Stage 2 per-goal blocks (fields): each session adds lines ONLY between its own markers ====
+  // ---- R1 (team3/r1) ----
+  /** turnEntry (R1): enter on the bar that turns back toward VWAP while still stretched; side from z. */
+  useTurnEntry: boolean;
+  // ---- end R1 ----
+  // ---- R2 (team3/r2) ----
+  // ---- end R2 ----
+  // ---- R4 (team3/r4) ----
+  /** partwayTarget (R4): exit all once z has come back tpFraction of the way from the entry z toward 0. */
+  usePartwayTarget: boolean;
+  /** partwayTarget: fraction of the entry z to give back before exiting, (0, 1]. */
+  tpFraction: number;
+  /** scaleOut (R4): at the partway point close half the shares (all if half rounds to 0); the rest rides to VWAP or the stops. */
+  useScaleOut: boolean;
+  // ---- end R4 ----
+  // ---- R5 (team3/r5) ----
+  /** crowdSplit: divide the wanted size by how many symbols are stretched the same way this minute (min 1 share). */
+  useCrowdSplit: boolean;
+  // ---- end R5 ----
+  // ---- RSPY (team3/rspy) ----
+  /** relativeToSpy: least share of the stock's lookbackBars return that is its own (beta-1 residual) to enter, in [0, 1]. */
+  rtsMinOwnShare: number;
+  /** relativeToSpy: symbols never traded while the switch is on (the benchmark and index ETFs). */
+  rtsExcludeSymbols: string[];
+  // ---- end RSPY ----
+  // ---- S5 (formed strategy, from the S4 survey) ----
+  /**
+   * spyDivergence (S5 candidate 1): replace the baseline entry. Enter when the stock is stretched
+   * (divMinZ <= |z| < stopZ, any edge >= 0), SPY is stretched >= divSpyZ the OPPOSITE way this minute,
+   * and the stock's VWAP crossings over vwapWindowBars are in [divCrossMin, divCrossMax]. Side from z.
+   * The benchmark itself is never traded. Bins fixed by strategy-survey.md; not tuned.
+   */
+  useSpyDivergence: boolean;
+  divMinZ: number;
+  divSpyZ: number;
+  divCrossMin: number;
+  divCrossMax: number;
+  /**
+   * ownQuiet (S5 candidate 2): replace the baseline entry. Enter when the stock is stretched
+   * (divMinZ <= |z| < stopZ, edge >= 0), its own share of the lookbackBars move (beta 1 vs SPY)
+   * is > oqMinOwnShare, and today's move so far |close - first session open| / open <= oqMaxTrendBps.
+   * Side from z; the benchmark is never traded. Bins fixed by strategy-survey.md; not tuned.
+   */
+  useOwnQuietEntry: boolean;
+  oqMinOwnShare: number;
+  oqMaxTrendBps: number;
+  /**
+   * conditionEntry (F3-F5): replace the baseline entry with the opportunity set (divMinZ <= |z| < stopZ,
+   * edge >= 0, side from z, benchmark not traded) AND every condition below. Ranges are (lo, hi], the
+   * survey's bin semantics; null = no bound. Features as in runtime/team3Analysis/features.ts.
+   */
+  useConditionEntry: boolean;
+  ceRanges: Partial<Record<"ownShare" | "absZ" | "edgeBps" | "crossings60" | "volRatio" | "rangeSigma" | "trendBps" | "timeOfDay", [number | null, number | null]>>;
+  /** SPY's z vs the stock's: "opposite" / "same" need |zSPY| >= 1; "neutral" is |zSPY| < 1. null = any. */
+  ceSpySide: "opposite" | "same" | "neutral" | null;
+  /** 1 = the bar moved toward VWAP vs the previous close, 0 = it didn't; null = any. */
+  ceTurnBar: 0 | 1 | null;
+  // ---- end S5 ----
+  /** volSizing: dollars a typical 1-minute move may cost per entry. 5 keeps most sizes inside the $ caps (25 hit the cap almost always). */
   riskPerTradeUsd: number;
 }
 
@@ -95,12 +161,48 @@ export const DEFAULT_TEAM3_REVERSAL_CONFIG: Omit<Team3ReversalConfig, "id" | "sy
   useVolume: false,
   useRelativeToSpy: false,
   useVolSizing: false,
+  useCostGate: false,
 
   minVwapCrossings: 4,
   vwapWindowBars: 60,
   volumeMaxRatio: 3,
   benchmarkSymbol: "SPY",
-  riskPerTradeUsd: 25,
+  riskPerTradeUsd: 5,
+  captureShare: 0.5,
+  costFixedBps: 14,
+  costCommissionPerShare: 0.005,
+  // ==== Stage 2 per-goal blocks (defaults): each session adds lines ONLY between its own markers ====
+  // ---- R1 (team3/r1) ----
+  useTurnEntry: false,
+  // ---- end R1 ----
+  // ---- R2 (team3/r2) ----
+  // ---- end R2 ----
+  // ---- R4 (team3/r4) ----
+  usePartwayTarget: false,
+  tpFraction: 0.5,
+  useScaleOut: false,
+  // ---- end R4 ----
+  // ---- R5 (team3/r5) ----
+  useCrowdSplit: false,
+  // ---- end R5 ----
+  // ---- RSPY (team3/rspy) ----
+  rtsMinOwnShare: 0.5,
+  rtsExcludeSymbols: ["SPY", "QQQ"],
+  // ---- end RSPY ----
+  // ---- S5 ----
+  useSpyDivergence: false,
+  divMinZ: 1.5,
+  divSpyZ: 1,
+  divCrossMin: 1,
+  divCrossMax: 2,
+  useOwnQuietEntry: false,
+  oqMinOwnShare: 0.945,
+  oqMaxTrendBps: 47.1,
+  useConditionEntry: false,
+  ceRanges: {},
+  ceSpySide: null,
+  ceTurnBar: null,
+  // ---- end S5 ----
 };
 
 /** Merges defaults with overrides; a new ID is assigned unless one is given. */
@@ -132,6 +234,50 @@ export function validateTeam3ReversalConfig(c: Team3ReversalConfig, filters: Fil
   positive(c.stopZ, "stopZ");
   if (c.stopZ <= c.entryZ) fail(`stopZ must be greater than entryZ (got ${c.stopZ} <= ${c.entryZ})`);
   positiveInt(c.maxHoldBars, "maxHoldBars");
+  if (!(c.captureShare > 0 && c.captureShare <= 1)) fail(`captureShare must be in (0, 1] (got ${c.captureShare})`);
+  atLeast0(c.costFixedBps, "costFixedBps");
+  atLeast0(c.costCommissionPerShare, "costCommissionPerShare");
+  // ==== Stage 2 per-goal blocks (validation): each session adds lines ONLY between its own markers ====
+  // ---- R1 (team3/r1) ----
+  if (typeof c.useTurnEntry !== "boolean") fail(`useTurnEntry must be true or false (got ${c.useTurnEntry})`);
+  // ---- end R1 ----
+  // ---- R2 (team3/r2) ----
+  // ---- end R2 ----
+  // ---- R4 (team3/r4) ----
+  if (!(isNum(c.tpFraction) && c.tpFraction > 0 && c.tpFraction <= 1)) fail(`tpFraction must be in (0, 1] (got ${c.tpFraction})`);
+  if (c.usePartwayTarget && c.useScaleOut) fail("usePartwayTarget and useScaleOut are alternatives: turn on one");
+  // ---- end R4 ----
+  // ---- R5 (team3/r5) ----
+  if (typeof c.useCrowdSplit !== "boolean") fail("useCrowdSplit must be true or false");
+  // ---- end R5 ----
+  // ---- RSPY (team3/rspy) ----
+  if (!(isNum(c.rtsMinOwnShare) && c.rtsMinOwnShare >= 0 && c.rtsMinOwnShare <= 1)) fail(`rtsMinOwnShare must be in [0, 1] (got ${c.rtsMinOwnShare})`);
+  if (!Array.isArray(c.rtsExcludeSymbols) || c.rtsExcludeSymbols.some((s) => typeof s !== "string")) fail("rtsExcludeSymbols must be a list of tickers");
+  // ---- end RSPY ----
+  // ---- S5 ----
+  if (c.useSpyDivergence) {
+    positive(c.divMinZ, "divMinZ");
+    positive(c.divSpyZ, "divSpyZ");
+    if (c.divMinZ >= c.stopZ) fail("divMinZ must be below stopZ");
+    if (!(c.divCrossMin >= 0 && c.divCrossMax >= c.divCrossMin)) fail("divCrossMin/divCrossMax must satisfy 0 <= min <= max");
+    if (c.useTurnEntry) fail("useSpyDivergence replaces the entry; it can't be combined with useTurnEntry");
+    if (!c.symbols.includes(c.benchmarkSymbol)) fail("useSpyDivergence needs benchmarkSymbol in symbols");
+  }
+  if (c.useOwnQuietEntry) {
+    if (c.useSpyDivergence || c.useTurnEntry) fail("useOwnQuietEntry replaces the entry; use one entry mode at a time");
+    if (!(c.oqMinOwnShare >= 0) || !(c.oqMaxTrendBps >= 0)) fail("oqMinOwnShare and oqMaxTrendBps must be >= 0");
+    if (!c.symbols.includes(c.benchmarkSymbol)) fail("useOwnQuietEntry needs benchmarkSymbol in symbols");
+  }
+  if (c.useConditionEntry) {
+    if (c.useSpyDivergence || c.useOwnQuietEntry || c.useTurnEntry) fail("useConditionEntry replaces the entry; use one entry mode at a time");
+    if (!c.symbols.includes(c.benchmarkSymbol)) fail("useConditionEntry needs benchmarkSymbol in symbols");
+    const known = ["ownShare", "absZ", "edgeBps", "crossings60", "volRatio", "rangeSigma", "trendBps", "timeOfDay"];
+    for (const [k, r] of Object.entries(c.ceRanges ?? {})) {
+      if (!known.includes(k)) fail(`ceRanges: unknown feature ${k}`);
+      if (!Array.isArray(r) || r.length !== 2) fail(`ceRanges.${k} must be [lo, hi]`);
+    }
+  }
+  // ---- end S5 ----
 
   // Session window: 390 minutes in a session
   wholeAtLeast0(c.skipOpenMinutes, "skipOpenMinutes");
