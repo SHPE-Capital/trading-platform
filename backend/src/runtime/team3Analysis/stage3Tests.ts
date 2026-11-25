@@ -105,7 +105,7 @@ export function success(momentum: Record<string, { label: ProfitLabel }>): boole
   return ["L2", "F3"].some((k) => momentum[k]?.label === "profitable");
 }
 
-function priced(id: string): PricedTrade[] {
+export function priced(id: string): PricedTrade[] {
   const d = loadDump(id);
   const all = new Map<string, SessionSeries>(d.symbols.map((s) => [s, buildSeries(s, d.bars[s])]));
   return (d.roundTrips as unknown as RawTrip[]).map((t) => {
