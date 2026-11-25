@@ -1,3 +1,6 @@
+> **Status: dropped in VERSION 3, folded into the baseline.** This component became the baseline's exit: target = back to VWAP, plus stop, time and close. Entry prices now come from real fills (contract/book.ts).
+> See [baseline.md](baseline.md). The text below is kept for the paper's history.
+
 # Hold Until Back (exit rule)
 
 **Type:** exit rule  ·  **File:** `filters/holdUntilBack.ts`

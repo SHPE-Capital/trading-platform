@@ -1,12 +1,12 @@
 /**
  * tests/strategy/team3Reversal/helpers.ts
  *
- * Fake bars and filter inputs for Team 3's filter tests, so each test only
- * says what is special about its case.
+ * Fake bars and filter inputs for Team 3's pure tests (filters, rules, sizing),
+ * so each test only says what is special about its case. Engine-level tests use ./engine.
  */
 
 import { createTeam3ReversalConfig, type Team3ReversalConfig } from '../../../strategies/team3Reversal/team3ReversalConfig';
-import type { BarView, EntryInput, ExitInput, VwapView } from '../../../strategies/team3Reversal/filters/types';
+import type { BarView, EntryInput, VwapView } from '../../../strategies/team3Reversal/filters/types';
 
 export const MINUTE = 60_000;
 /** Tue 2026-10-06 12:00 ET, mid-session. */
@@ -46,28 +46,6 @@ export function entryInput(opts: {
     side: move > 0 ? 'sell' : 'buy',
     barsOf: (s) => opts.others?.[s] ?? [],
     vwap: opts.vwap ?? null,
-    config: createTeam3ReversalConfig({ id: 'test', ...opts.config }),
-  };
-}
-
-/** An exit-rule input for a position entered at `entryPrice` and held `barsHeld` bars. */
-export function exitInput(opts: {
-  history: BarView[];
-  bar: BarView;
-  entryPrice: number;
-  barsHeld: number;
-  positionQty?: number;
-  config?: Partial<Team3ReversalConfig>;
-}): ExitInput {
-  return {
-    symbol: 'AAPL',
-    bar: opts.bar,
-    history: opts.history,
-    positionQty: opts.positionQty ?? -1,
-    entryPrice: opts.entryPrice,
-    barsHeld: opts.barsHeld,
-    barsOf: () => [],
-    vwap: null,
     config: createTeam3ReversalConfig({ id: 'test', ...opts.config }),
   };
 }
