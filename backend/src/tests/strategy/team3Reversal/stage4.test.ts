@@ -23,10 +23,12 @@ describe("Stage 4 protocol", () => {
 });
 
 describe("earnings tags", () => {
-  it("an after-close filing tags the filing day and the next weekday; before-open only the day", () => {
-    expect(earningsDays({ filed: "2025-11-20", accepted: "2025-11-20T16:21:08.000Z" })).toEqual(["2025-11-20", "2025-11-21"]);
-    expect(earningsDays({ filed: "2025-11-21", accepted: "2025-11-21T16:05:00.000Z" })).toEqual(["2025-11-21", "2025-11-24"]); // Fri -> Mon
-    expect(earningsDays({ filed: "2025-10-22", accepted: "2025-10-22T06:30:00.000Z" })).toEqual(["2025-10-22"]);
+  it("acceptance times are UTC: after 16:00 ET tags the next weekday too; before the open only the day", () => {
+    expect(earningsDays({ filed: "2025-11-19", accepted: "2025-11-19T21:20:00.000Z" })).toEqual(["2025-11-19", "2025-11-20"]); // NVDA 16:20 ET
+    expect(earningsDays({ filed: "2025-11-21", accepted: "2025-11-21T21:05:00.000Z" })).toEqual(["2025-11-21", "2025-11-24"]); // Fri -> Mon
+    expect(earningsDays({ filed: "2025-10-29", accepted: "2025-10-29T11:30:00.000Z" })).toEqual(["2025-10-29"]); // BA 07:30 ET
+    expect(earningsDays({ filed: "2025-11-20", accepted: "2025-11-20T01:30:00.000Z" })).toEqual(["2025-11-19", "2025-11-20"]); // 20:30 ET the day before
+    expect(earningsDays({ filed: "2025-11-20", accepted: "2025-11-20T17:00:00.000Z" })).toEqual(["2025-11-20"]); // 12:00 ET
   });
 
   it("keeps only 8-K item 2.02 filings in range", () => {

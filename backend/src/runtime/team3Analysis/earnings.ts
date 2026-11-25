@@ -12,13 +12,16 @@
  * SEC requires a contact in the User-Agent: pass it in SEC_USER_AGENT at run time. It is sent to sec.gov
  * only and is never written to disk.
  *
+ * --recompute re-derives days from the saved filings without contacting SEC.
  * Usage (from backend/): SEC_USER_AGENT="Team3 Research <email>" npx ts-node --transpile-only src/runtime/team3Analysis/earnings.ts
  * Writes docs/team3/stage4/earnings.json: { symbol: { cik, filings: [{ filed, accepted }], days: [YYYY-MM-DD] } }.
  */
 
 import { writeFileSync } from "fs";
 import path from "path";
+import { readFileSync } from "fs";
 import { TEAM3_GROUPS } from "../../strategies/team3Reversal/contract/protocol";
+import { newYorkDay } from "../../strategies/team3Reversal/session";
 
 export const EARNINGS_PATH = path.resolve(__dirname, "../../../../docs/team3/stage4/earnings.json");
 export const RANGE = { from: "2025-08-01", to: "2026-11-30" };
@@ -34,13 +37,14 @@ const nextWeekday = (day: string): string => {
   return d.toISOString().slice(0, 10);
 };
 
-/**
- * Days a filing tags. EDGAR's acceptanceDateTime carries Eastern clock time (with a literal "Z"),
- * so the clock is read as ET as written.
- */
+const ET_HOUR = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "2-digit", hourCycle: "h23" });
+
+/** Days a filing tags. EDGAR's acceptanceDateTime is UTC; it is converted to the ET date and hour. */
 export function earningsDays(f: Filing): string[] {
-  const hour = Number(f.accepted.slice(11, 13));
-  const day = f.accepted.slice(0, 10) || f.filed;
+  const ms = Date.parse(f.accepted);
+  if (!Number.isFinite(ms)) return [f.filed];
+  const day = newYorkDay(ms);
+  const hour = Number(ET_HOUR.format(ms));
   return hour >= 16 ? [day, nextWeekday(day)] : [day];
 }
 
@@ -66,6 +70,14 @@ async function getJson(url: string, ua: string): Promise<any> {
 }
 
 async function main(): Promise<void> {
+  if (process.argv.includes("--recompute")) {
+    // Re-derive days from the filings already saved (no SEC request).
+    const j = JSON.parse(readFileSync(EARNINGS_PATH, "utf8"));
+    for (const v of Object.values(j.symbols) as { filings: Filing[]; days: string[] }[]) v.days = [...new Set(v.filings.flatMap(earningsDays))].sort();
+    writeFileSync(EARNINGS_PATH, JSON.stringify(j, null, 2) + "\n");
+    console.log(`recomputed ${EARNINGS_PATH}`);
+    return;
+  }
   const ua = process.env.SEC_USER_AGENT?.trim();
   if (!ua || !ua.includes("@")) throw new Error("set SEC_USER_AGENT to \"<name> <contact email>\" (SEC requires a contact)");
   const tickers = await getJson("https://www.sec.gov/files/company_tickers.json", ua) as Record<string, { cik_str: number; ticker: string }>;
