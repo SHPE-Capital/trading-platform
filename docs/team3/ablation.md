@@ -355,6 +355,55 @@ Both beat V4 mostly because they trade far less than a losing baseline.
 - With 7 to 23 trades per config, the per-trade standard error is about 10–25 bps.
 - No config was changed or rerun after these results.
 
+### Stage 4 pre-registration (2026-11-25, before any Stage 4 run)
+
+This was written and committed before any Stage 4 backtest. The commit time is the proof. Stage 4 asks whether L2's Stage 3 edge carries over to **new stocks (4a)** and to **earlier periods (4b)**.
+
+**Configs: the Stage 3 freeze, unchanged.** That is VERSION 8, commit `2120a7c`, with the same JSON as "Stage 3 pre-registration": L2, F1, V4 (reference), F3, L4 and C3. **L2 is the only primary.** The other five are supporting rows and labelled secondary. No new config is made, so N stays at 27.
+
+**Cells**, each config × cell run once (30 runs):
+
+| Cell | Symbols (`TEAM3_GROUP`) | Window (`TEAM3_WINDOW`) | Dates |
+|---|---|---|---|
+| 4a | `expanded`: 25 stocks frozen in `e3dc1a3` + SPY | `s4a` | 2026-09-01 → 11-20 |
+| T1 | `momentum` | `t1` | 2025-09-01 → 11-30 |
+| T2 | `momentum` | `t2` | 2025-12-01 → 2026-02-28 |
+| T3 | `momentum` | `t3` | 2026-03-01 → 05-31 |
+| T4 | `momentum` | `t4` | 2026-06-01 → 08-31 |
+
+- **Engine settings:** the protocol (`contract/protocol.ts`), unchanged. The only changes are the added group and windows (`7d2e979`) and the `capBlocked` count.
+- **Runs:** `TEAM3_DUMP` set; `TEAM3_DIAGNOSTIC`, `TEAM3_COST_SCALE` and `TEAM3_EXCLUDE` unset. No zero-cost twins.
+- **Check each run before it's logged:** `TEAM3_ROW.config` equals the frozen JSON, group and window are right, the version is 8, `diagnostic` is null, and the engine net matches the recost within $0.02.
+
+**Tests:** `runtime/team3Analysis/stage4Tests.ts`, with 10,000 draws and seed 20261124 (as in Stage 3).
+
+| Test | What | Rule |
+|---|---|---|
+| **2. Profit** (main) | Trade bootstrap of net bps/trade (Σ net $ / Σ notional), with a 90% interval. Run per cell, and on **4b pooled** (T1–T4 trades together). | *Profitable* if the 90% lower end is > 0 with ≥ 10 trades. Fewer than 10 trades = *inconclusive*. |
+| **1. Hold** | L2 vs F1 matched share per cell (L4 vs F3 secondary) | ≥ 0.8 confirmed, ≥ 0.7 suggestive, ≥ 0.6 weak, below that not supported. Fewer than 10 pairs = inconclusive. |
+| **3. Sanity** | `team3Bootstrap.ts <V4> <C3> --stage3` per cell | Passes if C3's mean Δ $/day > 0 |
+| **Earnings** | L2 net bps/trade on trades entered on an earnings day vs the rest, on 4a and 4b pooled. Earnings days: SEC 8-K item 2.02 filing date, plus the next weekday if filed at or after 16:00 ET (`earnings.ts`). | *Mostly earnings* if the all-trade estimate is > 0 and the non-earnings estimate is ≤ 0 |
+| **Cap** | `capBlocked / entryAttempts` per run | Above 5% on V4 in 4a: V4 4a is flagged as not comparable to the 6-symbol runs |
+
+**A 4b window "works"** if L2's net bps/trade estimate is > 0 with ≥ 10 trades. A window with fewer trades doesn't work and is labelled inconclusive.
+
+**Verdict on L2:** the first rule that applies.
+1. **The edge is general:** 4a profitable, ≥ 3 of 4 windows work, and 4b pooled profitable.
+2. **Specific to the Momentum names:** ≥ 3 of 4 windows work and 4b pooled is profitable, but 4a is not profitable.
+3. **Specific to recent conditions:** 4a profitable, fewer than 3 windows work, and T4 works.
+4. **Stage 3 was likely luck:** 4a not profitable, and ≤ 1 window works.
+5. **Mixed:** anything else. It's reported as it is.
+
+**No-changes rule:** nothing is retuned after Stage 4. Every cell and config is reported, including losses and inconclusive ones.
+
+**Disclosures:**
+- **4a selection:** the stocks were picked on Jun–Aug 2026 data (the T4 dates). They're new stocks, so 4b's use of T4 on Momentum is unaffected.
+- **Fallback:** the $500M dollar-volume fallback was used.
+- **Earnings days:** approximated by 8-K 2.02 filings, and holidays are not skipped.
+- **Five cells, one primary.** The pooled 4b test uses T1–T4 together, so the windows are not independent of it.
+- **4a reuses dates:** its window spans the Stage 2/3 IS and OOS dates, but for stocks the research has never used.
+- **Why the 10-trade minimum:** it's kept from Stage 3. With about 20–60 trades per cell, the per-trade standard error is about 5–15 bps.
+
 ### Checks
 
 **65/65 target exits (2026-11-23):** Core (A03) and Momentum (A04) both end with 65 `target` exits. This is a coincidence, not shared or overwritten output:
