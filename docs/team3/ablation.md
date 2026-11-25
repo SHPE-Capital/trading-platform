@@ -404,6 +404,89 @@ This was written and committed before any Stage 4 backtest. The commit time is t
 - **4a reuses dates:** its window spans the Stage 2/3 IS and OOS dates, but for stocks the research has never used.
 - **Why the 10-trade minimum:** it's kept from Stage 3. With about 20–60 trades per cell, the per-trade standard error is about 5–15 bps.
 
+### Stage 4 results (external validation, 2026-11-25)
+
+**Pre-registration came first.** It was committed in `1e0d2cf` at 2026-11-25 09:01:33 UTC; the first Stage 4 run started at 09:02:56 UTC.
+
+**Run checks:**
+- All 30 runs pass: frozen config, right group and window, VERSION 8, `diagnostic` null.
+- The engine net matches the recost within $0.02 for every run.
+- Trading days: 4a 58, T1 63, T2 61, T3 63, T4 64.
+- Bars were read straight from Alpaca (`TEAM3_NO_CACHE=1`, `747bd32`). They're the same SIP bars as the cache, just not stored in Supabase.
+
+**Deviations, disclosed:**
+- **F1 4a:** the job was stopped after the backtest had finished and been saved. Its row was checked and logged from the run log, and the run was not repeated.
+- **V4 T3:** it ran past the command timeout and finished in the background while the next runs started. The runs are deterministic.
+- **No zero-cost twins** were run, so gross edges aren't measured in Stage 4.
+
+**Test 2 (profit):** `stage4Tests.ts`, 10,000 draws, seed 20261124. Each cell shows net bps/trade (90% CI), then the number of trades.
+
+| Config | 4a (25 new stocks) | T1 Sep–Nov 25 | T2 Dec 25–Feb 26 | T3 Mar–May 26 | T4 Jun–Aug 26 | 4b pooled |
+|---|---|---|---|---|---|---|
+| **L2 (primary)** | **−18.83** (−31.8 … −6.3), 192 | **+14.45** (−7.7 … +36.6), 43 | **+2.64** (−18.9 … +22.9), 34 | **−29.39** (−64.1 … +4.2), 33 | **−15.17** (−51.5 … +16.1), 49 | **−6.32** (−21.4 … +8.5), 159 |
+| F1 | −12.17 (−21.6 … −2.7), 205 | −1.72 (−19.2 … +16.8), 46 | −11.16 (−30.5 … +7.7), 35 | −12.02 (−39.4 … +13.4), 35 | −33.08 (−53.6 … −13.9), 53 | −15.57 (−26.2 … −5.2), 169 |
+| V4 (reference) | −17.39 (−19.9 … −14.9), 2,740 ᶜ | −17.28 (−21.1 … −13.5), 908 | −13.44 (−17.0 … −10.0), 729 | −12.44 (−16.0 … −9.0), 939 | −17.58 (−22.1 … −13.0), 829 | −15.19 (−17.2 … −13.2), 3,405 |
+| F3 | −13.10 (−20.3 … −6.0), 316 | −16.93 (−28.6 … −5.4), 60 | −7.24 (−22.1 … +7.9), 51 | −18.18 (−33.8 … −3.4), 84 | −33.65 (−48.8 … −19.0), 76 | −20.13 (−27.7 … −12.8), 271 |
+| L4 | −16.04 (−26.0 … −6.1), 302 | −11.06 (−28.4 … +5.6), 57 | +2.57 (−15.3 … +20.5), 50 | −24.65 (−44.8 … −4.7), 78 | −24.18 (−45.1 … −4.5), 71 | −16.16 (−26.1 … −6.5), 256 |
+| C3 | −15.89 (−19.1 … −12.8), 2,413 | −18.27 (−23.6 … −13.0), 588 | −13.98 (−19.2 … −8.8), 470 | −13.83 (−19.5 … −8.4), 566 | −15.87 (−21.7 … −10.1), 583 | −15.58 (−18.3 … −12.9), 2,207 |
+
+ᶜ The gross cap blocked 1,346 of V4's 4,086 entry attempts on 4a (33%, above the 5% flag), so **V4 4a is not comparable** to the 6-symbol runs. No other run was blocked.
+
+**Not one of the 36 cells is profitable** (90% lower end > 0).
+
+Backtest ids:
+
+| Cell | L2 | F1 | V4 | F3 | L4 | C3 |
+|---|---|---|---|---|---|---|
+| 4a | `9415f363` | `594a98e5` | `f18ce98f` | `e689f4b5` | `98cb18ad` | `bf512f5b` |
+| T1 | `d2076948` | `3067bc6c` | `808f46a3` | `1610fbed` | `7abe7e60` | `ba5bf6b5` |
+| T2 | `121fdaff` | `aaf9a13f` | `08c4e8e7` | `4c9ff5a4` | `b3af5419` | `502c44f4` |
+| T3 | `1c9de38b` | `a3086a93` | `eb20a481` | `b0b930ac` | `a5dbfd3e` | `5edba5e5` |
+| T4 | `2059ea91` | `def4f6aa` | `bdf748c6` | `5dbcddb1` | `598e9cd3` | `7e1229cd` |
+
+The full ids are in `tmp/team3-data/stage4-ids.json`.
+
+**Test 1 (hold): matched share.** Each cell shows the share, the pairs, then the mean Δ bps.
+
+| Pair | 4a | T1 | T2 | T3 | T4 |
+|---|---|---|---|---|---|
+| **L2 vs F1** | 0.11, 192, −6.1, not supported | **0.99**, 43, +15.7, confirmed | **0.97**, 34, +14.3, confirmed | 0.11, 33, −18.1, not supported | **0.89**, 49, +18.2, confirmed |
+| L4 vs F3 | 0.26, 302, −2.7, not supported | 0.84, 57, +6.7, confirmed | 0.99, 50, +13.2, confirmed | 0.13, 78, −7.9, not supported | 0.88, 71, +11.2, confirmed |
+
+**Test 3 (sanity): C3 vs V4 day bootstrap** (`team3Bootstrap.ts --stage3`). **It passes in all 5 cells**; C3 loses less every time.
+
+| Cell | 4a | T1 | T2 | T3 | T4 |
+|---|---|---|---|---|---|
+| Mean Δ $/day | +196.12 | +55.87 | +37.74 | +41.41 | +53.79 |
+| Share | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 |
+
+For context only: L2 beats V4 by +78 to +324 $/day in every cell (share 1.000), mostly because it trades far less than a losing baseline.
+
+**Earnings (L2):**
+- **4a:** 8 of 192 trades fell on earnings days: earnings −6.65 bps/trade, the rest −19.35.
+- **4b pooled:** 4 of 159: earnings +113.1, the rest −9.49.
+- **By window:** T1 and T2 had 0 earnings trades; T3 had 3 and T4 had 1.
+- **"Mostly earnings" never applies.** The all-trade estimate is ≤ 0 in 4a and pooled, and in T1 and T2 there were no earnings trades.
+
+**Verdict, applied as written: "mixed" (rule 5).**
+- **4a is not profitable.** On 192 trades the whole interval sits below zero (−31.8 … −6.3). That's a large-sample result, not a small-sample one.
+- **2 of 4 windows work** (T1 +14.45, T2 +2.64). T3 and T4 don't.
+- **4b pooled is not profitable** (−6.32, −21.4 … +8.5).
+- **Why it isn't rule 4 (likely luck):** that rule needs ≤ 1 working window, and two work.
+- **Why it isn't rule 2 (specific to Momentum):** that rule needs ≥ 3 windows and a profitable pool.
+
+**What the result means:**
+- **Stage 3's +27.5 bps/trade on 7 trades doesn't reproduce.** On new stocks L2 loses about as much per trade as the V4 baseline.
+  - On Momentum it's positive only in T1 and T2, the windows furthest from the test period, and it loses in the two closest to it.
+- **The longer hold helps on Momentum in 3 of 4 windows** (L2 vs F1 confirmed in T1, T2 and T4). But it never turns the config profitable, and it hurts on the new stocks.
+- **The tuned parts still lose less than the baseline** (C3 vs V4 passes everywhere). Every config is still below zero after the ~14.2 bps round trip.
+- **The best supported conclusion:** there's no evidence of a tradable edge after costs, and L2's out-of-sample number was most likely small-sample noise.
+
+**Disclosures:**
+- N stays at 27; no config was changed or rerun after these results.
+- Five cells, one primary, and the 4b pool overlaps its windows.
+- Earnings days are approximated by 8-K 2.02 filings. TSLA's delivery-report 8-Ks count too, and holidays are not skipped.
+
 ### Checks
 
 **65/65 target exits (2026-11-23):** Core (A03) and Momentum (A04) both end with 65 `target` exits. This is a coincidence, not shared or overwritten output:

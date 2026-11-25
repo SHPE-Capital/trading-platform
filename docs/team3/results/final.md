@@ -71,3 +71,25 @@ The tests and the success rule are in the ledger ("Stage 3 pre-registration"). A
   - The small condition-set signals that beat costs in-sample didn't hold out-of-sample.
   - L2's positive out-of-sample number rests on 7 trades and can't be read either way.
   - As pre-registered, nothing is retuned.
+
+## 8. Stage 4 result (external validation: new stocks and past periods)
+**Verdict as pre-registered: "mixed". No config is profitable in any of the 36 cells.** Full tables: [ablation.md](../ablation.md), "Stage 4 results".
+
+| L2 (primary) | Net bps/trade (90% CI), trades | Reading |
+|---|---|---|
+| 4a: 25 new stocks, 2026-09-01 → 11-20 | −18.83 (−31.8 … −6.3), 192 | not profitable |
+| T1: Sep → Nov 2025 | +14.45 (−7.7 … +36.6), 43 | works (estimate > 0) |
+| T2: Dec 2025 → Feb 2026 | +2.64 (−18.9 … +22.9), 34 | works (estimate > 0) |
+| T3: Mar → May 2026 | −29.39 (−64.1 … +4.2), 33 | doesn't work |
+| T4: Jun → Aug 2026 | −15.17 (−51.5 … +16.1), 49 | doesn't work |
+| 4b pooled | −6.32 (−21.4 … +8.5), 159 | not profitable |
+
+- **Stage 3's L2 result (+27.5 bps/trade on 7 trades) doesn't reproduce.** On new stocks it loses about as much as the V4 baseline, on a large sample. On Momentum it's positive only in the two windows furthest from the test period.
+- **The longer hold** (L2 vs F1) is confirmed on Momentum in T1, T2 and T4, and not supported in 4a or T3. It doesn't make the config profitable.
+- **The sanity check passes everywhere:** C3 loses less than V4 in all 5 cells (share 1.000).
+- **Earnings moves don't explain the result.** Few L2 trades fall on earnings days (8 of 192 in 4a, 4 of 159 in 4b).
+- **The honest conclusion for the paper:**
+  - The pipeline reduces losses against a naive VWAP-reversion baseline.
+  - None of the candidates show an edge that survives about 14.2 bps of round-trip costs, on new stocks or in earlier periods.
+  - L2's out-of-sample profit was most likely small-sample noise.
+  - As pre-registered, nothing is retuned.
