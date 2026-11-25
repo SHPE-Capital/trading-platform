@@ -27,6 +27,10 @@ Intraday mean reversion to VWAP on 1-minute bars, entered only when the stock's 
 |---|---|---|---|---|---|
 | In-sample | 2026-09-01 → 10-15 (32 days) | 29 | +14.3 | +194.75 | Max DD $229 |
 | Out-of-sample | 2026-10-16 → 11-20 (26 days) | 7 | +27.5 | +91.88 | 90% CI +5.1 … +47.2 |
+| Stage 4a: 25 new stocks | 2026-09-01 → 11-20 (58 days) | 192 | −18.8 | −1,750.04 | 90% CI −31.8 … −6.3 |
+| Stage 4b: Momentum, 4 prior quarters | 2025-09-01 → 2026-08-31 | 159 | −6.3 | −479.24 | 90% CI −21.4 … +8.5; positive in 2 of 4 quarters |
+
+Stage 4 verdict (pre-registered): **mixed**. The out-of-sample edge didn't reproduce on new stocks or in earlier periods.
 
 Full method and results: [Team 3 Research Report](https://app.notion.com/p/Final-Report-4223788a8ea0806e9018c24490d4dba9).
 
