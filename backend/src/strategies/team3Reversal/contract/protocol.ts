@@ -39,6 +39,42 @@ export const TEAM3_PROTOCOL = {
   } satisfies Partial<RiskConfig>,
 };
 
+/**
+ * Research windows (docs/team3/ablation.md header). IS = 32 trading days, OOS = 26 (end extended 11-13 -> 11-20, lead, 2026-11-23).
+ * OOS is locked until Stage 3 (MASTER.md, Testing rules).
+ */
+export const TEAM3_WINDOWS: Record<"in" | "out", { startDate: string; endDate: string }> = {
+  in: { startDate: "2026-09-01T00:00:00Z", endDate: "2026-10-15T23:59:59Z" },
+  out: { startDate: "2026-10-16T00:00:00Z", endDate: "2026-11-20T23:59:59Z" },
+};
+
+/** Research universes (AGENT_GUIDE.md section 2). Momentum is the main universe, Core the control. */
+/** OOS ban: true when a run ending at endDate would touch out-of-sample days without --stage3. */
+export function oosLocked(endDate: string, stage3: boolean): boolean {
+  return !stage3 && Date.parse(endDate) > Date.parse(TEAM3_WINDOWS.in.endDate);
+}
+
+export const TEAM3_GROUPS: Record<"core" | "momentum", string[]> = {
+  core: ["SPY", "QQQ", "AAPL", "MSFT", "GOOGL", "AMZN"],
+  momentum: ["SPY", "NVDA", "AMD", "MU", "TSLA", "META"],
+};
+
+/** The frozen Stage 2 baseline (VERSION 4 defaults, IS), one run per universe: A03 Core, A04 Momentum. */
+export const TEAM3_BASELINES: Record<"core" | "momentum", string> = {
+  core: "1872fd42-331a-4a8c-a488-460231ac8552",
+  momentum: "4b060cbe-2834-4996-8b6b-c223bef772ed",
+};
+
+/**
+ * Which universe a run's symbols belong to: a subset of exactly one group
+ * (e.g. Core without SPY/QQQ is still Core). null if none or ambiguous (SPY alone).
+ */
+export function universeOf(symbols: readonly string[]): "core" | "momentum" | null {
+  const fits = (Object.keys(TEAM3_GROUPS) as ("core" | "momentum")[])
+    .filter((g) => symbols.length > 0 && symbols.every((s) => TEAM3_GROUPS[g].includes(s)));
+  return fits.length === 1 ? fits[0] : null;
+}
+
 /** A BacktestConfig for a Team 3 run under the protocol. */
 export function protocolBacktestConfig(
   strategyConfig: BaseStrategyConfig, window: { startDate: string; endDate: string }, strategyVersion?: number,

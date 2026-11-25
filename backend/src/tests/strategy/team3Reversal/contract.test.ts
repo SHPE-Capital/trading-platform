@@ -120,12 +120,13 @@ describe('We promise back', () => {
 
   it('P9: a filter still marked stub cannot be switched on', () => {
     expect(() => validateTeam3ReversalConfig(createTeam3ReversalConfig({ useVolume: true }))).toThrow(/stub/);
-    expect(() => validateTeam3ReversalConfig(createTeam3ReversalConfig({ useRelativeToSpy: true }))).toThrow(/stub/);
+    // relativeToSpy is done since VERSION 7 (Stage 2 rspy session, built on Rivera's PR #78).
+    expect(() => validateTeam3ReversalConfig(createTeam3ReversalConfig({ useRelativeToSpy: true }))).not.toThrow();
   });
 
-  it('P10: results are tied to VERSION 3, and the catalog reports it', () => {
-    expect(Team3ReversalStrategy.VERSION).toBe(3);
-    expect(STRATEGY_DEFINITIONS.team3_reversal.algorithmVersion).toBe(3);
+  it('P10: results are tied to VERSION 8, and the catalog reports it', () => {
+    expect(Team3ReversalStrategy.VERSION).toBe(8);
+    expect(STRATEGY_DEFINITIONS.team3_reversal.algorithmVersion).toBe(8);
   });
 });
 
