@@ -1,3 +1,6 @@
+> **Status: dropped in VERSION 3, folded into the baseline.** This component redundant with the baseline's entryZ stretch gate (it was always noted as overlapping VWAP Stretch).
+> See [baseline.md](baseline.md). The text below is kept for the paper's history.
+
 # Big Move (fade only big moves)
 
 **Type:** entry filter (may be repurposed, see MASTER.md)  ·  **File:** `filters/bigMove.ts`

@@ -43,7 +43,10 @@ Worked examples: [vwap-regime](components/vwap-regime.md),
 
 - One switch (`useX`, default `false`), as few knobs as possible, added to
   `team3ReversalConfig.ts` (field, default, validation) and `manifest.ts` (form field).
-- With the switch off, behavior is the baseline. The baseline-equality test must still pass.
+- Register it in `filters/index.ts` with `status: "stub"`; flip to `"done"` only when the rule and its tests exist.
+- Only `contract/` may import platform code. If you need something new from the platform, add it to
+  `contract/frame.ts` and a row to `CONTRACT.md` with its test in `contract.test.ts`.
+- With the switch off, behavior is the baseline. `team3ReversalStrategy.test.ts` and `contract.test.ts` must still pass.
 - Bump `Team3ReversalStrategy.VERSION` (CI enforces it).
 - Tests pass: `npx jest src/tests/strategy/team3Reversal` from `backend/`.
 
@@ -54,7 +57,7 @@ Worked examples: [vwap-regime](components/vwap-regime.md),
 [`ablation.md`](ablation.md) is the single results table. It is the paper's
 evidence, so a row only counts if it follows the protocol.
 
-**Standard protocol (do not change per run; change it only here, then rerun every row):**
+**Standard protocol (do not change per run; change it only here and in `contract/protocol.ts`, then rerun every row):**
 
 | Setting | Value |
 |---|---|
@@ -63,8 +66,9 @@ evidence, so a row only counts if it follows the protocol.
 | Windows | **In-sample (tune here)** and **Out-of-sample (report here)**, dates set in the header of `ablation.md` |
 | Capital | `initialCapital: 100000` |
 | Costs | `slippageBps: 5`, `commissionPerShare: 0.005` (never run with zero costs) |
-| Fill model | Platform default (bar). Note it if you use `quote` |
-| Sizing | Fixed 1 share unless the row tests sizing. Sizing rows use `maxPositionQty: 1000` |
+| Fill model | Platform default (bar: next bar's open). Note it if you use `quote` |
+| Engine risk config | `TEAM3_PROTOCOL.riskConfig` in `contract/protocol.ts` (kill switch off, engine caps above ours). Never the `.env` default |
+| Sizing | Fixed notional (`tradeUsd` 5000) unless the row tests sizing. Caps: `maxPositionSizeUsd` 10000, `maxGrossUsd` 40000 |
 
 **Before adding a row, check all of these (if one fails, don't add the row):**
 

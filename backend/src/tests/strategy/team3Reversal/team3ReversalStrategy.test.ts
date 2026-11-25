@@ -1,236 +1,101 @@
-jest.mock('../../../config/env', () => ({
-  env: {
-    alpacaApiKey: 'test-key',
-    alpacaApiSecret: 'test-secret',
-    alpacaTradingMode: 'paper',
-    supabaseUrl: 'https://test.supabase.co',
-    supabaseAnonKey: 'test-anon',
-    supabaseServiceRoleKey: 'test-service',
-    port: 8080,
-    nodeEnv: 'test',
-    logLevel: 'error',
-    defaultRollingWindowMs: 60_000,
-    maxPositionSizeUsd: 10_000,
-    maxNotionalExposureUsd: 50_000,
-    orderCooldownMs: 5_000,
-    databaseUrl: '',
-  },
-}));
+/**
+ * tests/strategy/team3Reversal/team3ReversalStrategy.test.ts
+ *
+ * The VERSION 4 baseline (VWAP reversion) end to end, through the real engine:
+ * when it enters, why it exits, how it sizes, and how filters plug in.
+ * Platform-contract checks live in contract.test.ts.
+ */
+
+jest.mock('../../../config/env', () => jest.requireActual('./envMock'));
 
 import { Team3ReversalStrategy } from '../../../strategies/team3Reversal/team3ReversalStrategy';
-import {
-  createTeam3ReversalConfig,
-  validateTeam3ReversalConfig,
-  type Team3ReversalConfig,
-} from '../../../strategies/team3Reversal/team3ReversalConfig';
-import { TEAM3_FILTERS, type FilterSet } from '../../../strategies/team3Reversal/filters';
-import type { EntryInput, ExitInput } from '../../../strategies/team3Reversal/filters/types';
-import {
-  BeginnerReversalStrategy,
-  createBeginnerReversalConfig,
-} from '../../../strategies/beginnerReversal/beginnerReversalStrategy';
+import { createTeam3ReversalConfig, validateTeam3ReversalConfig } from '../../../strategies/team3Reversal/team3ReversalConfig';
 import { STRATEGY_FACTORY, STRATEGY_DEFINITIONS, configProblem } from '../../../config/strategyDefaults';
-import { SymbolStateManager } from '../../../core/state/symbolState';
-import { PortfolioStateManager } from '../../../core/state/portfolioState';
-import { OrderStateManager } from '../../../core/state/orderState';
-import type { BaseStrategy, EvaluationContext } from '../../../strategies/base/strategy';
-import type { Bar } from '../../../types/market';
-import type { StrategySignal } from '../../../types/strategy';
-import { MINUTE, NOON_ET } from './helpers';
+import { TEST_KNOBS, chop, day, runTeam3 } from './engine';
 
-function bar(symbol: string, minute: number, close: number, start = NOON_ET, volume = 100): Bar {
-  const ts = start + minute * MINUTE;
-  return {
-    symbol, open: close, high: close, low: close, close, volume,
-    ts, isoTs: new Date(ts).toISOString(), timeframe: '1m',
-  };
-}
+const DAY = '2026-10-06';
+const calm = chop(40);
+const reasons = (signals: { meta?: Record<string, unknown> }[]) => signals.map((s) => s.meta?.reason ?? s.meta?.kind);
 
-/** Runs a strategy against bars, filling every signal immediately at the bar's close. */
-function harness(strategy: BaseStrategy) {
-  strategy.start();
-  const symbolState = new SymbolStateManager();
-  const portfolioState = new PortfolioStateManager(100_000);
-  const orderState = new OrderStateManager();
-  let n = 0;
-  const context = (symbol: string): EvaluationContext => ({ symbol, symbolState, portfolioState, orderState });
-  const onBar = (b: Bar): StrategySignal | null => {
-    symbolState.onBar(b);
-    const signal = strategy.evaluate(context(b.symbol));
-    if (signal) {
-      const side = signal.direction === 'long' || signal.direction === 'close_short' ? 'buy' : 'sell';
-      portfolioState.applyFill({
-        id: `f-${n}`, orderId: `o-${n++}`, symbol: b.symbol, side, qty: signal.qty, price: b.close,
-        notional: signal.qty * b.close, commission: 0, ts: b.ts, isoTs: b.isoTs,
-      });
-    }
-    return signal;
-  };
-  return { onBar, portfolioState };
-}
-
-function team(overrides: Partial<Team3ReversalConfig> = {}, filters?: FilterSet) {
-  const config = createTeam3ReversalConfig({ id: 't3-1', symbols: ['SPY', 'AAPL'], ...overrides });
-  return new Team3ReversalStrategy(config, filters);
-}
-
-/** A filter set whose filters and exit rule are jest mocks, so tests can see and steer them. */
-function spyFilters(allow: boolean, exit: boolean) {
-  const allows = jest.fn((_i: EntryInput) => allow);
-  const shouldExit = jest.fn((_i: ExitInput) => exit);
-  const filters: FilterSet = {
-    entry: [{ name: 'bigMove', switchKey: 'useBigMove', allows }],
-    exit: shouldExit,
-  };
-  return { filters, allows, shouldExit };
-}
-
-describe('Team3ReversalStrategy baseline (every switch off)', () => {
-  it('trades exactly like Beginner Reversal on the same bars', () => {
-    const closes = [100, 101, 100.5, 100.5, 99, 99.5, 101, 102, 101.2, 100, 100.3];
-    const t3 = harness(team());
-    const br = harness(new BeginnerReversalStrategy(createBeginnerReversalConfig({ id: 'br', symbols: ['SPY', 'AAPL'] })));
-    const pick = (s: StrategySignal | null) => s && { direction: s.direction, qty: s.qty, triggerLabel: s.triggerLabel };
-    closes.forEach((c, i) => {
-      expect(pick(t3.onBar(bar('SPY', i, c)))).toEqual(pick(br.onBar(bar('SPY', i, c))));
-    });
+describe('baseline entry', () => {
+  it('shorts a spike above VWAP and buys a drop below it', async () => {
+    const up = await runTeam3(day('AAPL', DAY, [...calm, 101, 101, 100, ...chop(10)]), TEST_KNOBS);
+    const down = await runTeam3(day('AAPL', DAY, [...calm, 99, 99, 100, ...chop(10)]), TEST_KNOBS);
+    expect(up.signals[0].direction).toBe('short');
+    expect(down.signals[0].direction).toBe('long');
   });
 
-  it('uses the first bar only as a baseline', () => {
-    expect(harness(team()).onBar(bar('SPY', 0, 100))).toBeNull();
+  it('does not enter during the opening warm-up', async () => {
+    const { signals } = await runTeam3(day('AAPL', DAY, [...chop(10), 101, 100, ...chop(10)]), { ...TEST_KNOBS, skipOpenMinutes: 15 });
+    expect(signals).toHaveLength(0);
   });
 
-  it('does not trade outside 9:30-16:00 ET, but still remembers the bar', () => {
-    const preMarket = Date.UTC(2026, 9, 6, 12, 0); // 8:00 ET
-    const { onBar } = harness(team());
-    onBar(bar('SPY', 0, 100, preMarket));
-    expect(onBar(bar('SPY', 1, 101, preMarket))).toBeNull();
-    // First regular-session bar compares against the remembered pre-market close.
-    expect(onBar(bar('SPY', 0, 100))).toMatchObject({ direction: 'long', triggerLabel: 'bar_down_buy' });
+  it('does not enter when the way back to VWAP is thinner than minEdgeBps', async () => {
+    const small = [...calm, 100.1, 100.1, 100, ...chop(10)];               // ~8 bps from VWAP, z still large
+    expect((await runTeam3(day('AAPL', DAY, small), { ...TEST_KNOBS, minEdgeBps: 15 })).signals).toHaveLength(0);
+    expect((await runTeam3(day('AAPL', DAY, small), { ...TEST_KNOBS, minEdgeBps: 5 })).signals.length).toBeGreaterThan(0);
   });
 
-  it('ignores a bar delivered twice', () => {
-    const { onBar } = harness(team());
-    onBar(bar('SPY', 0, 100));
-    expect(onBar(bar('SPY', 1, 101))).not.toBeNull();
-    expect(onBar(bar('SPY', 1, 101))).toBeNull();
+  it('does not enter when the stretch is below entryZ', async () => {
+    const wide = day('AAPL', DAY, chop(60, 100, 1));                       // swings of +/-1 reach |z| ~2.6, never 3
+    expect((await runTeam3(wide, { ...TEST_KNOBS, entryZ: 3 })).signals).toHaveLength(0);
+    expect((await runTeam3(wide, { ...TEST_KNOBS, entryZ: 2 })).signals.length).toBeGreaterThan(0);
+  });
+
+  it('holds one position per symbol: no adding while held', async () => {
+    const { signals } = await runTeam3(day('AAPL', DAY, [...calm, 101, 101.5, 102, 102.5, ...Array(5).fill(102.5)]), { ...TEST_KNOBS, maxHoldBars: 100 });
+    expect(signals.filter((s) => s.meta?.kind === 'enter')).toHaveLength(1);
   });
 });
 
-describe('Team3ReversalStrategy entry filters', () => {
-  it('runs a filter only when its switch is on', () => {
-    const off = spyFilters(false, true);
-    const onBarOff = harness(team({}, off.filters)).onBar;
-    onBarOff(bar('SPY', 0, 100));
-    expect(onBarOff(bar('SPY', 1, 101))).not.toBeNull();
-    expect(off.allows).not.toHaveBeenCalled();
-
-    const on = spyFilters(false, true);
-    const onBarOn = harness(team({ useBigMove: true }, on.filters)).onBar;
-    onBarOn(bar('SPY', 0, 100));
-    expect(onBarOn(bar('SPY', 1, 101))).toBeNull();
-    expect(on.allows).toHaveBeenCalledTimes(1);
+describe('baseline exits', () => {
+  it('target: closes once the close is back at VWAP', async () => {
+    const { signals } = await runTeam3(day('AAPL', DAY, [...calm, 101, 100.8, 99.9, ...chop(10)]), TEST_KNOBS);
+    expect(reasons(signals)).toEqual(['enter', 'target']);
   });
 
-  it('gives the filter the bar, the earlier bars, the move, the side, and other symbols', () => {
-    const { filters, allows } = spyFilters(true, true);
-    const { onBar } = harness(team({ useBigMove: true, lookbackBars: 2 }, filters));
-    onBar(bar('SPY', 0, 400));
-    onBar(bar('AAPL', 0, 100));
-    onBar(bar('AAPL', 1, 100)); // unchanged: no decision, no filter call
-    onBar(bar('AAPL', 2, 99));
-    onBar(bar('AAPL', 3, 100));
-
-    const input = allows.mock.calls[allows.mock.calls.length - 1][0];
-    expect(input.symbol).toBe('AAPL');
-    expect(input.bar.close).toBe(100);
-    expect(input.history.map((b) => b.close)).toEqual([100, 99]); // capped at lookbackBars
-    expect(input.move).toBeCloseTo(1 / 99);
-    expect(input.side).toBe('sell');
-    expect(input.barsOf('SPY').map((b) => b.close)).toEqual([400]);
-    expect(input.config.useBigMove).toBe(true);
+  it('stop: closes when price stretches stopZ sigmas against us', async () => {
+    // A slow ramp builds sigma, a jump enters at z ~3.8 (inside a 4 stop), a bigger jump stops it out.
+    const ramp = Array.from({ length: 30 }, (_, i) => 100 + (i + 1) * 0.02);
+    const run = [...calm, ...ramp, 101, 101, 102.5, 102.5, 102.5];
+    const { signals } = await runTeam3(day('AAPL', DAY, run), { ...TEST_KNOBS, entryZ: 2, stopZ: 4 });
+    expect(reasons(signals)).toEqual(['enter', 'stop']);
   });
 
-  it('records which filters were on in the signal', () => {
-    const { filters } = spyFilters(true, true);
-    const { onBar } = harness(team({ useBigMove: true }, filters));
-    onBar(bar('SPY', 0, 100));
-    expect(onBar(bar('SPY', 1, 99))?.meta).toMatchObject({ filtersOn: 'bigMove' });
+  it('time: closes after maxHoldBars if nothing else happened', async () => {
+    const { signals } = await runTeam3(day('AAPL', DAY, [...calm, 101, ...Array(10).fill(101)]), { ...TEST_KNOBS, maxHoldBars: 3 });
+    expect(reasons(signals)).toEqual(['enter', 'time']);
+    expect(signals[1].meta?.barsHeld).toBe(3);
   });
 });
 
-describe('Team3ReversalStrategy VWAP view', () => {
-  it('hands filters the session VWAP built from regular-session bars only', () => {
-    const { filters, allows } = spyFilters(true, true);
-    const preMarket = Date.UTC(2026, 9, 6, 12, 0); // 8:00 ET
-    const { onBar } = harness(team({ useBigMove: true }, filters));
-    onBar(bar('SPY', 0, 500, preMarket)); // pre-market: not part of VWAP
-    onBar(bar('SPY', 0, 100));
-    onBar(bar('SPY', 1, 102));
-    const input = allows.mock.calls[allows.mock.calls.length - 1][0];
-    expect(input.vwap?.vwap).toBeCloseTo(101); // equal volume: mean of 100 and 102
-    expect(input.vwap?.sessionBars).toBe(2);
+describe('sizing', () => {
+  it('fixed notional: floor(tradeUsd / price) shares', async () => {
+    const { signals } = await runTeam3(day('AAPL', DAY, [...calm, 101, 100, ...chop(5)]), { ...TEST_KNOBS, tradeUsd: 2_000 });
+    expect(signals[0].qty).toBe(Math.floor(2_000 / 101));
+  });
+
+  it('vol sizing: sized from today\'s session returns and still capped by $ per symbol', async () => {
+    const { signals } = await runTeam3(day('AAPL', DAY, [...calm, 101, 100, ...chop(5)]),
+      { ...TEST_KNOBS, useVolSizing: true, riskPerTradeUsd: 1_000_000, maxPositionSizeUsd: 6_000, tradeUsd: 5_000 });
+    expect(signals[0].meta?.sizing).toBe('vol');
+    expect(signals[0].qty).toBe(Math.floor(6_000 / 101));
   });
 });
 
-describe('Team3ReversalStrategy vol sizing', () => {
-  const sized = () => team({ useVolSizing: true, maxPositionQty: 10_000, riskPerTradeUsd: 25 });
-
-  it('does not trade until it has enough bars to measure volatility', () => {
-    const { onBar } = harness(sized());
-    const signals = [100, 101, 100, 101].map((c, i) => onBar(bar('SPY', i, c)));
-    expect(signals.every((s) => s === null)).toBe(true);
+describe('filters', () => {
+  it('a switched-on filter can block the entry, and its name goes into meta when it allows', async () => {
+    const bars = day('AAPL', DAY, [...calm, 101, 100, ...chop(5)]);
+    const block = { entry: [{ name: 'never', switchKey: 'useVwapRegime' as const, status: 'done' as const, allows: () => false }] };
+    const allow = { entry: [{ name: 'always', switchKey: 'useVwapRegime' as const, status: 'done' as const, allows: () => true }] };
+    expect((await runTeam3(bars, { ...TEST_KNOBS, useVwapRegime: true }, { filters: block })).signals).toHaveLength(0);
+    expect((await runTeam3(bars, { ...TEST_KNOBS, useVwapRegime: true }, { filters: allow })).signals[0].meta?.filtersOn).toBe('always');
   });
 
-  it('enters with more than one share and closes the whole position on the next fade', () => {
-    const { onBar, portfolioState } = harness(sized());
-    const closes = [100, 101, 100, 101, 100, 101, 100];
-    const signals = closes.map((c, i) => onBar(bar('SPY', i, c))).filter(Boolean) as StrategySignal[];
-    expect(signals.length).toBeGreaterThanOrEqual(2);
-    const [entry, exit] = signals;
-    expect(entry.qty).toBeGreaterThan(1);
-    expect(entry.meta).toMatchObject({ sizing: 'vol' });
-    expect(exit.qty).toBe(entry.qty);
-    expect(exit.direction.startsWith('close_')).toBe(true);
-    expect(Math.abs(portfolioState.getPosition('SPY')?.qty ?? 0)).toBeLessThanOrEqual(10_000);
-  });
-
-  it('never sizes past maxPositionQty', () => {
-    const { onBar } = harness(team({ useVolSizing: true, maxPositionQty: 3, riskPerTradeUsd: 10_000 }));
-    const signals = [100, 101, 100, 101, 100, 101].map((c, i) => onBar(bar('SPY', i, c))).filter(Boolean) as StrategySignal[];
-    expect(signals[0].qty).toBe(3);
-  });
-
-  it('rejects vol sizing with too short a lookback', () => {
-    expect(() => validateTeam3ReversalConfig(createTeam3ReversalConfig({ id: 'x', useVolSizing: true, lookbackBars: 3 }))).toThrow();
-  });
-});
-
-describe('Team3ReversalStrategy holdUntilBack exit rule', () => {
-  it('holds the position, ignoring new signals, until the exit rule says close', () => {
-    const rule = spyFilters(true, false);
-    const { onBar, portfolioState } = harness(team({ useHoldUntilBack: true }, rule.filters));
-    onBar(bar('SPY', 0, 100));
-    expect(onBar(bar('SPY', 1, 101))).toMatchObject({ direction: 'short', qty: 1 });
-    expect(onBar(bar('SPY', 2, 100.5))).toBeNull(); // baseline would buy here; hold mode waits
-    expect(onBar(bar('SPY', 3, 100.2))).toBeNull();
-    expect(rule.shouldExit.mock.calls.map(([i]) => i.barsHeld)).toEqual([1, 2]);
-    expect(rule.shouldExit.mock.calls[1][0]).toMatchObject({ entryPrice: 101, positionQty: -1 });
-
-    rule.shouldExit.mockReturnValue(true);
-    expect(onBar(bar('SPY', 4, 100))).toMatchObject({
-      direction: 'close_short', qty: 1, triggerLabel: 'hold_until_back_exit', meta: { barsHeld: 3 },
-    });
-    expect(portfolioState.getPosition('SPY')?.qty ?? 0).toBe(0);
-    // Flat again: the next bar can enter.
-    expect(onBar(bar('SPY', 5, 101))).toMatchObject({ direction: 'short' });
-  });
-
-  it('with the stub rule, closes on the next bar', () => {
-    const { onBar } = harness(team({ useHoldUntilBack: true }, TEAM3_FILTERS));
-    onBar(bar('SPY', 0, 100));
-    onBar(bar('SPY', 1, 101));
-    expect(onBar(bar('SPY', 2, 101.5))).toMatchObject({ direction: 'close_short', triggerLabel: 'hold_until_back_exit' });
+  it('vwapRegime (done) blocks a quiet trend-free day with too few crossings', async () => {
+    const trend = Array.from({ length: 40 }, (_, i) => 100 + i * 0.01);   // never crosses VWAP from below
+    const { signals } = await runTeam3(day('AAPL', DAY, [...trend, 99, 100, ...chop(5)]), { ...TEST_KNOBS, useVwapRegime: true, minVwapCrossings: 4 });
+    expect(signals).toHaveLength(0);
   });
 });
 
@@ -241,20 +106,23 @@ describe('team3_reversal config and registration', () => {
   });
 
   it.each([
-    [{ qtyPerTrade: 0 }, /qtyPerTrade/],
-    [{ qtyPerTrade: 2, maxPositionQty: 1 }, /maxPositionQty/],
+    [{ entryZ: 0 }, /entryZ/],
+    [{ stopZ: 1.5, entryZ: 2 }, /stopZ must be greater/],
+    [{ maxHoldBars: 0 }, /maxHoldBars/],
+    [{ lastEntryMinutesBeforeClose: 2, flattenMinutesBeforeClose: 5 }, /lastEntryMinutesBeforeClose/],
+    [{ tradeUsd: 20_000 }, /tradeUsd/],
+    [{ maxGrossUsd: 1_000_000 }, /protocol/],
     [{ lookbackBars: 0 }, /lookbackBars/],
-    [{ bigMoveMinZ: -1 }, /bigMoveMinZ/],
-    [{ skipEdgeMinutes: -5 }, /skipEdgeMinutes/],
-    [{ useRelativeToSpy: true, symbols: ['AAPL'] }, /SPY in symbols/],
+    [{ useVolume: true }, /stub/],
+    [{ useVolSizing: true, lookbackBars: 3 }, /lookbackBars >= 5/],
   ])('rejects %j', (config, message) => {
     expect(configProblem('team3_reversal', config)).toMatch(message);
   });
 
-  it('builds from a partial saved config, filling defaults', () => {
-    const strategy = STRATEGY_FACTORY.team3_reversal({ id: 'cfg-3', symbols: ['SPY'] });
+  it('builds from a partial saved config, filling defaults (old VERSION 2 fields are ignored)', () => {
+    const strategy = STRATEGY_FACTORY.team3_reversal({ id: 'cfg-3', symbols: ['SPY'], useBigMove: true, qtyPerTrade: 1 });
     expect(strategy).toBeInstanceOf(Team3ReversalStrategy);
-    expect(strategy.config).toMatchObject({ id: 'cfg-3', symbols: ['SPY'], useBigMove: false, lookbackBars: 30 });
+    expect(strategy.config).toMatchObject({ id: 'cfg-3', symbols: ['SPY'], entryZ: 2, tradeUsd: 5_000 });
   });
 
   it('is described by the class version, and every form field exists in its default config', () => {

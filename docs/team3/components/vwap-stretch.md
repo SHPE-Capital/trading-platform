@@ -1,3 +1,6 @@
+> **Status: dropped in VERSION 3, folded into the baseline.** This component became the baseline's entry rule (entryZ, now with a cost-aware minEdgeBps gate). Code removed in VERSION 3.
+> See [baseline.md](baseline.md). The text below is kept for the paper's history.
+
 # VWAP Stretch (fade only far from VWAP)
 
 **Type:** entry filter  ·  **File:** `filters/vwapStretch.ts` (+ `vwap.ts`)
