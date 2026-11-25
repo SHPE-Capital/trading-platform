@@ -1,7 +1,7 @@
 /**
  * tests/strategy/team3Reversal/team3ReversalStrategy.test.ts
  *
- * The VERSION 3 baseline (VWAP reversion) end to end, through the real engine:
+ * The VERSION 4 baseline (VWAP reversion) end to end, through the real engine:
  * when it enters, why it exits, how it sizes, and how filters plug in.
  * Platform-contract checks live in contract.test.ts.
  */
@@ -55,9 +55,11 @@ describe('baseline exits', () => {
   });
 
   it('stop: closes when price stretches stopZ sigmas against us', async () => {
-    const run = [...calm, 101, 101.2, 103, 104, ...Array(5).fill(104)];
+    // A slow ramp builds sigma, a jump enters at z ~3.8 (inside a 4 stop), a bigger jump stops it out.
+    const ramp = Array.from({ length: 30 }, (_, i) => 100 + (i + 1) * 0.02);
+    const run = [...calm, ...ramp, 101, 101, 102.5, 102.5, 102.5];
     const { signals } = await runTeam3(day('AAPL', DAY, run), { ...TEST_KNOBS, entryZ: 2, stopZ: 4 });
-    expect(reasons(signals)).toContain('stop');
+    expect(reasons(signals)).toEqual(['enter', 'stop']);
   });
 
   it('time: closes after maxHoldBars if nothing else happened', async () => {
