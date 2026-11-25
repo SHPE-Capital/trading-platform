@@ -210,9 +210,11 @@ const finite = (s: Stats): boolean => FEATURES.every((f) => Number.isFinite(feat
 
 /** Steps 1-2: the symbols statistics are needed for. Share-class dedup happens later, in select(). */
 export function commonStock(members: readonly Member[], assets: ReadonlyMap<string, AssetInfo>) {
-  const used = new Set(USED);
-  const afterUnused = members.filter((m) => !used.has(m.ticker));
-  const removedUsed = members.filter((m) => used.has(m.ticker)).map((m) => m.ticker);
+  // A used symbol excludes its whole company: other share classes (same CIK, e.g. GOOG for GOOGL) too.
+  const usedCiks = new Set(members.filter((m) => USED.includes(m.ticker) && m.cik).map((m) => m.cik));
+  const isUsed = (m: Member) => USED.includes(m.ticker) || (!!m.cik && usedCiks.has(m.cik));
+  const afterUnused = members.filter((m) => !isUsed(m));
+  const removedUsed = members.filter(isUsed).map((m) => m.ticker);
   const notCommon: string[] = [];
   const kept = afterUnused.filter((m) => {
     const a = assets.get(m.ticker);
@@ -233,7 +235,7 @@ export function select(
   const status = new Map<string, string>();
   const log: Selection["log"] = [
     { step: "0 pool (S&P 500 + Nasdaq-100, 2026-08-31)", left: members.length, removed: [] },
-    { step: "1 exclude the 11 used symbols", left: afterUnused.length, removed: removedUsed },
+    { step: "1 exclude the 11 used symbols (and their other share classes)", left: afterUnused.length, removed: removedUsed },
   ];
 
   // Share classes: same CIK (S&P table) -> keep the higher dollar volume, ties alphabetical.
@@ -386,7 +388,7 @@ export function renderMd(snap: Snapshot, sel: Selection, corp: CorpAction[], fla
   for (const s of sel.momentum.stats) L.push(`| ${s.symbol} | | ${cells(s)}`);
   L.push("", `Range gate: vol ${bps(sel.momentum.lo.vol)}–${bps(sel.momentum.hi.vol)} bps/min, beta ${f2(sel.momentum.lo.beta)}–${f2(sel.momentum.hi.beta)}.`, "");
 
-  L.push("## Selected", "", "| Rank | Distance " + head.slice(1), "|---|---" + sep.slice(0));
+  L.push("## Selected", "", "| Rank | Distance " + head, "|---|---" + sep.slice(0));
   sel.selected.forEach((c, i) => L.push(`| ${i + 1} | ${f3(c.distance)} | ${c.symbol} | ${c.sector}${c.sectorSource === "icb" ? "¹" : ""} | ${cells(c)}`));
   const sectors = new Map<string, number>();
   for (const c of sel.selected) sectors.set(c.sector, (sectors.get(c.sector) ?? 0) + 1);
@@ -420,8 +422,21 @@ const DATA_URL = "https://data.alpaca.markets";
 const OUT_DIR = path.dirname(SNAPSHOT_PATH);
 const CONCURRENCY = 6;
 
-async function fetchBars(limiter: RateLimiter, symbol: string): Promise<RawBar[]> {
+/** alpacaGet retries 429/5xx; this also retries dropped connections (ECONNRESET, fetch failed). */
+async function getRetry<T>(limiter: RateLimiter, base: string, p: string): Promise<T> {
   const creds = { key: env.alpacaDataKey, secret: env.alpacaDataSecret };
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await limiter.schedule(() => alpacaGet<T>(base, p, creds));
+    } catch (e) {
+      const network = e instanceof TypeError || /ECONNRESET|ETIMEDOUT|fetch failed|socket/i.test(String((e as Error)?.message) + String((e as { cause?: unknown })?.cause));
+      if (!network || attempt >= 6) throw e;
+      await new Promise((r) => setTimeout(r, 1000 * 2 ** attempt));
+    }
+  }
+}
+
+async function fetchBars(limiter: RateLimiter, symbol: string): Promise<RawBar[]> {
   const out: RawBar[] = [];
   let token: string | undefined;
   do {
@@ -429,8 +444,7 @@ async function fetchBars(limiter: RateLimiter, symbol: string): Promise<RawBar[]
       start: WINDOW.start, end: WINDOW.end, timeframe: "1Min", limit: "10000", adjustment: "raw", feed: "sip",
       ...(token ? { page_token: token } : {}),
     });
-    const page = await limiter.schedule(() => alpacaGet<{ bars: RawBar[] | null; next_page_token?: string | null }>(
-      DATA_URL, `/v2/stocks/${encodeURIComponent(symbol)}/bars?${q}`, creds));
+    const page = await getRetry<{ bars: RawBar[] | null; next_page_token?: string | null }>(limiter, DATA_URL, `/v2/stocks/${encodeURIComponent(symbol)}/bars?${q}`);
     for (const b of page.bars ?? []) out.push(b);
     token = page.next_page_token ?? undefined;
   } while (token);
@@ -438,22 +452,22 @@ async function fetchBars(limiter: RateLimiter, symbol: string): Promise<RawBar[]
 }
 
 async function fetchAsset(limiter: RateLimiter, symbol: string): Promise<AssetInfo> {
-  const creds = { key: env.alpacaDataKey, secret: env.alpacaDataSecret };
   try {
-    const a = await limiter.schedule(() => alpacaGet<{ class: string; tradable: boolean; name: string }>(env.alpacaPaperBaseUrl, `/v2/assets/${encodeURIComponent(symbol)}`, creds));
+    const a = await getRetry<{ class: string; tradable: boolean; name: string }>(limiter, env.alpacaPaperBaseUrl, `/v2/assets/${encodeURIComponent(symbol)}`);
     return { symbol, found: true, cls: a.class, tradable: a.tradable, name: a.name };
-  } catch {
+  } catch (e) {
+    // Only a 404 means "no such asset"; anything else must fail the run, not silently drop a symbol.
+    if (!/\(404\)/.test(String((e as Error).message))) throw e;
     return { symbol, found: false, cls: "", tradable: false, name: "" };
   }
 }
 
 async function fetchCorpActions(limiter: RateLimiter, symbols: string[]): Promise<CorpAction[]> {
-  const creds = { key: env.alpacaDataKey, secret: env.alpacaDataSecret };
   const q = new URLSearchParams({
     symbols: symbols.join(","), start: WINDOW.start.slice(0, 10), end: WINDOW.end.slice(0, 10), limit: "1000",
     types: "forward_split,reverse_split,unit_split,stock_dividend,spin_off,cash_merger,stock_merger,stock_and_cash_merger,name_change",
   });
-  const j = await limiter.schedule(() => alpacaGet<{ corporate_actions: Record<string, Record<string, unknown>[]> }>(DATA_URL, `/v1/corporate-actions?${q}`, creds));
+  const j = await getRetry<{ corporate_actions: Record<string, Record<string, unknown>[]> }>(limiter, DATA_URL, `/v1/corporate-actions?${q}`);
   const out: CorpAction[] = [];
   const want = new Set(symbols);
   for (const [type, list] of Object.entries(j.corporate_actions ?? {}).sort()) {

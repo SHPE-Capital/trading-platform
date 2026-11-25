@@ -85,6 +85,14 @@ describe("selectUniverse selection", () => {
     expect(sel.status.get("CALM")).toBe("outside Momentum range");
   });
 
+  it("a used symbol also excludes its other share classes (GOOG for GOOGL)", () => {
+    const w = world([{ m: mem("AAA"), s: st("AAA") }, { m: mem("GOOG", "Communication Services", "0001652044"), s: st("GOOG") }]);
+    w.members.push(mem("GOOGL", "Communication Services", "0001652044"));
+    const sel = select(w.members, w.assets, w.stats);
+    expect(sel.log[1].removed).toEqual(expect.arrayContaining(["GOOG", "GOOGL"]));
+    expect(sel.selected.map((c) => c.symbol)).toEqual(["AAA"]);
+  });
+
   it("ranks by distance (ties alphabetical) and caps a sector at 8", () => {
     const extra = Array.from({ length: 12 }, (_, i) => {
       const t = `T${String(i).padStart(2, "0")}`;
