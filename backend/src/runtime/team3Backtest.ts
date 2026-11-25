@@ -87,9 +87,16 @@ async function main(): Promise<void> {
   const signals: StrategySignal[] = [];
   // Every bar each symbol showed the strategy, for the Stage 2 mechanism metrics (team3Metrics/).
   const barsBySymbol = new Map<string, MetricBar[]>();
+  // Stage 4: entries the gross cap blocked (the strategy skips them with "no room"), for the cap-binding report.
+  let capBlocked = 0;
   const engine = new BacktestEngine(new BacktestLoader({ cache: new SupabaseBarCache() }), { tickSource: createTickSource });
   const result = await engine.run(config, () => buildBacktestStrategies(config).map((st) => {
     const evaluate = st.evaluate.bind(st);
+    const s = st as unknown as { skip?: (msg: string) => null };
+    if (typeof s.skip === "function") {
+      const skip = s.skip.bind(st);
+      s.skip = (msg: string) => { if (msg.includes("no room")) capBlocked += 1; return skip(msg); };
+    }
     st.evaluate = (ctx) => {
       const b = ctx.symbolState.get(ctx.symbol)?.latestBar;
       if (b) {
@@ -177,6 +184,8 @@ async function main(): Promise<void> {
     mechanism: type === "team3_reversal"
       ? mechanismMetrics({ signals, roundTrips: pairRoundTrips(signals), barsBySymbol, daily: dailyRows, config: strategyConfig as unknown as Record<string, unknown> })
       : null,
+    capBlocked,
+    entryAttempts: entries.length + capBlocked,
     backtestId: result.id,
     events: result.event_count,
   };

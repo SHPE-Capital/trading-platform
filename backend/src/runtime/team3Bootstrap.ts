@@ -56,7 +56,7 @@ async function main(): Promise<void> {
     idB = positional[0];
     b = await load(idB, stage3);
     const u = universe(b.result);
-    if (!u) throw new Error(`backtest ${idB}: symbols fit neither Core nor Momentum alone; pass the baseline id explicitly`);
+    if (!u || u === "expanded") throw new Error(`backtest ${idB}: no frozen baseline for this universe (${u ?? "?"}); pass the baseline id explicitly`);
     idA = TEAM3_BASELINES[u];
     a = await load(idA, stage3);
   } else {
