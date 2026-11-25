@@ -16,6 +16,7 @@
  *   TEAM3_EXCLUDE          comma list of the group's symbols to leave out, e.g. SPY,QQQ (Q2.5)
  *   TEAM3_DUMP             directory: write <backtestId>.trades.json (round trips + every symbol's bars) for offline analysis
  *   TEAM3_COST_SCALE       diagnostic: multiply slippage, half spread and commission by this (e.g. 0.5). Never an ablation row.
+ *   TEAM3_NO_CACHE         1: bars straight from Alpaca, not cached in Supabase (same bars; Stage 4)
  *   TEAM3_DIAGNOSTIC       zero_cost: no slippage, spread or commission. Measures the GROSS edge.
  *                          Diagnostic only: never report it as an ablation row.
  *
@@ -89,7 +90,9 @@ async function main(): Promise<void> {
   const barsBySymbol = new Map<string, MetricBar[]>();
   // Stage 4: entries the gross cap blocked (the strategy skips them with "no room"), for the cap-binding report.
   let capBlocked = 0;
-  const engine = new BacktestEngine(new BacktestLoader({ cache: new SupabaseBarCache() }), { tickSource: createTickSource });
+  // TEAM3_NO_CACHE=1: read bars straight from Alpaca (same SIP bars) without writing them to the Supabase cache (Stage 4: keeps the DB small).
+  const noCache = process.env.TEAM3_NO_CACHE?.trim() === "1";
+  const engine = new BacktestEngine(new BacktestLoader(noCache ? {} : { cache: new SupabaseBarCache() }), { tickSource: createTickSource });
   const result = await engine.run(config, () => buildBacktestStrategies(config).map((st) => {
     const evaluate = st.evaluate.bind(st);
     const s = st as unknown as { skip?: (msg: string) => null };
