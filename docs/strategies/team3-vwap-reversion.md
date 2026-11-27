@@ -6,7 +6,7 @@ Intraday mean reversion to VWAP on 1-minute bars, entered only when the stock's 
 |---|---|
 | **Type** | `team3_reversal` |
 | **Version** | VERSION 8, frozen commit `2120a7c` |
-| **Status** | `ready`, paper trading |
+| **Status** | `ready`, paper-trading candidate only (Stage 4 verdict: mixed; no tradable edge after costs shown) |
 | **Owner** | Team 3 |
 
 ## Strategy
