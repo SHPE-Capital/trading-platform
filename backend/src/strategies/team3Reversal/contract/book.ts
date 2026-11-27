@@ -33,6 +33,8 @@ export interface Holding {
   entryTs: number;
   /** Session decision bars since the entry filled. */
   barsHeld: number;
+  /** Best price for the trailing stop, initialized from the fill then updated from session closes. */
+  trailingBestPrice?: number;
 }
 
 interface Pending {

@@ -1,11 +1,11 @@
 /**
  * strategies/team3Reversal/team3ReversalStrategy.ts
  *
- * Team 3 Reversal, VERSION 8: intraday VWAP reversion on 1-minute bars. V7 merged the Stage 2 switches; V8 adds the S5 entry modes (useSpyDivergence, useOwnQuietEntry, useConditionEntry). All off by default, so the default is still the V4 baseline.
+ * Team 3 Reversal, VERSION 9: intraday VWAP reversion on 1-minute bars. V7 merged the Stage 2 switches; V8 adds the S5 entry modes (useSpyDivergence, useOwnQuietEntry, useConditionEntry). V9 adds new trailing stop loss mechanism for testing. All off by default, so the default is still the V4 baseline.
  *
  *   Enter  fade a session bar that leaves price >= entryZ sigmas from VWAP,
  *          when the way back to VWAP beats costs (minEdgeBps). One position per symbol.
- *   Exit   first of: stale (earlier day) / close (end of day) / stop (stopZ) /
+ *   Exit   first of: stale (earlier day) / close (end of day) / stop (z-score or trailing) /
  *          target (back to VWAP) / time (maxHoldBars).
  *   Size   fixed dollars per trade (or vol sizing), capped per symbol and in gross.
  *   Filters (switches) can block an entry; with every switch off this is the baseline.
@@ -39,7 +39,7 @@ import { crowdSize, crowdSplitQty, fixedNotionalQty, volTargetQty } from "./sizi
 export class Team3ReversalStrategy extends BaseStrategy {
   readonly type: StrategyType = "team3_reversal";
   /** Bump whenever this folder's trading logic changes, filters included (CI enforces it). */
-  static readonly VERSION = 8;
+  static readonly VERSION = 9;
   readonly version = Team3ReversalStrategy.VERSION;
   /** Decide only when a bar arrives; quotes and trades never call evaluate(). */
   readonly triggers: readonly MarketEventKind[] = ["bar"];
@@ -132,7 +132,11 @@ export class Team3ReversalStrategy extends BaseStrategy {
   private exit(frame: MinuteFrame, h: Holding, window: ReturnType<typeof sessionWindow>, vwap: VwapView | null): StrategySignal | null {
     const { symbol, bar } = frame;
     const view = { qty: h.qty, barsHeld: h.barsHeld, fromEarlierDay: this.book.isFromEarlierDay(h, bar.ts), entryZ: this.entryZ.get(symbol) ?? null, scaledOut: this.scaledOut.has(symbol) };
-    const reason = exitReason(view, window, vwap?.z ?? null, this.teamConfig);
+    const trailingStopPrice = this.teamConfig.useTrailingStopLoss ? this.updateTrailingStop(h, bar.close) : undefined;
+    const trailingStopHit = trailingStopPrice === undefined
+      ? undefined
+      : h.qty > 0 ? bar.close <= trailingStopPrice : bar.close >= trailingStopPrice;
+    const reason = exitReason({ ...view, trailingStopHit }, window, vwap?.z ?? null, this.teamConfig);
     if (!reason) return null;
     // Gross: this close vs the real entry fill. Excludes the exit's own costs (fill happens next bar).
     const pnlBpsGross = (Math.sign(h.qty) * (bar.close - h.entryPrice) / h.entryPrice) * 10_000;
@@ -141,8 +145,15 @@ export class Team3ReversalStrategy extends BaseStrategy {
     if (half > 0) this.scaledOut.add(symbol);
     return this.send(bar, {
       kind: "exit", symbol, heldQty: half > 0 ? Math.sign(h.qty) * half : h.qty, reason, trigger: pnlBpsGross,
-      meta: { ...(half > 0 ? { partial: true } : {}), entryPrice: h.entryPrice, close: bar.close, barsHeld: h.barsHeld, pnlBpsGross, vwap: vwap?.vwap ?? null, vwapZ: vwap?.z ?? null },
+      meta: { ...(half > 0 ? { partial: true } : {}), ...(trailingStopPrice === undefined ? {} : { trailingStopPrice }), entryPrice: h.entryPrice, close: bar.close, barsHeld: h.barsHeld, pnlBpsGross, vwap: vwap?.vwap ?? null, vwapZ: vwap?.z ?? null },
     });
+  }
+
+  private updateTrailingStop(h: Holding, close: number): number {
+    const best = h.trailingBestPrice ?? h.entryPrice;
+    const width = h.entryPrice * this.teamConfig.trailingStopLossWidth;
+    h.trailingBestPrice = h.qty > 0 ? Math.max(best, close) : Math.min(best, close);
+    return h.qty > 0 ? h.trailingBestPrice - width : h.trailingBestPrice + width;
   }
 
   /** 7. EMIT detail: remember the order as pending, then hand the platform its signal. */

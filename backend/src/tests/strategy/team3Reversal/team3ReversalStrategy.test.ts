@@ -60,12 +60,44 @@ describe('baseline exits', () => {
     const run = [...calm, ...ramp, 101, 101, 102.5, 102.5, 102.5];
     const { signals } = await runTeam3(day('AAPL', DAY, run), { ...TEST_KNOBS, entryZ: 2, stopZ: 4 });
     expect(reasons(signals)).toEqual(['enter', 'stop']);
+
+    const trailing = await runTeam3(day('AAPL', DAY, run), {
+      ...TEST_KNOBS, entryZ: 2, stopZ: 4, useTrailingStopLoss: true, trailingStopLossWidth: 0.05,
+    });
+    expect(reasons(trailing.signals)).toEqual(['enter']);
   });
 
   it('time: closes after maxHoldBars if nothing else happened', async () => {
     const { signals } = await runTeam3(day('AAPL', DAY, [...calm, 101, ...Array(10).fill(101)]), { ...TEST_KNOBS, maxHoldBars: 3 });
     expect(reasons(signals)).toEqual(['enter', 'time']);
     expect(signals[1].meta?.barsHeld).toBe(3);
+  });
+});
+
+describe('trailing stop loss', () => {
+  it.each([
+    ['long', 98, 98.5, 98.3, 98.2],
+    ['short', 102, 101.5, 101.7, 101.8],
+  ])('trails favorable closes for a %s and keeps the stop on a reversal', async (
+    side, entryOpen, bestClose, pullback, stopClose,
+  ) => {
+    const entrySignalClose = side === 'long' ? 99 : 101;
+    const bars = day('AAPL', DAY, [
+      ...calm, entrySignalClose, { open: entryOpen, close: entryOpen },
+      bestClose, pullback, stopClose, stopClose,
+    ]);
+    const { signals } = await runTeam3(bars, {
+      ...TEST_KNOBS, useTrailingStopLoss: true, trailingStopLossWidth: 0.0025,
+    });
+
+    expect(reasons(signals)).toEqual(['enter', 'stop']);
+    expect(signals[0].direction).toBe(side);
+    expect(signals[1].meta?.barsHeld).toBe(4);
+    const entryPrice = signals[1].meta?.entryPrice as number;
+    expect(Math.abs(entryPrice - entryOpen)).toBeLessThan(0.1);
+    expect(signals[1].meta?.trailingStopPrice).toBeCloseTo(
+      bestClose + (side === 'long' ? -1 : 1) * entryPrice * 0.0025, 10,
+    );
   });
 });
 
@@ -108,6 +140,9 @@ describe('team3_reversal config and registration', () => {
   it.each([
     [{ entryZ: 0 }, /entryZ/],
     [{ stopZ: 1.5, entryZ: 2 }, /stopZ must be greater/],
+    [{ useTrailingStopLoss: 'yes' }, /useTrailingStopLoss/],
+    [{ trailingStopLossWidth: 0 }, /trailingStopLossWidth/],
+    [{ trailingStopLossWidth: 1 }, /trailingStopLossWidth/],
     [{ maxHoldBars: 0 }, /maxHoldBars/],
     [{ lastEntryMinutesBeforeClose: 2, flattenMinutesBeforeClose: 5 }, /lastEntryMinutesBeforeClose/],
     [{ tradeUsd: 20_000 }, /tradeUsd/],
@@ -122,7 +157,7 @@ describe('team3_reversal config and registration', () => {
   it('builds from a partial saved config, filling defaults (old VERSION 2 fields are ignored)', () => {
     const strategy = STRATEGY_FACTORY.team3_reversal({ id: 'cfg-3', symbols: ['SPY'], useBigMove: true, qtyPerTrade: 1 });
     expect(strategy).toBeInstanceOf(Team3ReversalStrategy);
-    expect(strategy.config).toMatchObject({ id: 'cfg-3', symbols: ['SPY'], entryZ: 2, tradeUsd: 5_000 });
+    expect(strategy.config).toMatchObject({ id: 'cfg-3', symbols: ['SPY'], entryZ: 2, tradeUsd: 5_000, useTrailingStopLoss: false, trailingStopLossWidth: 0.01 });
   });
 
   it('is described by the class version, and every form field exists in its default config', () => {

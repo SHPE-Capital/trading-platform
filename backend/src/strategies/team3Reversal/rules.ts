@@ -34,18 +34,6 @@ export function costGate(edgeBps: number, price: number, c: CostKnobs): boolean 
   return c.captureShare * edgeBps > roundTripCostBps(price, c);
 }
 
-type CostKnobs = Pick<Team3ReversalConfig, "captureShare" | "costFixedBps" | "costCommissionPerShare">;
-
-/** Modeled round-trip cost in bps at this price: fixed slippage + spread, plus commission on both legs. */
-export function roundTripCostBps(price: number, c: CostKnobs): number {
-  return c.costFixedBps + ((2 * c.costCommissionPerShare) / price) * 10_000;
-}
-
-/** Cost-aware gate (R3): the part of the stretch we expect to capture must beat the round trip. */
-export function costGate(edgeBps: number, price: number, c: CostKnobs): boolean {
-  return c.captureShare * edgeBps > roundTripCostBps(price, c);
-}
-
 /** Where a session bar sits in the trading day. Exits are allowed in every window. */
 export function sessionWindow(barTs: number, c: WindowKnobs): SessionWindow {
   const left = minutesUntilClose(barTs);
@@ -185,6 +173,8 @@ export interface HoldingView {
   entryZ?: number | null;
   /** R4 scale-out: true once half the position was already closed at the partway point. */
   scaledOut?: boolean;
+  /** Defined when the trailing stop replaces the z-score exit stop. */
+  trailingStopHit?: boolean;
 }
 
 /** R4 partway target: z has come back tpFraction of the way from the entry z toward 0. */
@@ -198,7 +188,7 @@ export function exitReason(h: HoldingView, window: SessionWindow, z: number | nu
   const short = h.qty < 0;
   if (h.fromEarlierDay) return "stale";                                         // safety net: never carry overnight
   if (window === "flatten") return "close";                                     // flat before the bell
-  if (z !== null && (short ? z >= c.stopZ : z <= -c.stopZ)) return "stop";     // stretched further: trend day
+  if (h.trailingStopHit ?? (z !== null && (short ? z >= c.stopZ : z <= -c.stopZ))) return "stop";
   if (z !== null && (short ? z <= 0 : z >= 0)) return "target";                 // back to VWAP
   if ((c.usePartwayTarget || (c.useScaleOut && !h.scaledOut)) && z !== null && h.entryZ != null
     && partwayReached(short, z, h.entryZ, c.tpFraction)) return "partway";        // R4: took the fast part of the reversion

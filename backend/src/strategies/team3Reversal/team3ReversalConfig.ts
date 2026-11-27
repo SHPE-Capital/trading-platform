@@ -28,6 +28,10 @@ export interface Team3ReversalConfig extends BaseStrategyConfig {
   // ---- Baseline: exit (target = back to VWAP, always on) ---------------
   /** Stop out when the close stretches this many sigmas against us. Must be > entryZ. */
   stopZ: number;
+  /** Replace the z-score exit stop with a trailing stop based on session closes. */
+  useTrailingStopLoss: boolean;
+  /** Fixed distance from the best price, expressed as a fraction of the entry fill price. */
+  trailingStopLossWidth: number;
   /** Close after this many session bars held, whatever the price. */
   maxHoldBars: number;
 
@@ -149,6 +153,8 @@ export const DEFAULT_TEAM3_REVERSAL_CONFIG: Omit<Team3ReversalConfig, "id" | "sy
   entryZ: 2,
   minEdgeBps: 15,
   stopZ: 3.5,
+  useTrailingStopLoss: false,
+  trailingStopLossWidth: 0.01,
   maxHoldBars: 30,
   skipOpenMinutes: 15,
   lastEntryMinutesBeforeClose: 15,
@@ -233,6 +239,10 @@ export function validateTeam3ReversalConfig(c: Team3ReversalConfig, filters: Fil
   atLeast0(c.minEdgeBps, "minEdgeBps");
   positive(c.stopZ, "stopZ");
   if (c.stopZ <= c.entryZ) fail(`stopZ must be greater than entryZ (got ${c.stopZ} <= ${c.entryZ})`);
+  if (typeof c.useTrailingStopLoss !== "boolean") fail("useTrailingStopLoss must be true or false");
+  if (!(isNum(c.trailingStopLossWidth) && c.trailingStopLossWidth > 0 && c.trailingStopLossWidth < 1)) {
+    fail("trailingStopLossWidth must be a decimal greater than 0 and less than 1");
+  }
   positiveInt(c.maxHoldBars, "maxHoldBars");
   if (!(c.captureShare > 0 && c.captureShare <= 1)) fail(`captureShare must be in (0, 1] (got ${c.captureShare})`);
   atLeast0(c.costFixedBps, "costFixedBps");

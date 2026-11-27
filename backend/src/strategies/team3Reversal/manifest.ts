@@ -37,7 +37,7 @@ export const team3ReversalManifest: StrategyManifest = {
     useSpyDivergence: true,
     maxHoldBars: 150,
     symbols: [...TEAM3_GROUPS.momentum],
-    name: "Team 3 VWAP Reversion: SPY-Divergence, 150-bar hold (L2) v8",
+    name: "Team 3 VWAP Reversion: SPY-Divergence, 150-bar hold (L2) v9",
   },
   // Saved configs may omit fields; createTeam3ReversalConfig fills them from the defaults.
   create: (config) => new Team3ReversalStrategy(build(config)),
@@ -47,7 +47,9 @@ export const team3ReversalManifest: StrategyManifest = {
 
     { key: "entryZ", label: "Entry: min VWAP z-score", kind: "number", min: 0, step: 0.1 },
     { key: "minEdgeBps", label: "Entry: min distance to VWAP (bps)", kind: "number", min: 0, step: 1, hint: "Should beat round-trip costs" },
-    { key: "stopZ", label: "Exit: stop at VWAP z-score", kind: "number", min: 0, step: 0.1, hint: "Must be above entry z" },
+    { key: "stopZ", label: "Exit: stop at VWAP z-score", kind: "number", min: 0, step: 0.1, hint: "Caps entry z and stops exits when the trailing stop is off" },
+    { key: "useTrailingStopLoss", label: "Exit: use trailing stop loss", kind: "boolean" },
+    { key: "trailingStopLossWidth", label: "Trailing stop width (fraction of entry fill)", kind: "number", step: 0.0001, hint: "0.01 = 1%. Trails favorable 1-minute closes." },
     { key: "maxHoldBars", label: "Exit: max bars held", kind: "number", min: 1, step: 1 },
     { key: "skipOpenMinutes", label: "Session: no entries first N minutes", kind: "number", min: 0, step: 1 },
     { key: "lastEntryMinutesBeforeClose", label: "Session: no entries last N minutes", kind: "number", min: 0, step: 1 },
